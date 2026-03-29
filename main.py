@@ -1213,7 +1213,7 @@ async def update_forecast():
     try:
         forecast = await get_horoscope()
         if forecast:
-            save_forecast({"ru": forecast})
+            save_forecast({"date": datetime.now().date().isoformat(), "ru": forecast})
             print("Прогноз обновлён!")
         else:
             print("Прогноз не обновлён, пустой ответ API")
@@ -1237,10 +1237,12 @@ async def send_morning_notifications():
 
 # ====== ПЛАНИРОВЩИК ======
 async def scheduler():
-    if not load_forecast():
+    today = datetime.now().date()
+    forecast_data = load_forecast()
+    if not forecast_data or forecast_data.get("date") != today.isoformat():
         await update_forecast()
 
-    forecast_updated_date = None
+    forecast_updated_date = today
     morning_sent_date = None
 
     while True:
