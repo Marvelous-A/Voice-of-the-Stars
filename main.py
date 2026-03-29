@@ -780,6 +780,8 @@ ABOUT_TEXT = (
 # ====== СОСТОЯНИЯ ======
 WAITING_SIGN_CHANGE = {}
 WAITING_TAROT_STORY = {}
+ACTIVE_SESSIONS = {}
+# ACTIVE_SESSIONS: {user_id_str: {"tarologist": dict, "history": list}}
 
 # ====== VOSK МОДЕЛЬ ======
 VOSK_MODEL = None
@@ -1203,9 +1205,104 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
             full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
             for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
                 await bot.send_message(user_id, part)
-        await bot.send_message(user_id, "✨ Сеанс завершён. Если появятся вопросы, обращайся.")
+        ACTIVE_SESSIONS[str(user_id)] = {"tarologist": tarologist, "history": [{"role": "tarot", "text": answer}]}
+        asyncio.create_task(session_timeout(user_id))
     else:
         await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
+
+# ====== СЕАНС: ОТВЕТ НА ВОПРОС ======
+async def get_session_reply(tarologist: dict, user_message: str, history: list) -> str:
+    age = tarologist.get("age", 35)
+    typing_style = get_age_typing_style(age)
+
+    history_text = ""
+    if history:
+        history_text = "\n\nИстория этого сеанса:\n"
+        for item in history:
+            role = "Пользователь" if item["role"] == "user" else "Ты"
+            history_text += f"{role}: {item['text']}\n"
+
+    if age >= 40:
+        prompt = f"""
+{tarologist['personality']}
+{history_text}
+
+Карты уже разложены перед тобой. Пользователь пишет тебе в ходе сеанса:
+{user_message}
+
+Ты пишешь с телефона двумя пальцами. Ответь коротко на конкретный вопрос или реакцию пользователя, опираясь на карты которые уже лежат. Не делай новый полный расклад. Сохраняй свой характер и стиль.
+
+ФОРМАТ: серия коротких сообщений через "|||". 3-5 сообщений, не более 250 знаков суммарно.
+Знаки препинания почти не ставишь. Мысли рваные. Слова-паразиты характерные для тебя.
+{typing_style}
+"""
+        return await ask_ai(prompt, max_tokens=300)
+    else:
+        prompt = f"""
+{tarologist['personality']}
+{history_text}
+
+Карты уже разложены. Пользователь пишет тебе в ходе сеанса:
+{user_message}
+
+Ответь коротко на конкретный вопрос, опираясь на карты которые уже лежат. Не делай новый полный расклад. Сохраняй свой характер.
+
+ФОРМАТ: серия коротких сообщений через "|||". 3-5 сообщений, 300-500 знаков суммарно.
+Не строй как мини-эссе. Пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
+{typing_style}
+"""
+        return await ask_ai(prompt, max_tokens=500)
+
+async def send_session_reply(user_id: int, user_message: str):
+    user_id_str = str(user_id)
+    if user_id_str not in ACTIVE_SESSIONS:
+        return
+
+    session = ACTIVE_SESSIONS[user_id_str]
+    tarologist = session["tarologist"]
+    age = tarologist.get("age", 35)
+
+    session["history"].append({"role": "user", "text": user_message})
+
+    if age >= 40:
+        delay = random.randint(30, 45)
+    elif age >= 30:
+        delay = random.randint(12, 20)
+    else:
+        delay = random.randint(6, 12)
+    await asyncio.sleep(delay)
+
+    if user_id_str not in ACTIVE_SESSIONS:
+        return
+
+    answer = await get_session_reply(tarologist, user_message, session["history"])
+    if not answer:
+        return
+
+    session["history"].append({"role": "tarot", "text": answer})
+
+    if "|||" in answer:
+        parts = [p.strip() for p in answer.split("|||") if p.strip()]
+        if user_id_str in ACTIVE_SESSIONS:
+            await bot.send_message(user_id, parts[0])
+        for part in parts[1:]:
+            if user_id_str not in ACTIVE_SESSIONS:
+                break
+            if age >= 40:
+                await asyncio.sleep(random.randint(25, 35))
+            else:
+                await asyncio.sleep(random.randint(8, 10))
+            await bot.send_message(user_id, part)
+    else:
+        if user_id_str in ACTIVE_SESSIONS:
+            await bot.send_message(user_id, answer)
+
+async def session_timeout(user_id: int):
+    await asyncio.sleep(3 * 60)
+    user_id_str = str(user_id)
+    if user_id_str in ACTIVE_SESSIONS:
+        del ACTIVE_SESSIONS[user_id_str]
+    await bot.send_message(user_id, "✨ Сеанс завершён. Если появятся вопросы, обращайся.")
 
 # ====== ОБНОВЛЕНИЕ ПРОГНОЗА ======
 async def update_forecast():
@@ -1278,6 +1375,8 @@ async def go_home(message: Message):
         del WAITING_TAROT_STORY[user_id]
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
+    if user_id in ACTIVE_SESSIONS:
+        del ACTIVE_SESSIONS[user_id]
     await message.answer("Главное меню:", reply_markup=get_main_keyboard())
 
 @dp.message(F.text.in_(SIGNS))
@@ -1427,7 +1526,7 @@ async def change_sign(message: Message):
 async def handle_voice(message: Message):
     user_id = str(message.from_user.id)
 
-    if user_id not in WAITING_TAROT_STORY:
+    if user_id not in WAITING_TAROT_STORY and user_id not in ACTIVE_SESSIONS:
         await message.answer("Голосовые сообщения принимаются только при обращении к тарологу. Выбери таролога в разделе 🎴 Консультация таролога")
         return
 
@@ -1455,6 +1554,10 @@ async def handle_voice(message: Message):
         return
 
     await message.answer(f"📝 Распознал твоё сообщение:\n\n_{text}_", parse_mode="Markdown")
+
+    if user_id in ACTIVE_SESSIONS:
+        asyncio.create_task(send_session_reply(message.from_user.id, text))
+        return
 
     tarot_id = WAITING_TAROT_STORY.pop(user_id)
     tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
@@ -1484,6 +1587,10 @@ async def handle_voice(message: Message):
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_story(message: Message):
     user_id = str(message.from_user.id)
+
+    if user_id in ACTIVE_SESSIONS:
+        asyncio.create_task(send_session_reply(message.from_user.id, message.text))
+        return
 
     if user_id not in WAITING_TAROT_STORY:
         return
