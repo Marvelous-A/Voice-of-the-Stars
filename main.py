@@ -1,15 +1,20 @@
 import asyncio
 import json
 import re
+import random
+import os
+import subprocess
 from datetime import datetime, timedelta
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
+                            InlineKeyboardMarkup, InlineKeyboardButton,
+                            CallbackQuery, Voice)
 from dotenv import load_dotenv
 from os import getenv
 
-load_dotenv()  # загружает переменные из .env файла
+load_dotenv()
 
 # ====== Токены ======
 TOKEN = getenv("BOT_TOKEN")
@@ -22,70 +27,348 @@ dp = Dispatcher()
 USERS_FILE = "users.json"
 FORECAST_FILE = "forecast.json"
 DESCRIPTIONS_FILE = "descriptions.json"
-
-# ====== ЯЗЫКИ ======
-LANGUAGES = {"Русский": "ru", "English": "en"}
+TAROT_HISTORY_FILE = "tarot_history.json"
 
 # ====== ЗНАКИ ЗОДИАКА ======
-SIGNS = {
-    "ru": ["Овен", "Телец", "Близнецы", "Рак",
-           "Лев", "Дева", "Весы", "Скорпион",
-           "Стрелец", "Козерог", "Водолей", "Рыбы"],
-    "en": ["Aries", "Taurus", "Gemini", "Cancer",
-           "Leo", "Virgo", "Libra", "Scorpio",
-           "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
-}
+SIGNS = ["Овен", "Телец", "Близнецы", "Рак",
+         "Лев", "Дева", "Весы", "Скорпион",
+         "Стрелец", "Козерог", "Водолей", "Рыбы"]
+
+# ====== ТАРОЛОГИ ======
+TAROLOGISTS = [
+    {
+        "id": "maya",
+        "name": "Майя",
+        "age": 34,
+        "description": (
+            "🌙 *Майя, 34 года*\n\n"
+            "Практикует таро уже 10 лет. Специализируется на отношениях и семейных ситуациях. "
+            "Мягкая, внимательная, говорит прямо, но бережно. Использует колоду Райдера-Уэйта."
+        ),
+        "personality": (
+            "Ты — Майя, женщина 34 лет, мягкий и чуткий таролог с 10-летним опытом. "
+            "Специализируешься на отношениях и семье. Говоришь тепло, используешь слова 'знаешь', 'понимаешь', иногда 'чувствую вот что'. "
+            "Пишешь одним потоком без абзацев, как голосовое сообщение переведённое в текст. "
+            "Знаки препинания ставь, но иногда пропускай запятую перед 'что' или 'который', иногда пиши 'вообщем' вместо 'в общем', 'тожа' вместо 'тоже'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы. Знаки препинания должны быть, иначе текст нечитаемый."
+        )
+    },
+    {
+        "id": "boris",
+        "name": "Борис",
+        "age": 52,
+        "description": (
+            "🔯 *Борис, 52 года*\n\n"
+            "Опытный таролог с 20-летней практикой. Строгий, лаконичный, говорит по делу. "
+            "Работает с классическими раскладами. Особенно силён в вопросах карьеры и финансов."
+        ),
+        "personality": (
+            "Ты — Борис, мужчина 52 лет, опытный и серьёзный таролог с 20 годами практики. "
+            "Специализируешься на карьере и финансах. Говоришь коротко и по делу, используешь 'смотри', 'тут всё ясно', 'карты говорят следующее'. "
+            "Пишешь одним блоком без абзацев, сухо и деловито. "
+            "Знаки препинания ставь обязательно, точки, запятые, иногда многоточие. Иногда пиши 'нету' вместо 'нет', 'вообщем'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "alina",
+        "name": "Алина",
+        "age": 27,
+        "description": (
+            "✨ *Алина, 27 лет*\n\n"
+            "Молодой таролог с горящими глазами. Практикует 4 года, работает с колодой Таро Тота. "
+            "Энергичная, современная, любит глубокий анализ подсознательных процессов."
+        ),
+        "personality": (
+            "Ты — Алина, девушка 27 лет, молодой энергичный таролог. "
+            "Пишешь живо и эмоционально, используешь многоточия... говоришь 'ой', 'слушай', 'это интересно'. "
+            "Пишешь одним потоком без абзацев как будто говоришь вслух. "
+            "Знаки препинания ставь, точки и запятые обязательны, но иногда пропускай запятую перед 'что'. Иногда пиши 'вообщем', 'тожа'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "vadim",
+        "name": "Вадим",
+        "age": 45,
+        "description": (
+            "🌟 *Вадим, 45 лет*\n\n"
+            "Таролог и нумеролог. Практикует 15 лет, сочетает таро с нумерологией. "
+            "Спокойный, философский, любит давать развёрнутые ответы с глубоким смыслом."
+        ),
+        "personality": (
+            "Ты — Вадим, мужчина 45 лет, таролог и нумеролог с 15-летним опытом. "
+            "Говоришь размеренно и глубоко, используешь 'понимаешь ли', 'это не случайно', 'вселенная подсказывает'. "
+            "Пишешь одним длинным потоком без абзацев, уходишь в философию но возвращаешься к теме. "
+            "Знаки препинания ставь, запятые, точки, многоточия обязательны. Иногда пиши 'вообщем', 'придти' вместо 'прийти'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "natasha",
+        "name": "Наташа",
+        "age": 39,
+        "description": (
+            "🌺 *Наташа, 39 лет*\n\n"
+            "Таролог-интуит. Работает больше с ощущениями, чем с классическими значениями карт. "
+            "12 лет практики. Тёплая, материнская энергия, помогает найти выход в самых запутанных ситуациях."
+        ),
+        "personality": (
+            "Ты — Наташа, женщина 39 лет, таролог-интуит с материнской энергией и 12 годами практики. "
+            "Говоришь тепло и по-домашнему, иногда 'не переживай', 'всё наладится', 'я чувствую что'. "
+            "Пишешь одним тёплым потоком без абзацев. "
+            "Знаки препинания обязательны, запятые и точки должны быть, иначе непонятно. Иногда пропускай запятую перед 'но', пиши 'ихний' вместо 'их'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "roman",
+        "name": "Роман",
+        "age": 31,
+        "description": (
+            "⚡ *Роман, 31 год*\n\n"
+            "Энергичный таролог нового поколения. Практикует 6 лет, работает с несколькими колодами. "
+            "Прямолинейный, говорит правду без прикрас. Специализируется на личностном росте."
+        ),
+        "personality": (
+            "Ты — Роман, мужчина 31 года, прямолинейный таролог. "
+            "Говоришь прямо и иногда жёстко, используешь 'короче', 'смотри как есть', 'карты не врут'. "
+            "Пишешь одним коротким рубленым потоком без абзацев. "
+            "Знаки препинания ставь, точки обязательны. Иногда пропускай запятые, пиши 'вообщем'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "svetlana",
+        "name": "Светлана",
+        "age": 58,
+        "description": (
+            "🕯️ *Светлана, 58 лет*\n\n"
+            "Мудрый таролог с 25-летним опытом. Работает с классическим таро Марсельской традиции. "
+            "Спокойная, рассудительная, видит ситуацию в целом."
+        ),
+        "personality": (
+            "Ты — Светлана, женщина 58 лет, мудрый таролог с 25-летним опытом. "
+            "Говоришь спокойно и рассудительно, иногда 'дитя моё', 'жизнь такова', 'карты открывают нам'. "
+            "Пишешь одним степенным потоком без абзацев. "
+            "Знаки препинания очень важны, ставь запятые и точки правильно. Иногда пиши 'вообщем', 'в виду' вместо 'ввиду'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "artem",
+        "name": "Артём",
+        "age": 29,
+        "description": (
+            "🎴 *Артём, 29 лет*\n\n"
+            "Таролог и астролог. Практикует 5 лет, сочетает таро с астрологическими транзитами. "
+            "Аналитический склад ума, любит точность и детали."
+        ),
+        "personality": (
+            "Ты — Артём, мужчина 29 лет, таролог с аналитическим складом ума и 5 годами практики. "
+            "Используешь 'если быть точным', 'обрати внимание', 'интересный момент'. "
+            "Пишешь одним аналитическим потоком без абзацев. "
+            "Знаки препинания ставь чётко, запятые и точки обязательны. Иногда пиши 'вообщем', 'так же' вместо 'также'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "ksenia",
+        "name": "Ксения",
+        "age": 36,
+        "description": (
+            "🌸 *Ксения, 36 лет*\n\n"
+            "Таролог и психолог. Совмещает психологическое образование с таро. "
+            "8 лет практики. Помогает разобраться в себе и своих истинных желаниях."
+        ),
+        "personality": (
+            "Ты — Ксения, женщина 36 лет, таролог с психологическим образованием и 8 годами практики. "
+            "Говоришь мягко и задаёшь вопросы, используешь 'что тебе откликается', 'давай посмотрим глубже'. "
+            "Пишешь одним вдумчивым потоком без абзацев. "
+            "Знаки препинания обязательны, запятые и точки должны быть. Иногда пиши 'вообщем', 'по-этому' вместо 'поэтому'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "igor",
+        "name": "Игорь",
+        "age": 47,
+        "description": (
+            "🔮 *Игорь, 47 лет*\n\n"
+            "Таролог-практик с мистическим уклоном. 18 лет опыта. "
+            "Работает с энергиями и символами. Серьёзный, немногословный, но каждое его слово весомо."
+        ),
+        "personality": (
+            "Ты — Игорь, мужчина 47 лет, таролог с мистическим уклоном и 18 годами практики. "
+            "Говоришь немного, но весомо, используешь 'энергия здесь такая', 'это важно', паузы через многоточия... "
+            "Пишешь одним коротким потоком без абзацев, ёмко и с паузами. "
+            "Знаки препинания ставь, точки и многоточия обязательны. Иногда пропускай запятую, пиши 'вообщем'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    },
+    {
+        "id": "dasha",
+        "name": "Даша",
+        "age": 24,
+        "description": (
+            "💫 *Даша, 24 года*\n\n"
+            "Самый молодой таролог в нашей команде. Практикует 3 года, работает с современными колодами. "
+            "Живая, искренняя, иногда неожиданно точная в своих считываниях."
+        ),
+        "personality": (
+            "Ты — Даша, девушка 24 лет, самый молодой таролог. "
+            "Пишешь очень живо, используешь 'блин', 'ого', 'это прям интересно'. "
+            "Пишешь одним быстрым потоком без абзацев как в переписке с подругой. "
+            "Знаки препинания всё же ставь, хотя бы точки и часть запятых. Иногда пиши 'вообщем', 'тожа', допускай опечатки. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        )
+    }
+]
+
+TAROLOGISTS_BY_ID = {t["id"]: t for t in TAROLOGISTS}
+
+# ====== ОТЗЫВЫ ======
+ALL_REVIEWS = [
+    {"author": "@olelotts (Олег)", "text": "Хотел попробовать просто из интереса, думал что это всё несерьёзно. Но Борис реально удивил, написал прям по делу про мою ситуацию на работе. Даже не ожидал такого точного ответа если честно."},
+    {"author": "@turumbos (Света)", "text": "Майечка просто умничка, так тепло и точно описала мои отношения, я аж прослезилась немного. Чувствуется что человек реально понимает в этом деле, не просто слова говорит. Спасибо большое!"},
+    {"author": "@redrecv", "text": "Прогноз на день приходит каждое утро, удобно что не надо самому заходить и проверять. Пользуюсь уже месяц примерно, в целом всё нравится."},
+    {"author": "@alenkalublu333 (Алёна)", "text": "Обратилась к Ксении насчёт отношений, она так грамотно и мягко всё объяснила, прям по полочкам разложила. Очень понравился её подход, буду ещё обращаться."},
+    {"author": "@CBeTDemoHa32 (Дима)", "text": "Сначала скептически отнёсся, но попробовал таро у Романа. Он говорит прямо, без воды, мне такой стиль нравится. Сказал что в карьере надо подождать до осени, посмотрим насколько точно."},
+    {"author": "@Bl4ck_SwaNZN (Вячеслав)", "text": "Вадим очень интересно объясняет, глубоко копает. Может немного многословно, но зато понятно откуда что берётся. Про нумерологию тоже рассказал, интересная тема оказалась."},
+    {"author": "@Anya_Sweet_69 (Аня)", "text": "Алина такая живая и энергичная, приятно с ней общаться. Сделала расклад на ситуацию и прям в точку попала. Подружкам уже посоветовала этот бот."},
+    {"author": "@Sergey_Volk7 (Сергей)", "text": "Игорь немногословный но это даже плюс, говорит только самое важное. Чувствуется опыт. Доволен консультацией, спасибо."},
+    {"author": "@Damla_menecer (Шайхар)", "text": "Описание моего знака зодиака очень подробное, много всего интересного узнала про себя. Прогнозы тоже читаю каждый день теперь."},
+    {"author": "@KizRuma", "text": "Наташа такая добрая, прям чувствуется забота в её словах. Помогла разобраться в сложной ситуации, стало немного легче на душе после консультации."},
+    {"author": "@VenyVidiVichi (Артём)", "text": "Артём как таролог очень дотошный в хорошем смысле, всё объяснил детально, ответил именно на мой вопрос а не общие слова говорил. Рекомендую."},
+    {"author": "Анонимный пользователь", "text": "Пользуюсь ботом уже давно, прогнозы интересные. Иногда прям удивляет точностью."},
+    {"author": "Анонимный пользователь", "text": "Светлана очень мудрая, чувствуется огромный опыт. Немного старомодно говорит, но это даже придаёт особый шарм. Спасибо за консультацию!"},
+    {"author": "Анонимный пользователь", "text": "Даша молодая но очень точно считывает ситуацию, была удивлена. И общаться с ней легко и приятно."},
+    {"author": "Анонимный пользователь", "text": "Описание знака зодиака очень понравилось, прям про меня написано. Много точных моментов."},
+    {"author": "Анонимный пользователь", "text": "Борис суховат немного, но зато по делу всё говорит. Мне нравится что он не тянет кота за хвост. Полезная консультация была."},
+    {"author": "Анонимный пользователь", "text": "Утренние уведомления это классная функция, сразу настраивает на день. Спасибо разработчикам."},
+    {"author": "Анонимный пользователь", "text": "Первый раз пробовала таро онлайн и осталась довольна. Майя очень внимательно подошла к вопросу."},
+    {"author": "Анонимный пользователь", "text": "Хороший бот, всё работает, тарологи отвечают. Буду пользоваться дальше."},
+    {"author": "Анонимный пользователь", "text": "Игорь с первого раза понял суть моей ситуации и дал очень точный ответ. Ценю таких специалистов."},
+    {"author": "Анонимный пользователь", "text": "Наташа помогла мне когда я совсем запуталась в отношениях, очень благодарна. Чувствуется что она реально вкладывается в каждого клиента."},
+    {"author": "Анонимный пользователь", "text": "Прогноз на сегодня прям попал в точку, удивительно. Пользуюсь каждый день."},
+    {"author": "Анонимный пользователь", "text": "Алина такая позитивная, после консультации с ней настроение поднялось. И карты интересно интерпретирует, не банально."},
+    {"author": "Анонимный пользователь", "text": "Вадим погрузил меня в такие глубины что я потом долго думала. Очень интересный взгляд на ситуацию через нумерологию и таро."},
+    {"author": "Анонимный пользователь", "text": "Ксения как психолог и таролог это вообще отдельный уровень. Помогла понять не только что будет, но и почему так происходит."},
+    {"author": "Анонимный пользователь", "text": "Артём очень конкретный и точный в ответах, мне это нравится. Никакой воды, только по делу."},
+    {"author": "Анонимный пользователь", "text": "Роман говорит резко иногда, но честно. Лучше горькая правда чем сладкая ложь, как говорится."},
+    {"author": "Анонимный пользователь", "text": "Зашла просто попробовать, осталась на несколько месяцев. Бот реально полезный и тарологи хорошие."},
+    {"author": "Анонимный пользователь", "text": "Описание моего знака зодиака поразило точностью. Сразу поняла что это серьёзный ресурс а не просто развлечение."},
+    {"author": "Анонимный пользователь", "text": "Светлана прям как бабушка мудрая, всё знает и понимает. Очень тепло и душевно прошла консультация."},
+    {"author": "Анонимный пользователь", "text": "Даша молодец что не боится говорить что думает, даже если это неожиданно. Её считывания очень точные."},
+    {"author": "Анонимный пользователь", "text": "Пользуюсь уже полгода, прогнозы интересные, тарологи профессиональные. Рекомендую всем."},
+]
+
+# ====== УТРЕННИЕ УВЕДОМЛЕНИЯ - ШАБЛОНЫ ======
+MORNING_TEMPLATES = [
+    "🌟 Звёзды уже выстроились для тебя на сегодня, {sign}! Загляни в бот и узнай, что они приготовили 👇",
+    "☀️ Доброе утро, {sign}! Сегодня карты раскрыли кое-что интересное именно для тебя. Посмотри прогноз на день 🔮",
+    "🌙 Ночь прошла, и новый день несёт свои подсказки. {sign}, твой прогноз на сегодня уже готов, загляни! ✨",
+    "✨ {sign}, вселенная прислала сигналы специально для тебя. Не пропусти свой прогноз на сегодняшний день 🌟",
+    "🔮 Новый день, новые возможности! {sign}, узнай что звёзды советуют тебе сегодня. Прогноз уже ждёт тебя 👇",
+    "🌅 Утро начинается с подсказки от звёзд! {sign}, твой персональный прогноз на сегодня готов, загляни в бот 🔮",
+    "💫 {sign}, сегодняшний день скрывает в себе немало интересного. Звёзды уже всё знают, посмотри прогноз! ✨",
+    "🌠 Каждое утро это новая страница. {sign}, узнай что написано в твоей на сегодня. Прогноз уже готов! 🔮",
+]
+
+# ====== О НАС ======
+ABOUT_TEXT = (
+    "🌟 *Голос Звёзд* — ваш проводник в мире астрологии и таро\n\n"
+    "Мы работаем в сфере таро и астрологии уже более 10 лет, но всё это время вели приёмы офлайн, консультировали вживую и на мероприятиях. "
+    "Совсем недавно мы решили выйти в онлайн и создали этот бот, чтобы быть ближе к вам.\n\n"
+    "🚀 *Мы только в начале пути онлайн!*\n"
+    "Сейчас мы активно развиваемся и каждую неделю работаем над улучшениями. "
+    "Многое из того что мы задумали ещё впереди. "
+    "В ближайшее время ждите новый функционал, новые возможности и обновления.\n\n"
+    "📊 *Немного о нас:*\n"
+    "• 11 сертифицированных тарологов с опытом от 3 до 25 лет\n"
+    "• Более 50 000 консультаций проведено за всё время работы\n"
+    "• Клиенты из 18 стран мира\n"
+    "• Авторская методика совмещения классического таро и современной психологии\n\n"
+    "🎯 *Наша миссия:*\n"
+    "Мы верим что каждый человек заслуживает честного и глубокого взгляда на свою ситуацию. "
+    "Наши специалисты искренне хотят помочь, и теперь сделать это стало ещё проще.\n\n"
+    "🔧 *Что мы планируем добавить:*\n"
+    "• Расширенные расклады на будущее\n"
+    "• Совместимость знаков зодиака\n"
+    "• Лунный календарь и рекомендации\n"
+    "• Персональные нумерологические отчёты\n"
+    "• И многое другое!\n\n"
+    "Спасибо что вы с нами. Мы растём и становимся лучше каждый день. ✨"
+)
 
 # ====== СОСТОЯНИЯ ======
-WAITING_LANGUAGE_CHANGE = {}
 WAITING_SIGN_CHANGE = {}
+WAITING_TAROT_STORY = {}
+
+# ====== VOSK МОДЕЛЬ ======
+VOSK_MODEL = None
+VOSK_MODEL_PATH = "vosk-model-small-ru-0.22"
+
+def init_vosk():
+    global VOSK_MODEL
+    try:
+        from vosk import Model
+        if os.path.exists(VOSK_MODEL_PATH):
+            VOSK_MODEL = Model(VOSK_MODEL_PATH)
+            print("Vosk модель загружена успешно!")
+        else:
+            print(f"Vosk модель не найдена по пути {VOSK_MODEL_PATH}. Скачайте модель: https://alphacephei.com/vosk/models")
+            print("Распакуйте архив в папку с ботом.")
+    except ImportError:
+        print("Библиотека vosk не установлена. Установите: pip install vosk")
+    except Exception as e:
+        print(f"Ошибка загрузки Vosk модели: {e}")
 
 # ====== КНОПКИ ======
-def get_language_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=lang)] for lang in LANGUAGES.keys()],
-        resize_keyboard=True
-    )
-
-def get_sign_keyboard(lang_code="ru"):
+def get_sign_keyboard():
     rows = []
-    signs = SIGNS[lang_code]
-    for i in range(0, len(signs), 2):
-        row = [KeyboardButton(text=signs[i])]
-        if i + 1 < len(signs):
-            row.append(KeyboardButton(text=signs[i + 1]))
+    for i in range(0, len(SIGNS), 2):
+        row = [KeyboardButton(text=SIGNS[i])]
+        if i + 1 < len(SIGNS):
+            row.append(KeyboardButton(text=SIGNS[i + 1]))
         rows.append(row)
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
-def get_main_keyboard(lang_code="ru"):
-    if lang_code == "ru":
-        buttons = [
-            [KeyboardButton(text="🔮 Посмотреть прогноз")],
-            [KeyboardButton(text="📖 Читать о себе")],
-            [KeyboardButton(text="⚙️ Настройки")]
-        ]
-    else:
-        buttons = [
-            [KeyboardButton(text="🔮 View Forecast")],
-            [KeyboardButton(text="📖 Read About Me")],
-            [KeyboardButton(text="⚙️ Settings")]
-        ]
+def get_main_keyboard():
+    buttons = [
+        [KeyboardButton(text="🔮 Прогноз на сегодня"), KeyboardButton(text="📖 Читать о себе")],
+        [KeyboardButton(text="🎴 Консультация таролога")],
+        [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="ℹ️ О нас")],
+        [KeyboardButton(text="⚙️ Настройки")]
+    ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-def get_settings_keyboard(lang_code="ru"):
-    if lang_code == "ru":
-        buttons = [
-            [KeyboardButton(text="🌍 Изменить язык")],
-            [KeyboardButton(text="♈ Изменить знак зодиака")],
-            [KeyboardButton(text="◀️ Назад")]
-        ]
-    else:
-        buttons = [
-            [KeyboardButton(text="🌍 Change language")],
-            [KeyboardButton(text="♈ Change zodiac sign")],
-            [KeyboardButton(text="◀️ Back")]
-        ]
+def get_settings_keyboard():
+    buttons = [
+        [KeyboardButton(text="♈ Изменить знак зодиака")],
+        [KeyboardButton(text="🏠 Главное меню")]
+    ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_cancel_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❌ Отменить")],
+            [KeyboardButton(text="🏠 Главное меню")]
+        ],
+        resize_keyboard=True
+    )
+
+def get_back_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🏠 Главное меню")]],
+        resize_keyboard=True
+    )
+
+def get_ask_tarot_inline(tarot_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📩 Задать вопрос", callback_data=f"ask_{tarot_id}")]
+    ])
 
 # ====== ФАЙЛОВЫЕ ФУНКЦИИ ======
 def load_users():
@@ -121,6 +404,32 @@ def save_descriptions(data):
     with open(DESCRIPTIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
+def load_tarot_history():
+    try:
+        with open(TAROT_HISTORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_tarot_history(data):
+    with open(TAROT_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+def get_user_tarot_history(user_id: str, tarot_id: str) -> list:
+    history = load_tarot_history()
+    return history.get(user_id, {}).get(tarot_id, [])
+
+def save_user_tarot_message(user_id: str, tarot_id: str, role: str, text: str):
+    history = load_tarot_history()
+    history.setdefault(user_id, {}).setdefault(tarot_id, [])
+    history[user_id][tarot_id].append({
+        "role": role,
+        "text": text,
+        "time": datetime.now().isoformat()
+    })
+    history[user_id][tarot_id] = history[user_id][tarot_id][-10:]
+    save_tarot_history(history)
+
 # ====== БЕЗОПАСНЫЙ РАЗБОР JSON ======
 def extract_json_from_text(text: str):
     try:
@@ -131,188 +440,173 @@ def extract_json_from_text(text: str):
         pass
     return {}
 
-# ====== ПОЛУЧЕНИЕ ГОРОСКОПА ======
-async def get_horoscope(lang="ru"):
+# ====== API ЗАПРОС ======
+async def ask_ai(prompt: str, max_tokens: int = 1000) -> str:
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_KEY}",
         "Content-Type": "application/json"
     }
-
-    if lang == "ru":
-        prompt = """
-Сделай гороскоп на следующие 24 часа для всех 12 знаков зодиака.
-Каждый знак должен получить 2-3 предложения, которые дают понимание, что его ждет сегодня и как лучше действовать (например, чего избегать или на что обратить внимание), но без жестких инструкций.
-Ответ строго в JSON формате без лишнего текста, вот структура:
-{
-"Овен": "...",
-"Телец": "...",
-"Близнецы": "...",
-"Рак": "...",
-"Лев": "...",
-"Дева": "...",
-"Весы": "...",
-"Скорпион": "...",
-"Стрелец": "...",
-"Козерог": "...",
-"Водолей": "...",
-"Рыбы": "..."
-}
-"""
-    else:
-        prompt = """
-Make a horoscope for the next 24 hours for all 12 zodiac signs.
-Each sign should have 2-3 sentences giving insight into what to expect today and general advice (like what to avoid or notice), but without strict instructions.
-Answer strictly in JSON format without extra text, using this structure:
-{
-"Aries": "...",
-"Taurus": "...",
-"Gemini": "...",
-"Cancer": "...",
-"Leo": "...",
-"Virgo": "...",
-"Libra": "...",
-"Scorpio": "...",
-"Sagittarius": "...",
-"Capricorn": "...",
-"Aquarius": "...",
-"Pisces": "..."
-}
-"""
-
     data = {
         "model": "deepseek/deepseek-chat",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1500
+        "max_tokens": max_tokens
     }
-
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=data) as resp:
             try:
                 response_json = await resp.json(content_type=None)
-            except Exception as e:
-                print("Ошибка парсинга ответа:", e)
-                return {}
-
-            try:
-                content = response_json["choices"][0]["message"]["content"]
-            except (KeyError, IndexError) as e:
-                if "error" in response_json:
-                    print("Ошибка API:", response_json["error"]["message"])
-                else:
-                    print("Ошибка извлечения content:", e)
-                    print("Полный ответ:", response_json)
-                return {}
-
-            print(f"Контент от модели ({lang}):", content)
-            content = content.replace("```json", "").replace("```", "").strip()
-
-            result = extract_json_from_text(content)
-            if not result:
-                print(f"Не удалось извлечь JSON из контента ({lang})")
-            return result
-
-# ====== ПОЛУЧЕНИЕ ОПИСАНИЯ ЗНАКА ======
-async def get_sign_description(sign: str, lang: str) -> str:
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    if lang == "ru":
-        prompt = f"""
-Напиши подробное и глубокое описание знака зодиака {sign}.
-Структура описания:
-- Общая характеристика и суть знака
-- Характер и личность: сильные стороны и слабости
-- Отношения и любовь
-- Карьера и призвание
-- Здоровье и энергетика
-- Интересные факты и особенности
-
-Пиши живым, тёплым языком, без шаблонов. Объём — не менее 400 слов.
-Только текст, без JSON, без заголовков со звёздочками, можно использовать эмодзи.
-"""
-    else:
-        prompt = f"""
-Write a detailed and deep description of the zodiac sign {sign}.
-Structure:
-- General character and essence of the sign
-- Personality: strengths and weaknesses
-- Relationships and love
-- Career and calling
-- Health and energy
-- Interesting facts and traits
-
-Write in a warm, vivid style, no clichés. At least 400 words.
-Plain text only, no JSON, no markdown headers, emojis are welcome.
-"""
-
-    data = {
-        "model": "deepseek/deepseek-chat",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1500
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=data) as resp:
-            try:
-                response_json = await resp.json(content_type=None)
-                content = response_json["choices"][0]["message"]["content"]
-                return content.strip()
+                return response_json["choices"][0]["message"]["content"].strip()
             except Exception as e:
                 if "error" in response_json:
                     print("Ошибка API:", response_json["error"]["message"])
                 else:
-                    print("Ошибка описания знака:", e)
+                    print("Ошибка запроса к AI:", e)
                 return ""
+
+# ====== ПОЛУЧЕНИЕ ГОРОСКОПА ======
+async def get_horoscope():
+    prompt = """
+Сделай гороскоп на следующие 24 часа для всех 12 знаков зодиака.
+Каждый знак должен получить 2-3 предложения, которые дают понимание что его ждет сегодня и как лучше действовать, но без жестких инструкций.
+Ответ строго в JSON формате без лишнего текста:
+{"Овен":"...","Телец":"...","Близнецы":"...","Рак":"...","Лев":"...","Дева":"...","Весы":"...","Скорпион":"...","Стрелец":"...","Козерог":"...","Водолей":"...","Рыбы":"..."}
+"""
+    result = await ask_ai(prompt, max_tokens=1500)
+    result = result.replace("```json", "").replace("```", "").strip()
+    return extract_json_from_text(result)
+
+# ====== ОПИСАНИЕ ЗНАКА ======
+async def get_sign_description(sign: str) -> str:
+    prompt = f"""
+Напиши подробное и глубокое описание знака зодиака {sign}.
+Структура: общая характеристика, характер и личность (сильные стороны и слабости), отношения и любовь, карьера и призвание, здоровье и энергетика, интересные факты.
+Пиши живым тёплым языком без шаблонов. Объём не менее 400 слов.
+Только текст, без JSON, без заголовков со звёздочками, можно использовать эмодзи.
+Не используй тире ни длинные ни короткие нигде в тексте.
+"""
+    return await ask_ai(prompt, max_tokens=1500)
 
 # ====== УТРЕННЕЕ УВЕДОМЛЕНИЕ ======
-async def get_morning_message(sign: str, lang: str) -> str:
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json"
-    }
+async def get_morning_message(sign: str) -> str:
+    template = random.choice(MORNING_TEMPLATES)
+    return template.format(sign=sign)
 
-    if lang == "ru":
-        prompt = f"""
-Напиши короткое утреннее астрологическое напоминание для знака зодиака {sign}.
-1-2 предложения, тёплым и вдохновляющим тоном, без клише.
-Только текст, без JSON, без лишних символов.
+# ====== РАСПОЗНАВАНИЕ ГОЛОСА (VOSK, бесплатно) ======
+async def transcribe_voice(ogg_file_path: str) -> str:
+    """Распознавание голоса через Vosk (офлайн, бесплатно)"""
+    global VOSK_MODEL
+
+    if VOSK_MODEL is None:
+        print("Vosk модель не загружена, распознавание невозможно")
+        return ""
+
+    wav_file_path = ogg_file_path.replace(".ogg", ".wav")
+
+    try:
+        # Конвертируем ogg в wav через ffmpeg
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-i", ogg_file_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_file_path, "-y",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await process.wait()
+
+        if process.returncode != 0:
+            print("Ошибка конвертации ogg в wav")
+            return ""
+
+        from vosk import KaldiRecognizer
+        import wave
+
+        wf = wave.open(wav_file_path, "rb")
+
+        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getframerate() != 16000:
+            print("Неверный формат WAV файла")
+            wf.close()
+            return ""
+
+        rec = KaldiRecognizer(VOSK_MODEL, wf.getframerate())
+        rec.SetWords(True)
+
+        results = []
+        while True:
+            data = wf.readframes(4000)
+            if len(data) == 0:
+                break
+            if rec.AcceptWaveform(data):
+                part_result = json.loads(rec.Result())
+                if part_result.get("text"):
+                    results.append(part_result["text"])
+
+        final_result = json.loads(rec.FinalResult())
+        if final_result.get("text"):
+            results.append(final_result["text"])
+
+        wf.close()
+
+        full_text = " ".join(results).strip()
+        return full_text
+
+    except Exception as e:
+        print(f"Ошибка распознавания голоса: {e}")
+        return ""
+    finally:
+        # Удаляем временный wav файл
+        try:
+            if os.path.exists(wav_file_path):
+                os.remove(wav_file_path)
+        except:
+            pass
+
+# ====== ОТВЕТ ТАРОЛОГА ======
+async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str) -> str:
+    history = get_user_tarot_history(user_id, tarologist["id"])
+    history_text = ""
+    if history:
+        history_text = "\n\nПредыдущие обращения этого человека к тебе:\n"
+        for item in history:
+            role_label = "Человек" if item["role"] == "user" else "Ты"
+            history_text += f"{role_label}: {item['text']}\n"
+        history_text += (
+            "\nЕсли человек спрашивает помнишь ли ты его, можешь ответить что помнишь, опираясь на историю. "
+            "Если не уверен, скажи 'кажется мы уже общались, да?'. "
+            "Если истории нет, вежливо съедь с темы, скажи что много клиентов и сложно всех удержать в памяти."
+        )
+
+    prompt = f"""
+{tarologist['personality']}
+{history_text}
+
+Новое обращение человека:
+{user_story}
+
+Дай развёрнутый ответ от лица своего персонажа. Упомяни карты которые легли (придумай сам). Ответь на запрос, расскажи что видишь в ситуации и что ждёт впереди. Пиши живым языком одним сплошным текстом без абзацев и переносов строк, как будто диктуешь голосовое. Знаки препинания обязательны, запятые и точки должны быть, иначе текст нечитаемый. Допускай живые ошибки и опечатки. Никаких тире ни длинных ни коротких нигде в тексте. Объём 200-300 слов.
 """
+    return await ask_ai(prompt, max_tokens=1000)
+
+# ====== ОТЛОЖЕННАЯ ОТПРАВКА ======
+async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: str):
+    delay = random.randint(5 * 60, 15 * 60)
+    await asyncio.sleep(delay)
+
+    answer = await get_tarot_answer(tarologist, user_story, str(user_id))
+    if answer:
+        save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
+        save_user_tarot_message(str(user_id), tarologist["id"], "tarot", answer)
+        full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
+        for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
+            await bot.send_message(user_id, part)
     else:
-        prompt = f"""
-Write a short morning astrological reminder for the zodiac sign {sign}.
-1-2 sentences, warm and inspiring tone, no clichés.
-Just plain text, no JSON, no extra symbols.
-"""
-
-    data = {
-        "model": "deepseek/deepseek-chat",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 200
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=data) as resp:
-            try:
-                response_json = await resp.json(content_type=None)
-                content = response_json["choices"][0]["message"]["content"]
-                return content.strip()
-            except Exception as e:
-                print("Ошибка утреннего сообщения:", e)
-                return ""
+        await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
 
 # ====== ОБНОВЛЕНИЕ ПРОГНОЗА ======
 async def update_forecast():
     print(f"[{datetime.now()}] Обновляю прогноз...")
     try:
-        forecast_ru = await get_horoscope("ru")
-        forecast_en = await get_horoscope("en")
-        if forecast_ru and forecast_en:
-            save_forecast({"ru": forecast_ru, "en": forecast_en})
+        forecast = await get_horoscope()
+        if forecast:
+            save_forecast({"ru": forecast})
             print("Прогноз обновлён!")
         else:
             print("Прогноз не обновлён, пустой ответ API")
@@ -324,26 +618,19 @@ async def send_morning_notifications():
     print(f"[{datetime.now()}] Отправляю утренние уведомления...")
     users = load_users()
     for user_id, user_data in users.items():
-        if "language" not in user_data or "sign" not in user_data:
+        if "sign" not in user_data:
             continue
-        lang = user_data["language"]
         sign = user_data["sign"]
         try:
-            msg = await get_morning_message(sign, lang)
+            msg = await get_morning_message(sign)
             if msg:
-                if lang == "ru":
-                    text = f"🌅 Доброе утро!\n\n🔮 {sign}:\n{msg}"
-                else:
-                    text = f"🌅 Good morning!\n\n🔮 {sign}:\n{msg}"
-                await bot.send_message(int(user_id), text)
+                await bot.send_message(int(user_id), msg)
         except Exception as e:
             print(f"Ошибка отправки уведомления пользователю {user_id}:", e)
 
 # ====== ПЛАНИРОВЩИК ======
 async def scheduler():
-    # При старте — сразу обновляем прогноз если файла нет
-    forecast = load_forecast()
-    if not forecast:
+    if not load_forecast():
         await update_forecast()
 
     forecast_updated_date = None
@@ -353,206 +640,252 @@ async def scheduler():
         now = datetime.now()
         today = now.date()
 
-        # Обновление прогноза ровно в полночь (00:00)
         if now.hour == 0 and now.minute == 0 and forecast_updated_date != today:
             forecast_updated_date = today
             await update_forecast()
 
-        # Утренние уведомления ровно в 8:00
         if now.hour == 8 and now.minute == 0 and morning_sent_date != today:
             morning_sent_date = today
             await send_morning_notifications()
 
-        # Спим до следующей минуты
         next_minute = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)
-        sleep_seconds = (next_minute - now).total_seconds()
-        await asyncio.sleep(sleep_seconds)
+        await asyncio.sleep((next_minute - now).total_seconds())
 
 # ====== ОБРАБОТЧИКИ ======
 @dp.message(F.text == "/start")
 async def start(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
-    if user_id in users and "language" in users[user_id] and "sign" in users[user_id]:
-        lang = users[user_id]["language"]
+    if user_id in users and "sign" in users[user_id]:
         sign = users[user_id]["sign"]
-        if lang == "ru":
-            await message.answer(
-                f"С возвращением! Твой знак: {sign}.",
-                reply_markup=get_main_keyboard(lang)
-            )
-        else:
-            await message.answer(
-                f"Welcome back! Your sign: {sign}.",
-                reply_markup=get_main_keyboard(lang)
-            )
+        await message.answer(f"С возвращением! Твой знак: {sign}. 🌟", reply_markup=get_main_keyboard())
     else:
-        await message.answer(
-            "Выбери язык / Choose language:",
-            reply_markup=get_language_keyboard()
-        )
+        await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
 
-# Выбор языка
-@dp.message(F.text.in_(LANGUAGES.keys()))
-async def set_language(message: Message):
+@dp.message(F.text == "🏠 Главное меню")
+async def go_home(message: Message):
     user_id = str(message.from_user.id)
+    if user_id in WAITING_TAROT_STORY:
+        del WAITING_TAROT_STORY[user_id]
+    if user_id in WAITING_SIGN_CHANGE:
+        del WAITING_SIGN_CHANGE[user_id]
+    await message.answer("Главное меню:", reply_markup=get_main_keyboard())
 
-    if user_id in WAITING_LANGUAGE_CHANGE:
-        del WAITING_LANGUAGE_CHANGE[user_id]
-        users = load_users()
-        users.setdefault(user_id, {})["language"] = LANGUAGES[message.text]
-        save_users(users)
-        lang_code = LANGUAGES[message.text]
-        if lang_code == "ru":
-            await message.answer("Язык изменён!", reply_markup=get_main_keyboard(lang_code))
-        else:
-            await message.answer("Language changed!", reply_markup=get_main_keyboard(lang_code))
-        return
-
-    users = load_users()
-    users.setdefault(user_id, {})["language"] = LANGUAGES[message.text]
-    save_users(users)
-    lang_code = LANGUAGES[message.text]
-    await message.answer(
-        "Выбери свой знак зодиака:" if lang_code == "ru" else "Choose your zodiac sign:",
-        reply_markup=get_sign_keyboard(lang_code)
-    )
-
-# Выбор знака зодиака
-@dp.message(F.text.in_(SIGNS["ru"] + SIGNS["en"]))
+@dp.message(F.text.in_(SIGNS))
 async def set_sign(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
-    user_data = users.get(user_id)
-
-    if not user_data or "language" not in user_data:
-        await message.answer("Сначала выбери язык / First choose language",
-                             reply_markup=get_language_keyboard())
-        return
-
-    lang_code = user_data["language"]
-    users[user_id]["sign"] = message.text
+    users.setdefault(user_id, {})["sign"] = message.text
     save_users(users)
 
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
-        if lang_code == "ru":
-            await message.answer(f"Знак зодиака изменён на {message.text}!", reply_markup=get_main_keyboard(lang_code))
-        else:
-            await message.answer(f"Zodiac sign changed to {message.text}!", reply_markup=get_main_keyboard(lang_code))
+        await message.answer(f"Знак зодиака изменён на {message.text}! ✨", reply_markup=get_main_keyboard())
         return
 
-    await message.answer(
-        "Твой знак сохранён! Можешь смотреть прогноз." if lang_code == "ru" else "Your sign is saved! You can view your forecast.",
-        reply_markup=get_main_keyboard(lang_code)
-    )
+    await message.answer("Твой знак сохранён! Добро пожаловать в Голос Звёзд 🌟", reply_markup=get_main_keyboard())
 
-# Просмотр прогноза
-@dp.message(F.text.in_(["🔮 Посмотреть прогноз", "🔮 View Forecast"]))
+@dp.message(F.text == "🔮 Прогноз на сегодня")
 async def send_forecast(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
     user_data = users.get(user_id)
 
-    if not user_data or "language" not in user_data or "sign" not in user_data:
-        await message.answer("Сначала выбери язык и знак зодиака / First choose language and zodiac sign",
-                             reply_markup=get_language_keyboard())
+    if not user_data or "sign" not in user_data:
+        await message.answer("Сначала выбери знак зодиака", reply_markup=get_sign_keyboard())
         return
 
-    lang = user_data["language"]
     sign = user_data["sign"]
-
     forecast_data = load_forecast()
-    if lang not in forecast_data or sign not in forecast_data[lang]:
-        await message.answer("Прогноз ещё не готов, попробуй позже" if lang == "ru" else "Forecast is not ready yet, try later")
+
+    if "ru" not in forecast_data or sign not in forecast_data["ru"]:
+        await message.answer("Прогноз ещё не готов, попробуй позже 🌙")
         return
 
-    await message.answer(f"🔮 {sign}:\n{forecast_data[lang][sign]}")
+    await message.answer(f"🔮 *{sign}*\n\n{forecast_data['ru'][sign]}", parse_mode="Markdown")
 
-# Читать о себе
-@dp.message(F.text.in_(["📖 Читать о себе", "📖 Read About Me"]))
+@dp.message(F.text == "📖 Читать о себе")
 async def read_about_me(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
     user_data = users.get(user_id)
 
-    if not user_data or "language" not in user_data or "sign" not in user_data:
-        await message.answer("Сначала выбери язык и знак зодиака / First choose language and zodiac sign",
-                             reply_markup=get_language_keyboard())
+    if not user_data or "sign" not in user_data:
+        await message.answer("Сначала выбери знак зодиака", reply_markup=get_sign_keyboard())
         return
 
-    lang = user_data["language"]
     sign = user_data["sign"]
-
     descriptions = load_descriptions()
-    cache_key = f"{sign}_{lang}"
+    cache_key = f"{sign}_ru"
 
-    if cache_key in descriptions:
-        await message.answer(f"📖 {sign}\n\n{descriptions[cache_key]}")
+    if cache_key not in descriptions:
+        await message.answer("⏳ Составляю описание твоего знака...")
+        description = await get_sign_description(sign)
+        if not description:
+            await message.answer("Не удалось получить описание, попробуй позже.")
+            return
+        descriptions[cache_key] = description
+        save_descriptions(descriptions)
+    else:
+        description = descriptions[cache_key]
+
+    full_text = f"📖 *{sign}*\n\n{description}"
+    for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
+        await message.answer(part, parse_mode="Markdown")
+
+@dp.message(F.text == "🎴 Консультация таролога")
+async def tarot_list(message: Message):
+    await message.answer(
+        "🔯 Наши тарологи:\n\nВыбери специалиста и задай вопрос прямо под его карточкой 👇",
+        reply_markup=get_back_keyboard()
+    )
+    for t in TAROLOGISTS:
+        await message.answer(
+            t["description"],
+            parse_mode="Markdown",
+            reply_markup=get_ask_tarot_inline(t["id"])
+        )
+
+@dp.callback_query(F.data.startswith("ask_"))
+async def ask_tarot(callback: CallbackQuery):
+    tarot_id = callback.data.replace("ask_", "")
+    tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
+    if not tarologist:
+        await callback.answer("Таролог не найден")
         return
 
-    await message.answer("⏳ Составляю описание твоего знака..." if lang == "ru" else "⏳ Generating your sign description...")
+    user_id = str(callback.from_user.id)
+    WAITING_TAROT_STORY[user_id] = tarot_id
 
-    description = await get_sign_description(sign, lang)
+    brief = (
+        f"📋 Отлично, ты выбрал *{tarologist['name']}*!\n\n"
+        "Чтобы таролог мог дать точный ответ, опиши свою ситуацию по плану:\n\n"
+        "1. *История* что уже произошло и что происходит сейчас\n"
+        "2. *Участники* имя, пол, возраст, кем приходится тебе, дата рождения если знаешь\n"
+        "3. *Запрос* что именно хочешь узнать\n"
+        "4. *Твои чувства* как ты сейчас себя чувствуешь\n"
+        "5. *Временной горизонт* на какой период хочешь прогноз\n\n"
+        "Напиши всё одним сообщением в свободной форме 👇\n\n"
+        "_Или запиши голосовое сообщение 🎤\n"
+        "⚠️ Важно: говори чётко и разборчиво, без фонового шума, "
+        "иначе сообщение может не дойти до таролога._"
+    )
 
-    if not description:
+    await callback.message.answer(brief, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
+    await callback.answer()
+
+@dp.message(F.text == "❌ Отменить")
+async def cancel_tarot(message: Message):
+    user_id = str(message.from_user.id)
+    if user_id in WAITING_TAROT_STORY:
+        del WAITING_TAROT_STORY[user_id]
+    await message.answer("Отменено.", reply_markup=get_main_keyboard())
+
+@dp.message(F.text == "⭐ Отзывы")
+async def show_reviews(message: Message):
+    shuffled = ALL_REVIEWS.copy()
+    random.shuffle(shuffled)
+
+    await message.answer("⭐ *Отзывы наших пользователей*\n\nЧитайте что говорят люди которые уже пользуются Голосом Звёзд 👇", parse_mode="Markdown")
+
+    chunk = ""
+    for review in shuffled:
+        line = f"👤 *{review['author']}*\n_{review['text']}_\n\n"
+        if len(chunk) + len(line) > 3800:
+            await message.answer(chunk, parse_mode="Markdown")
+            chunk = ""
+        chunk += line
+
+    if chunk:
+        await message.answer(chunk, parse_mode="Markdown")
+
+@dp.message(F.text == "ℹ️ О нас")
+async def about_us(message: Message):
+    await message.answer(ABOUT_TEXT, parse_mode="Markdown")
+
+@dp.message(F.text == "⚙️ Настройки")
+async def settings(message: Message):
+    await message.answer("⚙️ Настройки:", reply_markup=get_settings_keyboard())
+
+@dp.message(F.text == "♈ Изменить знак зодиака")
+async def change_sign(message: Message):
+    user_id = str(message.from_user.id)
+    WAITING_SIGN_CHANGE[user_id] = True
+    await message.answer("Выбери новый знак зодиака:", reply_markup=get_sign_keyboard())
+
+# ====== ГОЛОСОВЫЕ СООБЩЕНИЯ ======
+@dp.message(F.voice)
+async def handle_voice(message: Message):
+    user_id = str(message.from_user.id)
+
+    if user_id not in WAITING_TAROT_STORY:
+        await message.answer("Голосовые сообщения принимаются только при обращении к тарологу. Выбери таролога в разделе 🎴 Консультация таролога")
+        return
+
+    await message.answer("🎤 Слушаю твоё сообщение, подожди немного...")
+
+    voice: Voice = message.voice
+    file = await bot.get_file(voice.file_id)
+    file_path = f"voice_{user_id}.ogg"
+
+    await bot.download_file(file.file_path, file_path)
+
+    text = await transcribe_voice(file_path)
+
+    try:
+        os.remove(file_path)
+    except:
+        pass
+
+    if not text:
         await message.answer(
-            "Не удалось получить описание, попробуй позже." if lang == "ru" else "Could not get description, try later."
+            "😔 К сожалению, не удалось доставить голосовое сообщение до таролога. "
+            "Пожалуйста, напишите ваш вопрос текстом. Извините за неполадки!",
+            reply_markup=get_cancel_keyboard()
         )
         return
 
-    descriptions[cache_key] = description
-    save_descriptions(descriptions)
+    await message.answer(f"📝 Распознал твоё сообщение:\n\n_{text}_", parse_mode="Markdown")
 
-    await message.answer(f"📖 {sign}\n\n{description}")
+    tarot_id = WAITING_TAROT_STORY.pop(user_id)
+    tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
 
-# Настройки
-@dp.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings"]))
-async def settings(message: Message):
-    users = load_users()
-    user_id = str(message.from_user.id)
-    user_data = users.get(user_id, {})
-    lang = user_data.get("language", "ru")
+    if not tarologist:
+        await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
+        return
+
     await message.answer(
-        "⚙️ Настройки:" if lang == "ru" else "⚙️ Settings:",
-        reply_markup=get_settings_keyboard(lang)
+        f"✅ Запрос принят! {tarologist['name']} изучит карты и ответит тебе в течение 15-20 минут.",
+        reply_markup=get_main_keyboard()
     )
 
-# Изменить язык
-@dp.message(F.text.in_(["🌍 Изменить язык", "🌍 Change language"]))
-async def change_language(message: Message):
+    asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, text))
+
+# ====== ТЕКСТОВЫЕ СООБЩЕНИЯ (история для таролога) ======
+@dp.message(F.text & ~F.text.startswith("/"))
+async def handle_story(message: Message):
     user_id = str(message.from_user.id)
-    WAITING_LANGUAGE_CHANGE[user_id] = True
+
+    if user_id not in WAITING_TAROT_STORY:
+        return
+
+    tarot_id = WAITING_TAROT_STORY.pop(user_id)
+    tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
+
+    if not tarologist:
+        await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
+        return
+
     await message.answer(
-        "Выбери новый язык / Choose new language:",
-        reply_markup=get_language_keyboard()
+        f"✅ Запрос принят! {tarologist['name']} изучит карты и ответит тебе в течение 15-20 минут.",
+        reply_markup=get_main_keyboard()
     )
 
-# Изменить знак
-@dp.message(F.text.in_(["♈ Изменить знак зодиака", "♈ Change zodiac sign"]))
-async def change_sign(message: Message):
-    users = load_users()
-    user_id = str(message.from_user.id)
-    lang = users.get(user_id, {}).get("language", "ru")
-    WAITING_SIGN_CHANGE[user_id] = True
-    await message.answer(
-        "Выбери новый знак зодиака:" if lang == "ru" else "Choose your new zodiac sign:",
-        reply_markup=get_sign_keyboard(lang)
-    )
-
-# Назад
-@dp.message(F.text.in_(["◀️ Назад", "◀️ Back"]))
-async def go_back(message: Message):
-    users = load_users()
-    user_id = str(message.from_user.id)
-    lang = users.get(user_id, {}).get("language", "ru")
-    await message.answer(
-        "Главное меню:" if lang == "ru" else "Main menu:",
-        reply_markup=get_main_keyboard(lang)
-    )
+    asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, message.text))
 
 # ====== ЗАПУСК ======
 async def main():
+    init_vosk()
     asyncio.create_task(scheduler())
     await dp.start_polling(bot)
 
