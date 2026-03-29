@@ -1097,7 +1097,21 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 
     if is_flagged:
         moderation_hint = tarologist.get("moderation_hint", "Начни с короткой ироничной ремарки про грубые слова, одно предложение.")
-        prompt = f"""
+        if age >= 40:
+            prompt = f"""
+{tarologist['personality']}
+{history_text}
+
+Новое обращение человека (ВНИМАНИЕ: в сообщении были обнаружены нецензурные слова или оскорбления):
+{user_story}
+
+{moderation_hint}
+
+Ты пишешь с телефона двумя пальцами, медленно. Отправляй мысли по одной, короткими сообщениями по 1-2 строки. Каждое сообщение отдели строкой "|||". Суммарно не более 300 знаков. Никаких тире. Знаки препинания почти не ставишь. Сохраняй свой характер.
+{typing_style}
+"""
+        else:
+            prompt = f"""
 {tarologist['personality']}
 {history_text}
 
@@ -1110,6 +1124,28 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 {typing_style}
 """
         return await ask_ai(prompt, max_tokens=400)
+    elif age >= 40:
+        prompt = f"""
+{tarologist['personality']}
+{history_text}
+
+Новое обращение человека:
+{user_story}
+
+Ты только что разложил карты на столе и теперь пишешь с телефона двумя пальцами, медленно. Отвечаешь по мере того как смотришь на карты, не собираешь всё в один текст. Каждую законченную мысль отправляешь отдельно. Карту упоминаешь когда до неё доходишь по смыслу, не перечисляешь всё сразу в начале.
+
+ФОРМАТ: серия коротких сообщений. Каждое сообщение — 1-2 строки. Между сообщениями ставь разделитель "|||" на отдельной строке. Суммарно 5-8 сообщений, не больше 400 знаков всего.
+
+КАК ПИСАТЬ:
+- Знаки препинания почти не ставишь, запятые очень редко, точка иногда в конце
+- Есть 2-3 слова-паразита которые повторяются (выбери сами исходя из характера персонажа: "значит", "ну вот", "слушай", "смотри")
+- Опечатки естественные: слипшиеся слова, пропущенный пробел, иногда лишняя буква
+- Не развлекаешь клиента, не расписываешь, тебе лень печатать
+- Мысли рваные, без красивых переходов
+- Сохраняй свой характер и тон
+{typing_style}
+"""
+        return await ask_ai(prompt, max_tokens=500)
     else:
         prompt = f"""
 {tarologist['personality']}
@@ -1154,9 +1190,16 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
     if answer:
         save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
         save_user_tarot_message(str(user_id), tarologist["id"], "tarot", answer)
-        full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
-        for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
-            await bot.send_message(user_id, part)
+        if age >= 40 and "|||" in answer:
+            parts = [p.strip() for p in answer.split("|||") if p.strip()]
+            await bot.send_message(user_id, f"🔯 {tarologist['name']}:\n\n{parts[0]}")
+            for part in parts[1:]:
+                await asyncio.sleep(random.randint(8, 20))
+                await bot.send_message(user_id, part)
+        else:
+            full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
+            for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
+                await bot.send_message(user_id, part)
     else:
         await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
 
