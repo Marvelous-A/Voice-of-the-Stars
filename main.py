@@ -4,6 +4,10 @@ import re
 import random
 import os
 import subprocess
+import smtplib
+import uuid
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -19,6 +23,14 @@ load_dotenv()
 # ====== Токены ======
 TOKEN = getenv("BOT_TOKEN")
 OPENROUTER_KEY = getenv("OPENROUTER_KEY")
+
+# ====== Администратор и почта ======
+ADMIN_ID = int(getenv("ADMIN_ID", "0"))       # Telegram ID администратора (заполни в .env)
+EMAIL_FROM = getenv("EMAIL_FROM", "")         # Почта ОТ кого шлём уведомления (заполни в .env)
+EMAIL_PASSWORD = getenv("EMAIL_PASSWORD", "") # Пароль от этой почты (заполни в .env)
+EMAIL_TO = "mogneto.r@mail.ru"               # Куда приходят уведомления
+REVIEWS_FILE = "reviews.json"
+PENDING_REVIEWS_FILE = "pending_reviews.json"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -832,41 +844,17 @@ ASTROLOGERS = [
 
 ASTROLOGERS_BY_ID = {a["id"]: a for a in ASTROLOGERS}
 
-# ====== ОТЗЫВЫ ======
-ALL_REVIEWS = [
-    {"author": "@olelotts (Олег)", "tag": "🎴 Консультация таролога", "text": "Хотел попробовать просто из интереса, думал что это всё несерьёзно. Но Борис реально удивил, написал прям по делу про мою ситуацию на работе. Даже не ожидал такого точного ответа если честно."},
-    {"author": "@turumbos (Света)", "tag": "🎴 Консультация таролога", "text": "Майечка просто умничка, так тепло и точно описала мои отношения, я аж прослезилась немного. Чувствуется что человек реально понимает в этом деле, не просто слова говорит. Спасибо большое!"},
-    {"author": "@redrecv", "tag": "🔮 Прогнозы и знаки", "text": "Прогноз на день приходит каждое утро, удобно что не надо самому заходить и проверять. Пользуюсь уже месяц примерно, в целом всё нравится."},
-    {"author": "@alenkalublu333 (Алёна)", "tag": "🎴 Консультация таролога", "text": "Обратилась к Ксении насчёт отношений, она так грамотно и мягко всё объяснила, прям по полочкам разложила. Очень понравился её подход, буду ещё обращаться."},
-    {"author": "@CBeTDemoHa32 (Дима)", "tag": "🎴 Консультация таролога", "text": "Сначала скептически отнёсся, но попробовал таро у Романа. Он говорит прямо, без воды, мне такой стиль нравится. Сказал что в карьере надо подождать до осени, посмотрим насколько точно."},
-    {"author": "@Bl4ck_SwaNZN (Вячеслав)", "tag": "🎴 Консультация таролога", "text": "Вадим очень интересно объясняет, глубоко копает. Может немного многословно, но зато понятно откуда что берётся. Про нумерологию тоже рассказал, интересная тема оказалась."},
-    {"author": "@Anya_Sweet_69 (Аня)", "tag": "🎴 Консультация таролога", "text": "Алина такая живая и энергичная, приятно с ней общаться. Сделала расклад на ситуацию и прям в точку попала. Подружкам уже посоветовала этот бот."},
-    {"author": "@Sergey_Volk7 (Сергей)", "tag": "🎴 Консультация таролога", "text": "Игорь немногословный но это даже плюс, говорит только самое важное. Чувствуется опыт. Доволен консультацией, спасибо."},
-    {"author": "@Damla_menecer (Шайхар)", "tag": "🔮 Прогнозы и знаки", "text": "Описание моего знака зодиака очень подробное, много всего интересного узнала про себя. Прогнозы тоже читаю каждый день теперь."},
-    {"author": "@KizRuma", "tag": "🎴 Консультация таролога", "text": "Наташа такая добрая, прям чувствуется забота в её словах. Помогла разобраться в сложной ситуации, стало немного легче на душе после консультации."},
-    {"author": "@VenyVidiVichi (Артём)", "tag": "🎴 Консультация таролога", "text": "Артём как таролог очень дотошный в хорошем смысле, всё объяснил детально, ответил именно на мой вопрос а не общие слова говорил. Рекомендую."},
-    {"author": "Анонимный пользователь", "tag": "🔮 Прогнозы и знаки", "text": "Пользуюсь ботом уже давно, прогнозы интересные. Иногда прям удивляет точностью."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Светлана очень мудрая, чувствуется огромный опыт. Немного старомодно говорит, но это даже придаёт особый шарм. Спасибо за консультацию!"},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Даша молодая но очень точно считывает ситуацию, была удивлена. И общаться с ней легко и приятно."},
-    {"author": "Анонимный пользователь", "tag": "🔮 Прогнозы и знаки", "text": "Описание знака зодиака очень понравилось, прям про меня написано. Много точных моментов."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Борис суховат немного, но зато по делу всё говорит. Мне нравится что он не тянет кота за хвост. Полезная консультация была."},
-    {"author": "Анонимный пользователь", "tag": "🔮 Прогнозы и знаки", "text": "Утренние уведомления это классная функция, сразу настраивает на день. Спасибо разработчикам."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Первый раз пробовала таро онлайн и осталась довольна. Майя очень внимательно подошла к вопросу."},
-    {"author": "Анонимный пользователь", "tag": "✨ О сервисе", "text": "Хороший бот, всё работает, тарологи отвечают. Буду пользоваться дальше."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Игорь с первого раза понял суть моей ситуации и дал очень точный ответ. Ценю таких специалистов."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Наташа помогла мне когда я совсем запуталась в отношениях, очень благодарна. Чувствуется что она реально вкладывается в каждого клиента."},
-    {"author": "Анонимный пользователь", "tag": "🔮 Прогнозы и знаки", "text": "Прогноз на сегодня прям попал в точку, удивительно. Пользуюсь каждый день."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Алина такая позитивная, после консультации с ней настроение поднялось. И карты интересно интерпретирует, не банально."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Вадим погрузил меня в такие глубины что я потом долго думала. Очень интересный взгляд на ситуацию через нумерологию и таро."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Ксения как психолог и таролог это вообще отдельный уровень. Помогла понять не только что будет, но и почему так происходит."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Артём очень конкретный и точный в ответах, мне это нравится. Никакой воды, только по делу."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Роман говорит резко иногда, но честно. Лучше горькая правда чем сладкая ложь, как говорится."},
-    {"author": "Анонимный пользователь", "tag": "✨ О сервисе", "text": "Зашла просто попробовать, осталась на несколько месяцев. Бот реально полезный и тарологи хорошие."},
-    {"author": "Анонимный пользователь", "tag": "🔮 Прогнозы и знаки", "text": "Описание моего знака зодиака поразило точностью. Сразу поняла что это серьёзный ресурс а не просто развлечение."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Светлана прям как бабушка мудрая, всё знает и понимает. Очень тепло и душевно прошла консультация."},
-    {"author": "Анонимный пользователь", "tag": "🎴 Консультация таролога", "text": "Даша молодец что не боится говорить что думает, даже если это неожиданно. Её считывания очень точные."},
-    {"author": "Анонимный пользователь", "tag": "✨ О сервисе", "text": "Пользуюсь уже полгода, прогнозы интересные, тарологи профессиональные. Рекомендую всем."},
-]
+# ====== ОТЗЫВЫ (загружаются из файла) ======
+def _load_reviews_from_file() -> list:
+    if os.path.exists(REVIEWS_FILE):
+        try:
+            with open(REVIEWS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+ALL_REVIEWS = _load_reviews_from_file()
 
 # Перемешанный список для пагинации (перемешивается при запуске)
 SHUFFLED_REVIEWS = ALL_REVIEWS.copy()
@@ -953,6 +941,7 @@ ABOUT_TEXT = (
 WAITING_SIGN_CHANGE = {}
 WAITING_TAROT_STORY = {}
 WAITING_ASTRO_STORY = {}
+WAITING_REVIEW = {}   # {user_id: {"step": "topic"|"anon"|"name"|"text", "topic": str, "anonymous": bool, "name": str}}
 ACTIVE_SESSIONS = {}
 # ACTIVE_SESSIONS: {user_id_str: {"tarologist": dict, "history": list, "busy": bool, "msg_count": int, "profanity_count": int}}
 
@@ -1186,6 +1175,113 @@ def save_user_astro_message(user_id: str, astro_id: str, role: str, text: str):
     })
     history[user_id][astro_id] = history[user_id][astro_id][-10:]
     save_astro_history(history)
+
+# ====== ОТЗЫВЫ: СОХРАНЕНИЕ И МОДЕРАЦИЯ ======
+def save_reviews_to_file(reviews: list):
+    with open(REVIEWS_FILE, "w", encoding="utf-8") as f:
+        json.dump(reviews, f, ensure_ascii=False, indent=2)
+
+def load_pending_reviews() -> dict:
+    if os.path.exists(PENDING_REVIEWS_FILE):
+        try:
+            with open(PENDING_REVIEWS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_pending_reviews(pending: dict):
+    with open(PENDING_REVIEWS_FILE, "w", encoding="utf-8") as f:
+        json.dump(pending, f, ensure_ascii=False, indent=2)
+
+def publish_review(review_id: str) -> bool:
+    """Публикует отзыв из pending в основной список. Возвращает True если успешно."""
+    pending = load_pending_reviews()
+    if review_id not in pending:
+        return False
+    review = pending.pop(review_id)
+    save_pending_reviews(pending)
+    # Добавляем в файл и в память
+    published = {"author": review["author"], "tag": review["tag"], "text": review["text"]}
+    reviews = _load_reviews_from_file()
+    reviews.append(published)
+    save_reviews_to_file(reviews)
+    ALL_REVIEWS.append(published)
+    SHUFFLED_REVIEWS.append(published)
+    return True
+
+def _send_email_sync(subject: str, body: str):
+    """Синхронная отправка email — запускать через run_in_executor."""
+    if not EMAIL_FROM or not EMAIL_PASSWORD:
+        return
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_FROM
+        msg["To"] = EMAIL_TO
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        with smtplib.SMTP_SSL("smtp.mail.ru", 465) as server:
+            server.login(EMAIL_FROM, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+    except Exception as e:
+        print(f"[EMAIL] Ошибка отправки: {e}")
+
+async def send_review_notification(review_id: str, review: dict):
+    """Отправляет email и Telegram-уведомление администратору о новом отзыве."""
+    date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    subject = "⭐ Новый отзыв на бот «Голос Звёзд»"
+    body = (
+        f"Новый отзыв на бот «Голос Звёзд» ожидает модерации.\n\n"
+        f"ID отзыва: {review_id}\n"
+        f"Дата: {date_str}\n"
+        f"Автор: {review['author']}\n"
+        f"Тема: {review['tag']}\n\n"
+        f"Текст:\n{review['text']}\n\n"
+        f"---\n"
+        f"Для управления отзывом откройте Telegram-бот — там придёт уведомление с кнопками."
+    )
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _send_email_sync, subject, body)
+
+    if ADMIN_ID:
+        admin_text = (
+            f"⭐ *Новый отзыв на модерацию*\n\n"
+            f"👤 *Автор:* {review['author']}\n"
+            f"🏷 *Тема:* {review['tag']}\n"
+            f"📅 *Дата:* {date_str}\n\n"
+            f"💬 *Текст:*\n{review['text']}"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"radmin_ok_{review_id}"),
+            InlineKeyboardButton(text="❌ Отклонить",   callback_data=f"radmin_no_{review_id}"),
+        ]])
+        try:
+            await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown", reply_markup=keyboard)
+        except Exception as e:
+            print(f"[ADMIN] Не удалось отправить уведомление: {e}")
+
+def get_review_topic_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔮 Знаки зодиака",     callback_data="rev_topic_zodiac")],
+        [InlineKeyboardButton(text="🎴 Таролог",            callback_data="rev_topic_tarot")],
+        [InlineKeyboardButton(text="⭐ Астролог",           callback_data="rev_topic_astro")],
+        [InlineKeyboardButton(text="✨ О сервисе в целом",     callback_data="rev_topic_general")],
+        [InlineKeyboardButton(text="❌ Отмена",              callback_data="rev_cancel")],
+    ])
+
+def get_review_anon_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Анонимно",           callback_data="rev_anon_yes")],
+        [InlineKeyboardButton(text="✍️ С моим именем",      callback_data="rev_anon_no")],
+        [InlineKeyboardButton(text="❌ Отмена",              callback_data="rev_cancel")],
+    ])
+
+REVIEW_TOPIC_MAP = {
+    "rev_topic_zodiac":   "🔮 Прогнозы и знаки",
+    "rev_topic_tarot":    "🎴 Консультация таролога",
+    "rev_topic_astro":    "⭐ Консультация астролога",
+    "rev_topic_general":  "✨ О сервисе",
+}
 
 # ====== БЕЗОПАСНЫЙ РАЗБОР JSON ======
 def extract_json_from_text(text: str):
@@ -2129,6 +2225,7 @@ async def go_home(message: Message):
         del WAITING_ASTRO_STORY[user_id]
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
+    WAITING_REVIEW.pop(user_id, None)
     if user_id in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[user_id]
     SESSION_BUSY.pop(user_id, None)
@@ -2374,23 +2471,135 @@ async def cancel_tarot(message: Message):
 
 @dp.message(F.text == "⭐ Отзывы")
 async def show_reviews(message: Message):
-    user_id = str(message.from_user.id)
-    msg1 = await message.answer(
+    write_btn = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✍️ Оставить отзыв", callback_data="write_review")
+    ]])
+    await message.answer(
         "⭐ *Отзывы наших пользователей*\n\nЧитайте что говорят люди которые уже пользуются Голосом Звёзд 👇",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
     )
     text = get_reviews_page_text(0)
     keyboard = get_reviews_more_keyboard(REVIEWS_PER_PAGE)
-    msg2 = await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+    await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+    await message.answer(
+        "Хочешь поделиться своим впечатлением?",
+        reply_markup=write_btn
+    )
 
 @dp.callback_query(F.data.startswith("reviews_"))
 async def show_more_reviews(callback: CallbackQuery):
-    user_id = str(callback.from_user.id)
     offset = int(callback.data.replace("reviews_", ""))
     text = get_reviews_page_text(offset)
     keyboard = get_reviews_more_keyboard(offset + REVIEWS_PER_PAGE)
-    msg = await callback.message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+    await callback.message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+    await callback.answer()
+
+# ====== ОСТАВИТЬ ОТЗЫВ: НАЧАЛО ======
+@dp.callback_query(F.data == "write_review")
+async def review_start(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    if user_id in ACTIVE_SESSIONS:
+        await callback.answer("Сначала заверши текущий сеанс.", show_alert=True)
+        return
+    WAITING_REVIEW[user_id] = {"step": "topic"}
+    await callback.message.answer(
+        "✍️ *Оставить отзыв*\n\nПро что хочешь написать?",
+        parse_mode="Markdown",
+        reply_markup=get_review_topic_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("rev_topic_"))
+async def review_topic(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    if user_id not in WAITING_REVIEW or WAITING_REVIEW[user_id].get("step") != "topic":
+        await callback.answer()
+        return
+    tag = REVIEW_TOPIC_MAP.get(callback.data)
+    if not tag:
+        await callback.answer()
+        return
+    WAITING_REVIEW[user_id]["topic"] = tag
+    WAITING_REVIEW[user_id]["step"] = "anon"
+    await callback.message.answer(
+        "Как хочешь подписать отзыв?",
+        reply_markup=get_review_anon_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.in_({"rev_anon_yes", "rev_anon_no"}))
+async def review_anon(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    if user_id not in WAITING_REVIEW or WAITING_REVIEW[user_id].get("step") != "anon":
+        await callback.answer()
+        return
+    if callback.data == "rev_anon_yes":
+        WAITING_REVIEW[user_id]["anonymous"] = True
+        WAITING_REVIEW[user_id]["name"] = "Анонимный пользователь"
+        WAITING_REVIEW[user_id]["step"] = "text"
+        await callback.message.answer(
+            "Отлично! Теперь напиши свой отзыв — просто отправь сообщение:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="❌ Отмена", callback_data="rev_cancel")
+            ]])
+        )
+    else:
+        WAITING_REVIEW[user_id]["anonymous"] = False
+        WAITING_REVIEW[user_id]["step"] = "name"
+        await callback.message.answer(
+            "Как тебя зовут? Напиши своё настоящее имя:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="❌ Отмена", callback_data="rev_cancel")
+            ]])
+        )
+    await callback.answer()
+
+@dp.callback_query(F.data == "rev_cancel")
+async def review_cancel(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    WAITING_REVIEW.pop(user_id, None)
+    await callback.message.answer("Отменено.", reply_markup=get_main_keyboard())
+    await callback.answer()
+
+# ====== МОДЕРАЦИЯ ОТЗЫВОВ (только для администратора) ======
+@dp.callback_query(F.data.startswith("radmin_ok_"))
+async def admin_approve_review(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    review_id = callback.data.replace("radmin_ok_", "")
+    if publish_review(review_id):
+        await callback.message.edit_text(
+            callback.message.text + "\n\n✅ *Опубликован*",
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.edit_text(
+            callback.message.text + "\n\n⚠️ Отзыв не найден (уже обработан?)",
+            parse_mode="Markdown"
+        )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("radmin_no_"))
+async def admin_reject_review(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    review_id = callback.data.replace("radmin_no_", "")
+    pending = load_pending_reviews()
+    if review_id in pending:
+        pending.pop(review_id)
+        save_pending_reviews(pending)
+        await callback.message.edit_text(
+            callback.message.text + "\n\n❌ *Отклонён*",
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.edit_text(
+            callback.message.text + "\n\n⚠️ Отзыв не найден (уже обработан?)",
+            parse_mode="Markdown"
+        )
     await callback.answer()
 
 @dp.message(F.text == "ℹ️ О нас")
@@ -2518,6 +2727,55 @@ async def end_session_manually(message: Message):
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_story(message: Message):
     user_id = str(message.from_user.id)
+
+    # ====== ПОТОК ОТЗЫВА ======
+    if user_id in WAITING_REVIEW:
+        state = WAITING_REVIEW[user_id]
+        step = state.get("step")
+
+        if step == "name":
+            name = message.text.strip()
+            if len(name) < 2 or len(name) > 50:
+                await message.answer("Пожалуйста, введи нормальное имя (от 2 до 50 символов):")
+                return
+            state["name"] = name
+            state["step"] = "text"
+            await message.answer(
+                f"Приятно познакомиться, {name}! Теперь напиши свой отзыв:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="❌ Отмена", callback_data="rev_cancel")
+                ]])
+            )
+            return
+
+        if step == "text":
+            text = message.text.strip()
+            if len(text) < 10:
+                await message.answer("Отзыв слишком короткий. Напиши хотя бы пару предложений:")
+                return
+            if len(text) > 1000:
+                await message.answer("Отзыв слишком длинный (максимум 1000 символов). Сократи немного:")
+                return
+            review_data = WAITING_REVIEW.pop(user_id)
+            review_id = uuid.uuid4().hex[:10]
+            new_review = {
+                "author": review_data["name"],
+                "tag": review_data["topic"],
+                "text": text,
+            }
+            pending = load_pending_reviews()
+            pending[review_id] = new_review
+            save_pending_reviews(pending)
+            await message.answer(
+                "✨ *Спасибо за отзыв!*\n\n"
+                "Он отправлен на модерацию — обычно это занимает не больше суток. "
+                "После одобрения он появится в разделе «Отзывы» для всех пользователей. 🌟",
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
+            )
+            asyncio.create_task(send_review_notification(review_id, new_review))
+            return
+        return
 
     # Если активен сеанс — обрабатываем как допвопрос
     if user_id in ACTIVE_SESSIONS:
