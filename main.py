@@ -8,7 +8,7 @@ import smtplib
 import uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
@@ -1330,6 +1330,25 @@ def get_review_anon_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="❌ Отмена",              callback_data="rev_cancel")],
     ])
 
+def is_working_hours() -> bool:
+    """Рабочее время специалистов: 9:00–22:00 по МСК (UTC+3)."""
+    msk_hour = (datetime.now(timezone.utc).hour + 3) % 24
+    return 9 <= msk_hour < 22
+
+def get_offline_message(specialist_name: str) -> str:
+    hour = (datetime.now(timezone.utc).hour + 3) % 24
+    if hour < 9:
+        back_at = "в 9:00"
+        reason = "ещё отдыхает"
+    else:
+        back_at = "завтра в 9:00"
+        reason = "уже завершил приём на сегодня"
+    return (
+        f"🌙 *{specialist_name} сейчас не на месте*\n\n"
+        f"Специалист {reason} — приём ведётся с 9:00 до 22:00 по Москве.\n"
+        f"Возвращайся {back_at}, и {specialist_name} обязательно тебя примет. 🌟"
+    )
+
 REVIEW_TOPIC_MAP = {
     "rev_topic_zodiac":   "🔮 Прогнозы и знаки",
     "rev_topic_tarot":    "🎴 Консультация таролога",
@@ -2557,6 +2576,11 @@ async def ask_tarot(callback: CallbackQuery):
         await callback.answer("Таролог не найден")
         return
 
+    if not is_working_hours():
+        await callback.message.answer(get_offline_message(tarologist["name"]), parse_mode="Markdown")
+        await callback.answer()
+        return
+
     user_id = str(callback.from_user.id)
     WAITING_TAROT_STORY[user_id] = tarot_id
 
@@ -2619,6 +2643,11 @@ async def ask_astro(callback: CallbackQuery):
     astrologer = ASTROLOGERS_BY_ID.get(astro_id)
     if not astrologer:
         await callback.answer("Астролог не найден")
+        return
+
+    if not is_working_hours():
+        await callback.message.answer(get_offline_message(astrologer["name"]), parse_mode="Markdown")
+        await callback.answer()
         return
 
     user_id = str(callback.from_user.id)
