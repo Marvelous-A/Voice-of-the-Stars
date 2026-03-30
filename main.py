@@ -2201,6 +2201,9 @@ async def send_forecast(message: Message):
     users.setdefault(user_id, {})["forecast_date"] = today
     users[user_id]["forecast_msg_id"] = forecast_msg.message_id
     save_users(users)
+    # Восстанавливаем клавиатуру — она могла пропасть после удаления предыдущих сообщений
+    nav_msg = await message.answer("☝️ Прогноз выше", reply_markup=get_main_keyboard())
+    track_nav_msg(user_id, nav_msg)
 
 @dp.message(F.text == "📖 Читать о себе")
 async def read_about_me(message: Message):
@@ -2235,8 +2238,12 @@ async def read_about_me(message: Message):
     description = re.sub(r'#{1,6}\s*', '', description)
 
     full_text = f"📖 *{sign}*\n\n{description}"
-    for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
-        msg = await message.answer(part, parse_mode="Markdown")
+    parts = [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]
+    for i, part in enumerate(parts):
+        if i == len(parts) - 1:
+            msg = await message.answer(part, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        else:
+            msg = await message.answer(part, parse_mode="Markdown")
         track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "🌟 Консультации")
@@ -2409,7 +2416,8 @@ async def show_reviews(message: Message):
     await clear_nav_msgs(user_id)
     msg1 = await message.answer(
         "⭐ *Отзывы наших пользователей*\n\nЧитайте что говорят люди которые уже пользуются Голосом Звёзд 👇",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
     track_nav_msg(user_id, msg1)
     text = get_reviews_page_text(0)
@@ -2432,7 +2440,7 @@ async def about_us(message: Message):
     user_id = message.from_user.id
     await delete_user_msg(message)
     await clear_nav_msgs(user_id)
-    msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown")
+    msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown", reply_markup=get_main_keyboard())
     track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "⚙️ Настройки")
