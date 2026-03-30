@@ -1105,6 +1105,16 @@ def save_users(data):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
+def track_activity(user_id: str, action: str):
+    """Записывает активность пользователя. action: 'forecast'|'about_me'|'tarot'|'astro'|'review'"""
+    users = load_users()
+    users.setdefault(user_id, {})
+    stats = users[user_id].setdefault("activity", {})
+    stats[action] = stats.get(action, 0) + 1
+    stats["total"] = stats.get("total", 0) + 1
+    stats["last_seen"] = datetime.now().isoformat()
+    save_users(users)
+
 def save_forecast(data):
     with open(FORECAST_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -1690,6 +1700,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
                 "profanity_count": 0
             }
             SESSION_BUSY[user_id_str] = False
+            track_activity(user_id_str, "tarot")
             asyncio.create_task(session_timeout(user_id))
             await bot.send_message(
                 user_id,
@@ -1831,6 +1842,7 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
         if answer:
             save_user_astro_message(str(user_id), astrologer["id"], "user", user_story)
             save_user_astro_message(str(user_id), astrologer["id"], "astro", answer)
+            track_activity(str(user_id), "astro")
 
             session_history = [
                 {"role": "user", "text": user_story},
@@ -2259,7 +2271,86 @@ async def start(message: Message):
         await message.answer(f"С возвращением! Твой знак: {sign}. 🌟", reply_markup=get_main_keyboard())
     else:
         await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
+        users.setdefault(user_id, {})["joined_at"] = datetime.now().isoformat()
+        save_users(users)
         asyncio.create_task(_notify_new_user(message))
+
+@dp.message(F.text == "/stats")
+async def admin_stats(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    users = load_users()
+    now = datetime.now()
+    today = now.date()
+    week_ago = now - timedelta(days=7)
+
+    total_users = len(users)
+    users_with_sign = sum(1 for u in users.values() if "sign" in u)
+
+    # Новые пользователи
+    new_today = sum(
+        1 for u in users.values()
+        if u.get("joined_at") and datetime.fromisoformat(u["joined_at"]).date() == today
+    )
+    new_week = sum(
+        1 for u in users.values()
+        if u.get("joined_at") and datetime.fromisoformat(u["joined_at"]) >= week_ago
+    )
+
+    # Активные (были сегодня / за неделю)
+    active_today = sum(
+        1 for u in users.values()
+        if u.get("activity", {}).get("last_seen")
+        and datetime.fromisoformat(u["activity"]["last_seen"]).date() == today
+    )
+    active_week = sum(
+        1 for u in users.values()
+        if u.get("activity", {}).get("last_seen")
+        and datetime.fromisoformat(u["activity"]["last_seen"]) >= week_ago
+    )
+
+    # Суммарная активность по услугам
+    totals = {"forecast": 0, "about_me": 0, "tarot": 0, "astro": 0, "review": 0}
+    for u in users.values():
+        for key in totals:
+            totals[key] += u.get("activity", {}).get(key, 0)
+
+    # Топ-5 активных пользователей
+    top = sorted(
+        [(uid, u.get("activity", {}).get("total", 0)) for uid, u in users.items()],
+        key=lambda x: x[1], reverse=True
+    )[:5]
+    top_lines = "\n".join(f"  `{uid}` — {cnt} действий" for uid, cnt in top if cnt > 0) or "  нет данных"
+
+    # Отзывы
+    published_reviews = len(_load_reviews_from_file())
+    pending_reviews = len(load_pending_reviews())
+
+    text = (
+        f"📊 *Статистика бота «Голос Звёзд»*\n"
+        f"_{now.strftime('%d.%m.%Y %H:%M')}_\n\n"
+        f"👥 *Пользователи*\n"
+        f"  Всего зарегистрировано: *{total_users}*\n"
+        f"  Выбрали знак зодиака: *{users_with_sign}*\n"
+        f"  Новых сегодня: *{new_today}*\n"
+        f"  Новых за 7 дней: *{new_week}*\n\n"
+        f"⚡ *Активность*\n"
+        f"  Активны сегодня: *{active_today}*\n"
+        f"  Активны за 7 дней: *{active_week}*\n\n"
+        f"🔢 *Использование услуг (всего)*\n"
+        f"  🔮 Прогнозы: *{totals['forecast']}*\n"
+        f"  📖 Читать о себе: *{totals['about_me']}*\n"
+        f"  🎴 Консультации таролога: *{totals['tarot']}*\n"
+        f"  ⭐ Консультации астролога: *{totals['astro']}*\n"
+        f"  ✍️ Отправили отзыв: *{totals['review']}*\n\n"
+        f"⭐ *Отзывы*\n"
+        f"  Опубликовано: *{published_reviews}*\n"
+        f"  Ждут модерации: *{pending_reviews}*\n\n"
+        f"🏆 *Топ-5 активных пользователей*\n{top_lines}"
+    )
+    await message.answer(text, parse_mode="Markdown")
+
 
 @dp.message(F.text == "🏠 Главное меню")
 async def go_home(message: Message):
@@ -2295,6 +2386,7 @@ async def set_sign(message: Message):
 async def send_forecast(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
+    track_activity(user_id, "forecast")
     user_data = users.get(user_id, {})
 
     if not user_data or "sign" not in user_data:
@@ -2338,6 +2430,7 @@ async def send_forecast(message: Message):
 async def read_about_me(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
+    track_activity(user_id, "about_me")
     user_data = users.get(user_id)
 
     if not user_data or "sign" not in user_data:
@@ -2883,6 +2976,7 @@ async def handle_story(message: Message):
                 parse_mode="Markdown",
                 reply_markup=get_main_keyboard()
             )
+            track_activity(user_id, "review")
             asyncio.create_task(send_review_notification(review_id, new_review))
             return
         return
