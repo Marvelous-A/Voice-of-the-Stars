@@ -1234,6 +1234,39 @@ def _send_email_sync(subject: str, body: str):
     except Exception as e:
         print(f"[EMAIL] Ошибка отправки: {e}")
 
+async def _notify_new_user(message):
+    """Уведомляет администратора о новом пользователе через Telegram и email."""
+    user = message.from_user
+    date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    username = f"@{user.username}" if user.username else "нет username"
+    full_name = user.full_name or "—"
+
+    if ADMIN_ID:
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"🆕 *Новый пользователь*\n\n"
+                f"👤 Имя: {full_name}\n"
+                f"🔗 Username: {username}\n"
+                f"🆔 ID: `{user.id}`\n"
+                f"📅 Дата: {date_str}",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"[ADMIN] Не удалось уведомить о новом пользователе: {e}")
+
+    subject = "🆕 Новый пользователь в боте «Голос Звёзд»"
+    body = (
+        f"В бот «Голос Звёзд» зашёл новый пользователь.\n\n"
+        f"Имя: {full_name}\n"
+        f"Username: {username}\n"
+        f"ID: {user.id}\n"
+        f"Дата: {date_str}"
+    )
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _send_email_sync, subject, body)
+
+
 async def send_review_notification(review_id: str, review: dict):
     """Отправляет email и Telegram-уведомление администратору о новом отзыве."""
     date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -2226,6 +2259,7 @@ async def start(message: Message):
         await message.answer(f"С возвращением! Твой знак: {sign}. 🌟", reply_markup=get_main_keyboard())
     else:
         await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
+        asyncio.create_task(_notify_new_user(message))
 
 @dp.message(F.text == "🏠 Главное меню")
 async def go_home(message: Message):
