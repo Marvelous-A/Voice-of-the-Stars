@@ -1524,6 +1524,35 @@ def get_age_typing_style(age: int) -> str:
         return ""
 
 # ====== МОДЕРАЦИЯ СООБЩЕНИЙ ======
+async def check_incomprehensible(text: str) -> bool:
+    """Возвращает True если сообщение — бессмыслица, рандомные символы или полностью чужой язык."""
+    if len(text.strip()) < 3:
+        return False  # слишком короткое — пусть специалист сам решает
+    prompt = (
+        "Определи, является ли следующее сообщение:\n"
+        "- случайным набором символов или букв без смысла (клавиатурный спам)\n"
+        "- набором несвязанных между собой слов, из которых невозможно понять смысл\n"
+        "- текстом написанным полностью на иностранном языке (не русском и не украинском)\n\n"
+        "Сообщение считается ПОНЯТНЫМ если: это осмысленный вопрос, фраза, эмоция или реакция на русском "
+        "или украинском — даже очень короткая ('что дальше?', 'спасибо', 'понял', 'а как же работа?').\n\n"
+        "Ответь строго одним словом: YES если бессмыслица/иностранный язык, NO если понятно.\n"
+        f"Сообщение: {text}"
+    )
+    result = await ask_ai(prompt, max_tokens=10)
+    return "YES" in result.upper()
+
+async def get_incomprehensible_reply(specialist: dict) -> str:
+    """Генерирует короткий ответ специалиста в его стиле — что не понимает сообщение."""
+    prompt = (
+        f"{specialist['personality']}\n\n"
+        "Пользователь прислал тебе сообщение которое ты не можешь понять — "
+        "либо это бессмысленный набор символов, либо текст на иностранном языке.\n\n"
+        "Напиши ОДНО короткое сообщение (1-2 предложения) в своём стиле: "
+        "скажи что не понимаешь о чём речь, и что завершаешь сеанс. "
+        "Не груби, но будь прямым. Сохраняй свой характер. Никаких '|||'."
+    )
+    return await ask_ai(prompt, max_tokens=100)
+
 async def check_profanity(text: str) -> bool:
     prompt = (
         "Определи, содержит ли следующее сообщение мат, грубые оскорбления, явно неприемлемые слова "
@@ -2114,6 +2143,18 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
     is_flagged = await check_profanity(user_message)
     if is_flagged:
         session["profanity_count"] = session.get("profanity_count", 0) + 1
+
+    # Проверяем на бессмыслицу / чужой язык
+    if await check_incomprehensible(user_message):
+        reply = await get_incomprehensible_reply(tarologist)
+        if not reply:
+            reply = f"{tarologist['name']} не понимает о чём речь и завершает сеанс."
+        if user_id_str in ACTIVE_SESSIONS:
+            del ACTIVE_SESSIONS[user_id_str]
+        SESSION_BUSY.pop(user_id_str, None)
+        SESSION_MSG_QUEUE.pop(user_id_str, None)
+        await bot.send_message(user_id, reply, reply_markup=get_main_keyboard())
+        return
 
     # Если слишком много грубостей — завершаем сеанс
     if session.get("profanity_count", 0) > MAX_SESSION_PROFANITY:
