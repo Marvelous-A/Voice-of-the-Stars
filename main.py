@@ -2939,6 +2939,16 @@ async def end_session_manually(message: Message):
 async def handle_story(message: Message):
     user_id = str(message.from_user.id)
 
+    # Обновляем username и имя при каждом сообщении (для пользователей без этих данных)
+    if message.from_user.username or message.from_user.full_name:
+        users = load_users()
+        u = users.get(user_id, {})
+        if not u.get("username") and not u.get("full_name"):
+            u["username"] = message.from_user.username or ""
+            u["full_name"] = message.from_user.full_name or ""
+            users[user_id] = u
+            save_users(users)
+
     # ====== РЕДАКТИРОВАНИЕ ОТЗЫВА АДМИНИСТРАТОРОМ ======
     if user_id in WAITING_REVIEW_EDIT and message.from_user.id == ADMIN_ID:
         review_id = WAITING_REVIEW_EDIT.pop(user_id)
