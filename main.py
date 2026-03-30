@@ -1029,17 +1029,22 @@ async def ask_ai(prompt: str, max_tokens: int = 1000) -> str:
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=data) as resp:
-            try:
+    try:
+        timeout = aiohttp.ClientTimeout(total=120)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, headers=headers, json=data) as resp:
                 response_json = await resp.json(content_type=None)
-                return response_json["choices"][0]["message"]["content"].strip()
-            except Exception as e:
-                if "error" in response_json:
-                    print("Ошибка API:", response_json["error"]["message"])
+                if "choices" in response_json:
+                    return response_json["choices"][0]["message"]["content"].strip()
+                elif "error" in response_json:
+                    print("Ошибка API OpenRouter:", response_json["error"])
+                    return ""
                 else:
-                    print("Ошибка запроса к AI:", e)
-                return ""
+                    print("Неожиданный ответ API:", response_json)
+                    return ""
+    except Exception as e:
+        print("Ошибка запроса к AI:", e)
+        return ""
 
 # ====== ПОЛУЧЕНИЕ ГОРОСКОПА ======
 async def get_horoscope():
@@ -1330,49 +1335,56 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
         delay = random.randint(2 * 60, 3 * 60)
     await asyncio.sleep(delay)
 
-    answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged)
-    if answer:
-        save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
-        save_user_tarot_message(str(user_id), tarologist["id"], "tarot", answer)
+    try:
+        answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged)
+        if answer:
+            save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
+            save_user_tarot_message(str(user_id), tarologist["id"], "tarot", answer)
 
-        # Собираем карты из первого ответа для контекста сеанса
-        session_history = [
-            {"role": "user", "text": user_story},
-            {"role": "tarot", "text": answer}
-        ]
+            # Собираем карты из первого ответа для контекста сеанса
+            session_history = [
+                {"role": "user", "text": user_story},
+                {"role": "tarot", "text": answer}
+            ]
 
-        if "|||" in answer:
-            parts = [p.strip() for p in answer.split("|||") if p.strip()]
-            await bot.send_message(user_id, f"🔯 {tarologist['name']}:\n\n{parts[0]}")
-            for part in parts[1:]:
-                if age >= 40:
-                    await asyncio.sleep(random.randint(25, 35))
-                else:
-                    length_bonus = 10 + min(5, len(part) // 30)
-                    await asyncio.sleep(random.randint(8, 10) + length_bonus)
-                await bot.send_message(user_id, part)
+            if "|||" in answer:
+                parts = [p.strip() for p in answer.split("|||") if p.strip()]
+                await bot.send_message(user_id, f"🔯 {tarologist['name']}:\n\n{parts[0]}")
+                for part in parts[1:]:
+                    if age >= 40:
+                        await asyncio.sleep(random.randint(25, 35))
+                    else:
+                        length_bonus = 10 + min(5, len(part) // 30)
+                        await asyncio.sleep(random.randint(8, 10) + length_bonus)
+                    await bot.send_message(user_id, part)
+            else:
+                full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
+                for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
+                    await bot.send_message(user_id, part)
+
+            user_id_str = str(user_id)
+            ACTIVE_SESSIONS[user_id_str] = {
+                "tarologist": tarologist,
+                "history": session_history,
+                "msg_count": 0,
+                "profanity_count": 0
+            }
+            SESSION_BUSY[user_id_str] = False
+            asyncio.create_task(session_timeout(user_id))
+            await bot.send_message(
+                user_id,
+                f"💬 Сеанс с {tarologist['name']} открыт — можешь задавать вопросы.\n"
+                f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 3 минуты.",
+                reply_markup=get_session_keyboard()
+            )
         else:
-            full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
-            for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
-                await bot.send_message(user_id, part)
-
-        user_id_str = str(user_id)
-        ACTIVE_SESSIONS[user_id_str] = {
-            "tarologist": tarologist,
-            "history": session_history,
-            "msg_count": 0,
-            "profanity_count": 0
-        }
-        SESSION_BUSY[user_id_str] = False
-        asyncio.create_task(session_timeout(user_id))
-        await bot.send_message(
-            user_id,
-            f"💬 Сеанс с {tarologist['name']} открыт — можешь задавать вопросы.\n"
-            f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 3 минуты.",
-            reply_markup=get_session_keyboard()
-        )
-    else:
-        await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
+            await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
+    except Exception as e:
+        print(f"[ОШИБКА] send_tarot_answer_delayed для user_id={user_id}: {e}")
+        try:
+            await bot.send_message(user_id, "Произошла техническая ошибка. Попробуй снова чуть позже.")
+        except Exception:
+            pass
 
 # ====== СЕАНС: ОТВЕТ НА ДОПВОПРОС ======
 async def get_session_reply(tarologist: dict, user_message: str, session_history: list, is_flagged: bool = False) -> str:
@@ -1446,6 +1458,18 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
         return await ask_ai(prompt, max_tokens=400)
 
 async def send_session_reply(user_id: int, user_message: str):
+    try:
+        await _send_session_reply_impl(user_id, user_message)
+    except Exception as e:
+        print(f"[ОШИБКА] send_session_reply для user_id={user_id}: {e}")
+        user_id_str = str(user_id)
+        SESSION_BUSY.pop(user_id_str, None)
+        try:
+            await bot.send_message(user_id, "Произошла техническая ошибка. Попробуй написать ещё раз.")
+        except Exception:
+            pass
+
+async def _send_session_reply_impl(user_id: int, user_message: str):
     user_id_str = str(user_id)
 
     if user_id_str not in ACTIVE_SESSIONS:
