@@ -960,29 +960,6 @@ ACTIVE_SESSIONS = {}
 SESSION_BUSY = {}  # {user_id_str: bool} — True пока бот генерирует/отправляет ответ
 SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообщение если пользователь написал пока бот занят
 
-# ====== УДАЛЕНИЕ НАВИГАЦИОННЫХ СООБЩЕНИЙ ======
-USER_NAV_MSGS: dict = {}  # {user_id_str: [message_id, ...]}
-
-def track_nav_msg(user_id, msg):
-    uid = str(user_id)
-    USER_NAV_MSGS.setdefault(uid, []).append(msg.message_id)
-
-async def clear_nav_msgs(user_id):
-    uid = str(user_id)
-    msg_ids = USER_NAV_MSGS.pop(uid, [])
-    for msg_id in msg_ids:
-        try:
-            await bot.delete_message(int(uid), msg_id)
-        except Exception:
-            pass
-
-async def delete_user_msg(message):
-    """Удаляет сообщение пользователя (навигационный тап по кнопке)."""
-    try:
-        await bot.delete_message(message.chat.id, message.message_id)
-    except Exception:
-        pass
-
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
 MAX_SESSION_PROFANITY = 2  # после стольких грубостей в сеансе — завершаем
@@ -2123,8 +2100,6 @@ async def start(message: Message):
 @dp.message(F.text == "🏠 Главное меню")
 async def go_home(message: Message):
     user_id = str(message.from_user.id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     if user_id in WAITING_TAROT_STORY:
         del WAITING_TAROT_STORY[user_id]
     if user_id in WAITING_ASTRO_STORY:
@@ -2136,37 +2111,29 @@ async def go_home(message: Message):
     SESSION_BUSY.pop(user_id, None)
     SESSION_MSG_QUEUE.pop(user_id, None)
     msg = await message.answer("Главное меню:", reply_markup=get_main_keyboard())
-    track_nav_msg(user_id, msg)
 
 @dp.message(F.text.in_(SIGNS))
 async def set_sign(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     users.setdefault(user_id, {})["sign"] = message.text
     save_users(users)
 
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
         msg = await message.answer(f"Знак зодиака изменён на {message.text}! ✨", reply_markup=get_main_keyboard())
-        track_nav_msg(user_id, msg)
         return
 
     msg = await message.answer("Твой знак сохранён! Добро пожаловать в Голос Звёзд 🌟", reply_markup=get_main_keyboard())
-    track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "🔮 Прогноз на сегодня")
 async def send_forecast(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
     user_data = users.get(user_id, {})
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
 
     if not user_data or "sign" not in user_data:
         msg = await message.answer("Сначала выбери знак зодиака", reply_markup=get_sign_keyboard())
-        track_nav_msg(user_id, msg)
         return
 
     sign = user_data["sign"]
@@ -2174,7 +2141,6 @@ async def send_forecast(message: Message):
 
     if "ru" not in forecast_data or sign not in forecast_data["ru"]:
         msg = await message.answer("Прогноз ещё не готов, попробуй позже 🌙")
-        track_nav_msg(user_id, msg)
         return
 
     today = datetime.now().date().isoformat()
@@ -2186,7 +2152,6 @@ async def send_forecast(message: Message):
                 "↩️ Твой прогноз на сегодня уже здесь 👆",
                 reply_to_message_id=user_data["forecast_msg_id"]
             )
-            track_nav_msg(user_id, msg)
             return
         except Exception:
             pass  # если старое сообщение удалено — отправим заново
@@ -2203,19 +2168,15 @@ async def send_forecast(message: Message):
     save_users(users)
     # Восстанавливаем клавиатуру — она могла пропасть после удаления предыдущих сообщений
     nav_msg = await message.answer("☝️ Прогноз выше", reply_markup=get_main_keyboard())
-    track_nav_msg(user_id, nav_msg)
 
 @dp.message(F.text == "📖 Читать о себе")
 async def read_about_me(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
     user_data = users.get(user_id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
 
     if not user_data or "sign" not in user_data:
         msg = await message.answer("Сначала выбери знак зодиака", reply_markup=get_sign_keyboard())
-        track_nav_msg(user_id, msg)
         return
 
     sign = user_data["sign"]
@@ -2224,11 +2185,9 @@ async def read_about_me(message: Message):
 
     if cache_key not in descriptions:
         msg = await message.answer("⏳ Составляю описание твоего знака...")
-        track_nav_msg(user_id, msg)
         description = await get_sign_description(sign)
         if not description:
             msg = await message.answer("Не удалось получить описание, попробуй позже.")
-            track_nav_msg(user_id, msg)
             return
         descriptions[cache_key] = description
         save_descriptions(descriptions)
@@ -2244,36 +2203,28 @@ async def read_about_me(message: Message):
             msg = await message.answer(part, parse_mode="Markdown", reply_markup=get_main_keyboard())
         else:
             msg = await message.answer(part, parse_mode="Markdown")
-        track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "🌟 Консультации")
 async def consultations_menu(message: Message):
     user_id = message.from_user.id
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     msg = await message.answer(
         "🌟 *Консультации*\n\nВыбери специалиста:",
         parse_mode="Markdown",
         reply_markup=get_consultations_keyboard()
     )
-    track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "🎴 Тарологи")
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     msg1 = await message.answer(
         "🔯 *Наши тарологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
         parse_mode="Markdown",
         reply_markup=get_back_keyboard()
     )
-    track_nav_msg(user_id, msg1)
     msg2 = await message.answer(
         "Кто тебя интересует?",
         reply_markup=get_tarologists_list_keyboard()
     )
-    track_nav_msg(user_id, msg2)
 
 @dp.callback_query(F.data == "tarot_list")
 async def back_to_tarot_list(callback: CallbackQuery):
@@ -2323,27 +2274,21 @@ async def ask_tarot(callback: CallbackQuery):
     )
 
     user_id = str(callback.from_user.id)
-    await clear_nav_msgs(user_id)
     msg = await callback.message.answer(brief, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
-    track_nav_msg(user_id, msg)
     await callback.answer()
 
 @dp.message(F.text == "⭐ Астрологи")
 async def astro_list(message: Message):
     user_id = str(message.from_user.id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     msg1 = await message.answer(
         "⭐ *Наши астрологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
         parse_mode="Markdown",
         reply_markup=get_back_keyboard()
     )
-    track_nav_msg(user_id, msg1)
     msg2 = await message.answer(
         "Кто тебя интересует?",
         reply_markup=get_astrologers_list_keyboard()
     )
-    track_nav_msg(user_id, msg2)
 
 @dp.callback_query(F.data == "astro_list")
 async def back_to_astro_list(callback: CallbackQuery):
@@ -2392,38 +2337,29 @@ async def ask_astro(callback: CallbackQuery):
         "_Или запиши голосовое сообщение 🎤_"
     )
 
-    await clear_nav_msgs(user_id)
     msg = await callback.message.answer(brief, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
-    track_nav_msg(user_id, msg)
     await callback.answer()
 
 @dp.message(F.text == "❌ Отменить")
 async def cancel_tarot(message: Message):
     user_id = str(message.from_user.id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     if user_id in WAITING_TAROT_STORY:
         del WAITING_TAROT_STORY[user_id]
     if user_id in WAITING_ASTRO_STORY:
         del WAITING_ASTRO_STORY[user_id]
     msg = await message.answer("Отменено.", reply_markup=get_main_keyboard())
-    track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "⭐ Отзывы")
 async def show_reviews(message: Message):
     user_id = str(message.from_user.id)
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     msg1 = await message.answer(
         "⭐ *Отзывы наших пользователей*\n\nЧитайте что говорят люди которые уже пользуются Голосом Звёзд 👇",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
     )
-    track_nav_msg(user_id, msg1)
     text = get_reviews_page_text(0)
     keyboard = get_reviews_more_keyboard(REVIEWS_PER_PAGE)
     msg2 = await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
-    track_nav_msg(user_id, msg2)
 
 @dp.callback_query(F.data.startswith("reviews_"))
 async def show_more_reviews(callback: CallbackQuery):
@@ -2432,33 +2368,23 @@ async def show_more_reviews(callback: CallbackQuery):
     text = get_reviews_page_text(offset)
     keyboard = get_reviews_more_keyboard(offset + REVIEWS_PER_PAGE)
     msg = await callback.message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
-    track_nav_msg(user_id, msg)
     await callback.answer()
 
 @dp.message(F.text == "ℹ️ О нас")
 async def about_us(message: Message):
     user_id = message.from_user.id
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown", reply_markup=get_main_keyboard())
-    track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "⚙️ Настройки")
 async def settings(message: Message):
     user_id = message.from_user.id
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     msg = await message.answer("⚙️ Настройки:", reply_markup=get_settings_keyboard())
-    track_nav_msg(user_id, msg)
 
 @dp.message(F.text == "♈ Изменить знак зодиака")
 async def change_sign(message: Message):
     user_id = message.from_user.id
-    await delete_user_msg(message)
-    await clear_nav_msgs(user_id)
     WAITING_SIGN_CHANGE[str(user_id)] = True
     msg = await message.answer("Выбери новый знак зодиака:", reply_markup=get_sign_keyboard())
-    track_nav_msg(user_id, msg)
 
 # ====== ГОЛОСОВЫЕ СООБЩЕНИЯ ======
 @dp.message(F.voice)
@@ -2553,7 +2479,6 @@ async def handle_voice(message: Message):
 async def end_session_manually(message: Message):
     user_id = message.from_user.id
     user_id_str = str(user_id)
-    await delete_user_msg(message)
     if user_id_str in ACTIVE_SESSIONS:
         tarologist_name = ACTIVE_SESSIONS[user_id_str]["tarologist"]["name"]
         del ACTIVE_SESSIONS[user_id_str]
@@ -2564,9 +2489,7 @@ async def end_session_manually(message: Message):
             reply_markup=get_main_keyboard()
         )
     else:
-        await clear_nav_msgs(user_id)
         msg = await message.answer("Главное меню:", reply_markup=get_main_keyboard())
-        track_nav_msg(user_id, msg)
 
 # ====== ТЕКСТОВЫЕ СООБЩЕНИЯ ======
 @dp.message(F.text & ~F.text.startswith("/"))
