@@ -856,9 +856,11 @@ def _load_reviews_from_file() -> list:
 
 ALL_REVIEWS = _load_reviews_from_file()
 
-# Перемешанный список для пагинации (перемешивается при запуске)
-SHUFFLED_REVIEWS = ALL_REVIEWS.copy()
-random.shuffle(SHUFFLED_REVIEWS)
+# Список для пагинации: новые сначала (у старых без даты — в конец)
+def _sort_reviews(reviews: list) -> list:
+    return sorted(reviews, key=lambda r: r.get("published_at", ""), reverse=True)
+
+SHUFFLED_REVIEWS = _sort_reviews(ALL_REVIEWS)
 REVIEWS_PER_PAGE = 10
 
 def get_reviews_page_text(offset: int) -> str:
@@ -1202,12 +1204,17 @@ def publish_review(review_id: str) -> bool:
     review = pending.pop(review_id)
     save_pending_reviews(pending)
     # Добавляем в файл и в память
-    published = {"author": review["author"], "tag": review["tag"], "text": review["text"]}
+    published = {
+        "author": review["author"],
+        "tag": review["tag"],
+        "text": review["text"],
+        "published_at": datetime.now().isoformat()
+    }
     reviews = _load_reviews_from_file()
     reviews.append(published)
     save_reviews_to_file(reviews)
     ALL_REVIEWS.append(published)
-    SHUFFLED_REVIEWS.append(published)
+    SHUFFLED_REVIEWS.insert(0, published)  # новый отзыв — в начало списка
     return True
 
 def _send_email_sync(subject: str, body: str):
