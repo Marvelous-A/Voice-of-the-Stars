@@ -826,6 +826,13 @@ async def clear_nav_msgs(user_id):
         except Exception:
             pass
 
+async def delete_user_msg(message):
+    """Удаляет сообщение пользователя (навигационный тап по кнопке)."""
+    try:
+        await bot.delete_message(message.chat.id, message.message_id)
+    except Exception:
+        pass
+
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
 MAX_SESSION_PROFANITY = 2  # после стольких грубостей в сеансе — завершаем
@@ -1645,6 +1652,7 @@ async def start(message: Message):
 @dp.message(F.text == "🏠 Главное меню")
 async def go_home(message: Message):
     user_id = str(message.from_user.id)
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     if user_id in WAITING_TAROT_STORY:
         del WAITING_TAROT_STORY[user_id]
@@ -1661,6 +1669,7 @@ async def go_home(message: Message):
 async def set_sign(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     users.setdefault(user_id, {})["sign"] = message.text
     save_users(users)
@@ -1679,6 +1688,7 @@ async def send_forecast(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
     user_data = users.get(user_id, {})
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
 
     if not user_data or "sign" not in user_data:
@@ -1724,6 +1734,7 @@ async def read_about_me(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
     user_data = users.get(user_id)
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
 
     if not user_data or "sign" not in user_data:
@@ -1758,6 +1769,7 @@ async def read_about_me(message: Message):
 @dp.message(F.text == "🎴 Консультация таролога")
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     msg1 = await message.answer(
         "🔯 *Наши тарологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
@@ -1827,6 +1839,7 @@ async def ask_tarot(callback: CallbackQuery):
 @dp.message(F.text == "❌ Отменить")
 async def cancel_tarot(message: Message):
     user_id = str(message.from_user.id)
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     if user_id in WAITING_TAROT_STORY:
         del WAITING_TAROT_STORY[user_id]
@@ -1836,6 +1849,7 @@ async def cancel_tarot(message: Message):
 @dp.message(F.text == "⭐ Отзывы")
 async def show_reviews(message: Message):
     user_id = str(message.from_user.id)
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     msg1 = await message.answer(
         "⭐ *Отзывы наших пользователей*\n\nЧитайте что говорят люди которые уже пользуются Голосом Звёзд 👇",
@@ -1860,6 +1874,7 @@ async def show_more_reviews(callback: CallbackQuery):
 @dp.message(F.text == "ℹ️ О нас")
 async def about_us(message: Message):
     user_id = message.from_user.id
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown")
     track_nav_msg(user_id, msg)
@@ -1867,6 +1882,7 @@ async def about_us(message: Message):
 @dp.message(F.text == "⚙️ Настройки")
 async def settings(message: Message):
     user_id = message.from_user.id
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     msg = await message.answer("⚙️ Настройки:", reply_markup=get_settings_keyboard())
     track_nav_msg(user_id, msg)
@@ -1874,6 +1890,7 @@ async def settings(message: Message):
 @dp.message(F.text == "♈ Изменить знак зодиака")
 async def change_sign(message: Message):
     user_id = message.from_user.id
+    await delete_user_msg(message)
     await clear_nav_msgs(user_id)
     WAITING_SIGN_CHANGE[str(user_id)] = True
     msg = await message.answer("Выбери новый знак зодиака:", reply_markup=get_sign_keyboard())
@@ -1951,6 +1968,7 @@ async def handle_voice(message: Message):
 async def end_session_manually(message: Message):
     user_id = message.from_user.id
     user_id_str = str(user_id)
+    await delete_user_msg(message)
     if user_id_str in ACTIVE_SESSIONS:
         tarologist_name = ACTIVE_SESSIONS[user_id_str]["tarologist"]["name"]
         del ACTIVE_SESSIONS[user_id_str]
