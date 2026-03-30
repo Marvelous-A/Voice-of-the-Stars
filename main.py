@@ -2266,14 +2266,57 @@ async def scheduler():
 async def start(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
+    # Обновляем имя и username при каждом /start
+    users.setdefault(user_id, {})
+    users[user_id]["username"] = message.from_user.username or ""
+    users[user_id]["full_name"] = message.from_user.full_name or ""
     if user_id in users and "sign" in users[user_id]:
         sign = users[user_id]["sign"]
+        save_users(users)
         await message.answer(f"С возвращением! Твой знак: {sign}. 🌟", reply_markup=get_main_keyboard())
     else:
-        await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
-        users.setdefault(user_id, {})["joined_at"] = datetime.now().isoformat()
+        users[user_id]["joined_at"] = datetime.now().isoformat()
         save_users(users)
+        await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
         asyncio.create_task(_notify_new_user(message))
+
+@dp.message(F.text == "/users")
+async def admin_users(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    users = load_users()
+    if not users:
+        await message.answer("Пока нет зарегистрированных пользователей.")
+        return
+
+    lines = []
+    for uid, data in sorted(users.items(), key=lambda x: x[1].get("joined_at", ""), reverse=True):
+        username = data.get("username")
+        full_name = data.get("full_name", "")
+        sign = data.get("sign", "—")
+        joined = data.get("joined_at", "")
+        joined_str = datetime.fromisoformat(joined).strftime("%d.%m.%Y") if joined else "—"
+        total = data.get("activity", {}).get("total", 0)
+
+        if username:
+            user_label = f"@{username}"
+            if full_name:
+                user_label += f" ({full_name})"
+        elif full_name:
+            user_label = full_name
+        else:
+            user_label = f"ID {uid}"
+
+        lines.append(f"• {user_label} · {sign} · с {joined_str} · {total} действий")
+
+    # Разбиваем на части по 50 пользователей чтобы не превысить лимит Telegram
+    chunk_size = 50
+    for i in range(0, len(lines), chunk_size):
+        chunk = lines[i:i + chunk_size]
+        header = f"👥 *Пользователи ({i+1}–{min(i+chunk_size, len(lines))} из {len(lines)})*\n\n" if i == 0 else ""
+        await message.answer(header + "\n".join(chunk), parse_mode="Markdown")
+
 
 @dp.message(F.text == "/stats")
 async def admin_stats(message: Message):
