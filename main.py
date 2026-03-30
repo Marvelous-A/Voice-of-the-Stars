@@ -791,6 +791,14 @@ SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообще
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
 MAX_SESSION_PROFANITY = 2  # после стольких грубостей в сеансе — завершаем
 
+# ====== ЗАПРЕТ ВНЕШНИХ КОНТАКТОВ (вставляется во все промпты) ======
+NO_CONTACTS_RULE = (
+    "\n\nАБСОЛЮТНО ЗАПРЕЩЕНО: упоминать любые Telegram-аккаунты (@...), телефонные номера, "
+    "ссылки, Instagram, VK, WhatsApp или любые другие контакты вне этого бота. "
+    "Нельзя предлагать писать 'в личку', 'в другом мессенджере' или 'лично' через другие каналы. "
+    "Все коммуникации — только через этот сервис. Это жёсткое правило без исключений."
+)
+
 # ====== VOSK МОДЕЛЬ ======
 VOSK_MODEL = None
 VOSK_MODEL_PATH = "vosk-model-small-ru-0.22"
@@ -840,6 +848,15 @@ def get_cancel_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="❌ Отменить")],
+            [KeyboardButton(text="🏠 Главное меню")]
+        ],
+        resize_keyboard=True
+    )
+
+def get_session_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🚪 Завершить сеанс")],
             [KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True
@@ -1118,6 +1135,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 
 Ты пишешь с телефона двумя пальцами, медленно. Отправляй мысли по одной, короткими сообщениями по 1-2 строки. Каждое сообщение отдели строкой "|||". Суммарно не более 300 знаков. Никаких тире. Знаки препинания почти не ставишь. Сохраняй свой характер.
 {typing_style}
+{NO_CONTACTS_RULE}
 """
         else:
             prompt = f"""
@@ -1131,6 +1149,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 
 После вступительной ремарки дай короткий ответ на вопрос от лица своего персонажа. Упомяни карты (придумай). Пиши одним блоком без абзацев. Никаких тире. Общий объём 80-100 слов. Не строй ответ как мини-эссе, пиши хаотично как живой человек. Никаких связок "однако", "при этом", "таким образом".
 {typing_style}
+{NO_CONTACTS_RULE}
 """
         return await ask_ai(prompt, max_tokens=400)
     elif age >= 40:
@@ -1153,6 +1172,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 - Мысли рваные, без красивых переходов
 - Сохраняй свой характер и тон
 {typing_style}
+{NO_CONTACTS_RULE}
 """
         return await ask_ai(prompt, max_tokens=500)
     else:
@@ -1177,6 +1197,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 - НЕ будь идеально тёплым в каждой фразе, иногда просто сухо по делу
 - Пиши специфично под эту ситуацию, не обобщай
 {typing_style}
+{NO_CONTACTS_RULE}
 """
         return await ask_ai(prompt, max_tokens=1000)
 
@@ -1229,6 +1250,12 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
         }
         SESSION_BUSY[user_id_str] = False
         asyncio.create_task(session_timeout(user_id))
+        await bot.send_message(
+            user_id,
+            f"💬 Сеанс с {tarologist['name']} открыт — можешь задавать вопросы.\n"
+            f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 3 минуты.",
+            reply_markup=get_session_keyboard()
+        )
     else:
         await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
 
@@ -1266,15 +1293,18 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 {history_text}
 {moderation_block}
 
-Человек пишет в ходе сеанса:
-{user_message}
+Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
+"{user_message}"
 
-Карты уже разложены и названы раньше. Ответь коротко на конкретный вопрос или реакцию. НЕ делай новый расклад. Сохраняй характер.
+ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение — не игнорируй его, не уходи в сторону.
+Если это вопрос — ответь на вопрос. Если реакция/эмоция — отреагируй на неё.
+Карты уже разложены и названы раньше. НЕ делай новый расклад. Сохраняй характер.
 {anti_repeat}
 
 ФОРМАТ: серия коротких сообщений через "|||". 2-4 сообщения, не более 200 знаков суммарно.
 Знаки препинания почти не ставишь. Мысли рваные.
 {typing_style}
+{NO_CONTACTS_RULE}
 """
         return await ask_ai(prompt, max_tokens=300)
     else:
@@ -1283,15 +1313,18 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 {history_text}
 {moderation_block}
 
-Человек пишет в ходе сеанса:
-{user_message}
+Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
+"{user_message}"
 
-Карты уже разложены и названы раньше. Ответь коротко. НЕ делай новый расклад. Сохраняй характер.
+ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение — не игнорируй его, не уходи в сторону.
+Если это вопрос — ответь на вопрос. Если реакция/эмоция — отреагируй на неё.
+Карты уже разложены и названы раньше. НЕ делай новый расклад. Сохраняй характер.
 {anti_repeat}
 
 ФОРМАТ: серия коротких сообщений через "|||". 2-4 сообщения, 200-400 знаков суммарно.
 Не строй как мини-эссе. Пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
 {typing_style}
+{NO_CONTACTS_RULE}
 """
         return await ask_ai(prompt, max_tokens=400)
 
@@ -1392,6 +1425,21 @@ async def send_session_reply(user_id: int, user_message: str):
 
     # Разблокируем
     SESSION_BUSY[user_id_str] = False
+
+    # Если исчерпан лимит — предупреждаем и завершаем сеанс
+    if session.get("msg_count", 0) >= MAX_SESSION_MESSAGES:
+        await asyncio.sleep(2)
+        if user_id_str in ACTIVE_SESSIONS:
+            del ACTIVE_SESSIONS[user_id_str]
+        SESSION_BUSY.pop(user_id_str, None)
+        SESSION_MSG_QUEUE.pop(user_id_str, None)
+        await bot.send_message(
+            user_id,
+            "⚠️ Это было последнее сообщение сеанса — таролог больше не увидит твоих сообщений.\n"
+            "Если хочешь продолжить — начни новую консультацию через меню 🎴",
+            reply_markup=get_main_keyboard()
+        )
+        return
 
     # Проверяем очередь — если пока бот отвечал пришло ещё сообщение
     queued = SESSION_MSG_QUEUE.pop(user_id_str, None)
@@ -1693,6 +1741,22 @@ async def handle_voice(message: Message):
         )
 
     asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, text, is_flagged=is_flagged))
+
+# ====== ЗАВЕРШЕНИЕ СЕАНСА ПОЛЬЗОВАТЕЛЕМ ======
+@dp.message(F.text == "🚪 Завершить сеанс")
+async def end_session_manually(message: Message):
+    user_id = str(message.from_user.id)
+    if user_id in ACTIVE_SESSIONS:
+        tarologist_name = ACTIVE_SESSIONS[user_id]["tarologist"]["name"]
+        del ACTIVE_SESSIONS[user_id]
+        SESSION_BUSY.pop(user_id, None)
+        SESSION_MSG_QUEUE.pop(user_id, None)
+        await message.answer(
+            f"✨ Ты завершил сеанс с {tarologist_name}. Если появятся вопросы — возвращайся.",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await message.answer("Главное меню:", reply_markup=get_main_keyboard())
 
 # ====== ТЕКСТОВЫЕ СООБЩЕНИЯ ======
 @dp.message(F.text & ~F.text.startswith("/"))
