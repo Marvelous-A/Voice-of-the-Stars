@@ -881,6 +881,26 @@ def get_ask_tarot_inline(tarot_id: str):
         [InlineKeyboardButton(text="📩 Задать вопрос", callback_data=f"ask_{tarot_id}")]
     ])
 
+def get_tarologists_list_keyboard():
+    """Все тарологи кнопками по 3 в ряд."""
+    buttons = []
+    row = []
+    for t in TAROLOGISTS:
+        row.append(InlineKeyboardButton(text=t["name"], callback_data=f"view_{t['id']}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_tarot_card_keyboard(tarot_id: str):
+    """Кнопки под карточкой таролога."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_{tarot_id}")],
+        [InlineKeyboardButton(text="◀ К списку", callback_data="tarot_list")],
+    ])
+
 # ====== ФАЙЛОВЫЕ ФУНКЦИИ ======
 def load_users():
     try:
@@ -1660,15 +1680,36 @@ async def read_about_me(message: Message):
 @dp.message(F.text == "🎴 Консультация таролога")
 async def tarot_list(message: Message):
     await message.answer(
-        "🔯 Наши тарологи:\n\nВыбери специалиста и задай вопрос прямо под его карточкой 👇",
+        "🔯 *Наши тарологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
+        parse_mode="Markdown",
         reply_markup=get_back_keyboard()
     )
-    for t in TAROLOGISTS:
-        await message.answer(
-            t["description"],
-            parse_mode="Markdown",
-            reply_markup=get_ask_tarot_inline(t["id"])
-        )
+    await message.answer(
+        "Кто тебя интересует?",
+        reply_markup=get_tarologists_list_keyboard()
+    )
+
+@dp.callback_query(F.data == "tarot_list")
+async def back_to_tarot_list(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Кто тебя интересует?",
+        reply_markup=get_tarologists_list_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("view_"))
+async def view_tarot_card(callback: CallbackQuery):
+    tarot_id = callback.data.replace("view_", "")
+    tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
+    if not tarologist:
+        await callback.answer("Таролог не найден")
+        return
+    await callback.message.edit_text(
+        tarologist["description"],
+        parse_mode="Markdown",
+        reply_markup=get_tarot_card_keyboard(tarot_id)
+    )
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("ask_"))
 async def ask_tarot(callback: CallbackQuery):
