@@ -2553,9 +2553,10 @@ async def review_anon(callback: CallbackQuery):
         )
     else:
         WAITING_REVIEW[user_id]["anonymous"] = False
+        WAITING_REVIEW[user_id]["tg_username"] = callback.from_user.username  # может быть None
         WAITING_REVIEW[user_id]["step"] = "name"
         await callback.message.answer(
-            "Как тебя зовут? Напиши своё настоящее имя:",
+            "Как тебя зовут? Напиши своё имя:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="❌ Отмена", callback_data="rev_cancel")
             ]])
@@ -2765,8 +2766,15 @@ async def handle_story(message: Message):
                 return
             review_data = WAITING_REVIEW.pop(user_id)
             review_id = uuid.uuid4().hex[:10]
+            tg_username = review_data.get("tg_username")
+            if review_data.get("anonymous"):
+                author = "Анонимный пользователь"
+            elif tg_username:
+                author = f"@{tg_username} ({review_data['name']})"
+            else:
+                author = review_data["name"]
             new_review = {
-                "author": review_data["name"],
+                "author": author,
                 "tag": review_data["topic"],
                 "text": text,
             }
