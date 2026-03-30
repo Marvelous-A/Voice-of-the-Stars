@@ -1240,8 +1240,8 @@ async def send_review_notification(review_id: str, review: dict):
         f"---\n"
         f"Для управления отзывом откройте Telegram-бот — там придёт уведомление с кнопками."
     )
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _send_email_sync, subject, body)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _send_email_sync, subject, body)
 
     if ADMIN_ID:
         admin_text = (
