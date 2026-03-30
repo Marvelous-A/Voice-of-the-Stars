@@ -1234,7 +1234,8 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
                 if age >= 40:
                     await asyncio.sleep(random.randint(25, 35))
                 else:
-                    await asyncio.sleep(random.randint(8, 10))
+                    length_bonus = 10 + min(5, len(part) // 30)
+                    await asyncio.sleep(random.randint(8, 10) + length_bonus)
                 await bot.send_message(user_id, part)
         else:
             full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
@@ -1296,8 +1297,9 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
 "{user_message}"
 
-ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение — не игнорируй его, не уходи в сторону.
-Если это вопрос — ответь на вопрос. Если реакция/эмоция — отреагируй на неё.
+ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение. Твой ответ должен быть прямым ответом на него.
+Если человек задаёт вопрос — дай ответ на этот конкретный вопрос, не уходи в сторону.
+Если человек выражает эмоцию — отреагируй на неё. Не продолжай монолог как будто сообщения не было.
 Карты уже разложены и названы раньше. НЕ делай новый расклад. Сохраняй характер.
 {anti_repeat}
 
@@ -1316,8 +1318,9 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
 "{user_message}"
 
-ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение — не игнорируй его, не уходи в сторону.
-Если это вопрос — ответь на вопрос. Если реакция/эмоция — отреагируй на неё.
+ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение. Твой ответ должен быть прямым ответом на него.
+Если человек задаёт вопрос — дай ответ на этот конкретный вопрос, не уходи в сторону.
+Если человек выражает эмоцию — отреагируй на неё. Не продолжай монолог как будто сообщения не было.
 Карты уже разложены и названы раньше. НЕ делай новый расклад. Сохраняй характер.
 {anti_repeat}
 
@@ -1355,7 +1358,9 @@ async def send_session_reply(user_id: int, user_message: str):
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         await bot.send_message(
             user_id,
-            f"✨ {tarologist['name']} завершает сеанс. Если хочешь задать новый вопрос, выбери таролога в меню 🎴"
+            f"🔮 {tarologist['name']} завершает сеанс — все карты прочитаны, энергия этой встречи исчерпана.\n"
+            "Для новой консультации выбери таролога в меню 🎴",
+            reply_markup=get_main_keyboard()
         )
         return
 
@@ -1417,7 +1422,8 @@ async def send_session_reply(user_id: int, user_message: str):
             if age >= 40:
                 await asyncio.sleep(random.randint(20, 35))
             else:
-                await asyncio.sleep(random.randint(10, 18))
+                length_bonus = 10 + min(5, len(part) // 30)
+                await asyncio.sleep(random.randint(8, 10) + length_bonus)
             await bot.send_message(user_id, part)
     else:
         if user_id_str in ACTIVE_SESSIONS:
@@ -1433,10 +1439,11 @@ async def send_session_reply(user_id: int, user_message: str):
             del ACTIVE_SESSIONS[user_id_str]
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
+        tarologist_name = tarologist["name"]
         await bot.send_message(
             user_id,
-            "⚠️ Это было последнее сообщение сеанса — таролог больше не увидит твоих сообщений.\n"
-            "Если хочешь продолжить — начни новую консультацию через меню 🎴",
+            f"🔮 {tarologist_name} завершает сеанс — все карты прочитаны, энергия этой встречи исчерпана.\n"
+            "Для новой консультации выбери таролога в меню 🎴",
             reply_markup=get_main_keyboard()
         )
         return
@@ -1454,7 +1461,12 @@ async def session_timeout(user_id: int):
         del ACTIVE_SESSIONS[user_id_str]
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
-        await bot.send_message(user_id, f"✨ Сеанс с {tarologist_name} завершён. Если появятся вопросы, обращайся.")
+        await bot.send_message(
+            user_id,
+            f"⏰ Время сеанса с {tarologist_name} истекло — связь прервалась.\n"
+            "Если хочешь продолжить — выбери таролога в меню 🎴",
+            reply_markup=get_main_keyboard()
+        )
 
 # ====== ОБНОВЛЕНИЕ ПРОГНОЗА ======
 async def update_forecast():
