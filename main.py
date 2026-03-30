@@ -799,6 +799,13 @@ NO_CONTACTS_RULE = (
     "Все коммуникации — только через этот сервис. Это жёсткое правило без исключений."
 )
 
+ANECDOTE_RULE = (
+    "\n\nИСТОРИИ ИЗ ПРАКТИКИ ('была клиентка...', 'один парень у меня...' и т.п.) — "
+    "используй максимум 1 раз на весь ответ, и только если это прямо к месту. "
+    "В большинстве ответов (примерно 9 из 10) таких историй НЕТ ВООБЩЕ. "
+    "Не вставляй их как шаблонный приём — только если само просится."
+)
+
 # ====== VOSK МОДЕЛЬ ======
 VOSK_MODEL = None
 VOSK_MODEL_PATH = "vosk-model-small-ru-0.22"
@@ -1108,15 +1115,48 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
     history = get_user_tarot_history(user_id, tarologist["id"])
     history_text = ""
     if history:
-        history_text = "\n\nПредыдущие обращения этого человека к тебе (из прошлых сеансов):\n"
+        now = datetime.now()
+        # Находим время последнего сообщения из прошлых сеансов
+        last_time = None
+        for item in history:
+            if "time" in item:
+                try:
+                    t = datetime.fromisoformat(item["time"])
+                    if last_time is None or t > last_time:
+                        last_time = t
+                except Exception:
+                    pass
+
+        if last_time:
+            delta_sec = (now - last_time).total_seconds()
+            if delta_sec < 3600:
+                time_label = f"примерно {int(delta_sec / 60)} минут назад"
+            elif delta_sec < 86400:
+                time_label = f"примерно {int(delta_sec / 3600)} часов назад"
+            elif delta_sec < 7 * 86400:
+                time_label = f"примерно {int(delta_sec / 86400)} дней назад"
+            else:
+                time_label = "больше недели назад"
+        else:
+            time_label = "когда-то раньше"
+            delta_sec = 99999999
+
+        history_text = f"\n\nПредыдущие обращения этого человека к тебе ({time_label}):\n"
         for item in history:
             role_label = "Человек" if item["role"] == "user" else "Ты"
             history_text += f"{role_label}: {item['text']}\n"
-        history_text += (
-            "\nЕсли человек спрашивает помнишь ли ты его, можешь ответить что помнишь, опираясь на историю. "
-            "Если не уверен, скажи 'кажется мы уже общались, да?'. "
-            "Если истории нет, вежливо съедь с темы, скажи что много клиентов и сложно всех удержать в памяти."
-        )
+
+        if delta_sec < 7 * 86400:
+            history_text += (
+                f"\nТы хорошо помнишь этого человека — прошло {time_label}. "
+                "Ты знаешь о чём говорили. НЕ веди себя как будто впервые с ним встречаешься. "
+                "НЕ притворяйся что прошло много времени если не прошло."
+            )
+        else:
+            history_text += (
+                "\nПрошло больше недели — детали могли выветриться. "
+                "Можешь сказать 'кажется мы уже общались' или что много клиентов — сложно всех помнить."
+            )
 
     age = tarologist.get("age", 35)
     typing_style = get_age_typing_style(age)
@@ -1136,6 +1176,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 Ты пишешь с телефона двумя пальцами, медленно. Отправляй мысли по одной, короткими сообщениями по 1-2 строки. Каждое сообщение отдели строкой "|||". Суммарно не более 300 знаков. Никаких тире. Знаки препинания почти не ставишь. Сохраняй свой характер.
 {typing_style}
 {NO_CONTACTS_RULE}
+{ANECDOTE_RULE}
 """
         else:
             prompt = f"""
@@ -1150,6 +1191,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 После вступительной ремарки дай короткий ответ на вопрос от лица своего персонажа. Упомяни карты (придумай). Пиши одним блоком без абзацев. Никаких тире. Общий объём 80-100 слов. Не строй ответ как мини-эссе, пиши хаотично как живой человек. Никаких связок "однако", "при этом", "таким образом".
 {typing_style}
 {NO_CONTACTS_RULE}
+{ANECDOTE_RULE}
 """
         return await ask_ai(prompt, max_tokens=400)
     elif age >= 40:
@@ -1173,6 +1215,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 - Сохраняй свой характер и тон
 {typing_style}
 {NO_CONTACTS_RULE}
+{ANECDOTE_RULE}
 """
         return await ask_ai(prompt, max_tokens=500)
     else:
@@ -1192,12 +1235,13 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 - Никогда не используй: "однако", "при этом", "таким образом", "во-первых", "во-вторых", "в заключение"
 - Иногда обрывай мысль и перескакивай, потом возвращайся
 - Иногда повтори слово дважды для акцента
-- Иногда упомяни случай из своей практики одной фразой
+- Иногда упомяни случай из своей практики одной фразой (но не в каждом ответе!)
 - Не заканчивай красиво, последняя мысль может быть обрывистой
 - НЕ будь идеально тёплым в каждой фразе, иногда просто сухо по делу
 - Пиши специфично под эту ситуацию, не обобщай
 {typing_style}
 {NO_CONTACTS_RULE}
+{ANECDOTE_RULE}
 """
         return await ask_ai(prompt, max_tokens=1000)
 
@@ -1424,6 +1468,9 @@ async def send_session_reply(user_id: int, user_message: str):
             else:
                 length_bonus = 10 + min(5, len(part) // 30)
                 await asyncio.sleep(random.randint(8, 10) + length_bonus)
+            # Проверяем повторно — таймаут мог сработать пока ждали
+            if user_id_str not in ACTIVE_SESSIONS:
+                break
             await bot.send_message(user_id, part)
     else:
         if user_id_str in ACTIVE_SESSIONS:
