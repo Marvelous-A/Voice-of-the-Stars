@@ -1638,6 +1638,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 
 ФОРМАТ: серия коротких сообщений через "|||". 5-8 сообщений, суммарно 400-600 знаков.
 Знаки препинания почти не ставишь. Мысли рваные. Сохраняй свой характер.
+ОБЯЗАТЕЛЬНО используй опечатки из своего характера: пиши 'вообщем' вместо 'вообще', и другие слова из описания личности.
 {typing_style}
 {NO_CONTACTS_RULE}
 {ANECDOTE_RULE}
@@ -1663,6 +1664,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 
 ФОРМАТ: серия коротких сообщений через "|||". 4-7 сообщений, суммарно {'600-900' if age >= 35 else '800-1100'} знаков.
 Не строй по схеме вступление-объяснение-вывод, пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
+ОБЯЗАТЕЛЬНО используй опечатки из своего характера: пиши 'вообщем' вместо 'вообще', и другие слова из описания личности.
 {typing_style}
 {NO_CONTACTS_RULE}
 {ANECDOTE_RULE}
@@ -1716,7 +1718,8 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
                 "tarologist": astrologer,
                 "history": session_history,
                 "msg_count": 0,
-                "profanity_count": 0
+                "profanity_count": 0,
+                "anecdote_used": _has_anecdote(answer)
             }
             SESSION_BUSY[user_id_str] = False
             asyncio.create_task(session_timeout(user_id))
@@ -1808,7 +1811,12 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
         return await ask_ai(prompt, max_tokens=400)
 
 
-async def get_astro_session_reply(astrologer: dict, user_message: str, session_history: list, is_flagged: bool = False) -> str:
+def _has_anecdote(text: str) -> bool:
+    tl = text.lower()
+    return any(m in tl for m in ["была клиентка", "был клиент", "одна клиентка", "один клиент"])
+
+
+async def get_astro_session_reply(astrologer: dict, user_message: str, session_history: list, is_flagged: bool = False, anecdote_used: bool = False) -> str:
     age = astrologer.get("age", 40)
     typing_style = get_age_typing_style(age)
 
@@ -1829,6 +1837,14 @@ async def get_astro_session_reply(astrologer: dict, user_message: str, session_h
         "Не пересказывай натальную карту снова. Каждый ответ должен быть НОВЫМ по содержанию."
     )
 
+    if anecdote_used:
+        anecdote_block = (
+            "\n\nНЕ упоминай истории из практики ('была клиентка', 'один клиент' и т.п.) — "
+            "ты уже использовал это в этом сеансе. Больше не нужно."
+        )
+    else:
+        anecdote_block = ANECDOTE_RULE
+
     if age >= 40:
         prompt = f"""
 {astrologer['personality']}
@@ -1846,8 +1862,10 @@ async def get_astro_session_reply(astrologer: dict, user_message: str, session_h
 
 ФОРМАТ: серия коротких сообщений через "|||". 2-4 сообщения, не более 250 знаков суммарно.
 Знаки препинания почти не ставишь. Мысли рваные.
+ОБЯЗАТЕЛЬНО используй опечатки из своего характера: пиши 'вообщем' вместо 'вообще', и другие слова из описания личности.
 {typing_style}
 {NO_CONTACTS_RULE}
+{anecdote_block}
 """
         return await ask_ai(prompt, max_tokens=350)
     else:
@@ -1867,8 +1885,10 @@ async def get_astro_session_reply(astrologer: dict, user_message: str, session_h
 
 ФОРМАТ: серия коротких сообщений через "|||". 2-4 сообщения, 200-400 знаков суммарно.
 Пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
+ОБЯЗАТЕЛЬНО используй опечатки из своего характера: пиши 'вообщем' вместо 'вообще', и другие слова из описания личности.
 {typing_style}
 {NO_CONTACTS_RULE}
+{anecdote_block}
 """
         return await ask_ai(prompt, max_tokens=450)
 
@@ -1960,12 +1980,15 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         return
 
     if session.get("type") == "astro":
-        answer = await get_astro_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged)
+        answer = await get_astro_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged, anecdote_used=session.get("anecdote_used", False))
     else:
         answer = await get_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged)
     if not answer:
         SESSION_BUSY[user_id_str] = False
         return
+
+    if session.get("type") == "astro" and _has_anecdote(answer):
+        session["anecdote_used"] = True
 
     session["history"].append({"role": "tarot", "text": answer})
 
