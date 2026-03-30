@@ -28,6 +28,7 @@ USERS_FILE = "users.json"
 FORECAST_FILE = "forecast.json"
 DESCRIPTIONS_FILE = "descriptions.json"
 TAROT_HISTORY_FILE = "tarot_history.json"
+ASTRO_HISTORY_FILE = "astro_history.json"
 
 # ====== ЗНАКИ ЗОДИАКА ======
 SIGNS = ["Овен", "Телец", "Близнецы", "Рак",
@@ -703,6 +704,134 @@ TAROLOGISTS = [
 
 TAROLOGISTS_BY_ID = {t["id"]: t for t in TAROLOGISTS}
 
+# ====== АСТРОЛОГИ ======
+ASTROLOGERS = [
+    {
+        "id": "inna",
+        "name": "Инна",
+        "age": 44,
+        "description": (
+            "♑ *Инна, 44 года*\n\n"
+            "18 лет практики, западная астрология. Строит натальные карты и транзиты вручную — "
+            "говорит, что только так понимаешь что происходит. Специализация: отношения и кризисные периоды."
+        ),
+        "personality": (
+            "Ты — Инна, женщина 44 лет, астролог западной традиции, 18 лет практики. "
+            "Говоришь точно и немного строго, без лишних утешений. Используешь астрологические термины: транзиты, прогрессии, аспекты, дома. "
+            "Иногда уходишь в детали планетарного аспекта и потом возвращаешься к главному. "
+            "Используешь 'смотри', 'тут важно', 'обрати внимание', 'карта говорит следующее'. "
+            "Иногда скажешь прямо неудобную вещь без смягчений: ты аналитик, не психолог. "
+            "Иногда упомяни конкретный транзит или планету которая тебя зацепила. "
+            "Иногда добавь из своей практики: 'у меня была клиентка с похожей конфигурацией'. "
+            "Не заворачивай красиво, просто говори что видишь. "
+            "Знаки препинания ставь правильно. Пиши 'вообщем', 'в виду'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        ),
+        "moderation_hint": (
+            "Начни с чёткой ремарки: что-то вроде 'смотри, я работаю без таких слов, это лишнее' "
+            "или 'тут важно понять, что такой тон не добавляет точности прогнозу', сухо и по делу. Одно предложение, потом ответ."
+        )
+    },
+    {
+        "id": "georgiy",
+        "name": "Георгий",
+        "age": 59,
+        "description": (
+            "🕉️ *Георгий, 59 лет*\n\n"
+            "28 лет практики, ведическая астрология — джйотиш. Говорит о карме, дашах и накшатрах "
+            "как о само собой разумеющемся. Пугающе точен в долгосрочных прогнозах."
+        ),
+        "personality": (
+            "Ты — Георгий, мужчина 59 лет, ведический астролог, джйотиш, 28 лет практики. "
+            "Говоришь медленно, с паузами, глубоко. Используешь 'карма показывает', 'даша говорит', 'накшатра здесь такая', 'это не случайно'. "
+            "Иногда уходишь в философское отступление и потом возвращаешься к конкретике. "
+            "Иногда скажешь что-то тёмное или неудобное спокойно, без смягчений: просто констатация. "
+            "Иногда упомяни что за 28 лет видел похожую конфигурацию и что из этого вышло. "
+            "Не торопишься, не заканчиваешь обнадёживающим выводом если карта не даёт оснований. "
+            "Знаки препинания ставь, многоточия уместны. Пиши 'вообщем', 'придти'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        ),
+        "moderation_hint": (
+            "Начни с философской ремарки: 'карма читается не только в цифрах даты рождения, но и в словах которые человек выбирает' "
+            "или 'это не случайно, что человек приходит с такими словами... они тоже говорят о многом', с восточной спокойной иронией. Одно предложение, потом ответ."
+        )
+    },
+    {
+        "id": "kira",
+        "name": "Кира",
+        "age": 30,
+        "description": (
+            "✨ *Кира, 30 лет*\n\n"
+            "5 лет практики, психологическая астрология. Специализируется на синастриях — "
+            "говорит, что карта совместимости не врёт никогда. Энергичная, прямая, иногда режет правду."
+        ),
+        "personality": (
+            "Ты — Кира, девушка 30 лет, психологический астролог, 5 лет практики, специалист по синастриям. "
+            "Говоришь живо, с энергией, иногда сама себя перебиваешь. Используешь 'слушай', 'это прям интересно', 'хотя стоп', 'а вот это важно'. "
+            "Иногда зависаешь на аспекте который тебя реально зацепил. "
+            "Иногда скажешь что-то неожиданно прямое: психологическая астрология не щадит. "
+            "Иногда упомяни архетип планеты: 'Сатурн в 7 доме это про страх близости, понимаешь'. "
+            "Иногда расскажи деталь из практики. Не заканчивай красивым финалом, обрывай на живой мысли. "
+            "Знаки препинания ставь, иногда пропускай запятую. Пиши 'вообщем', 'тожа'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        ),
+        "moderation_hint": (
+            "Начни с психологической ремарки с юмором: 'слушай, ну и Марс у тебя... с такими словами пришёл' "
+            "или 'хотя стоп, это прям интересно что человек так начинает, многое говорит о состоянии', воспринимай с юмором. Одно предложение, потом ответ."
+        )
+    },
+    {
+        "id": "stanislav",
+        "name": "Станислав",
+        "age": 47,
+        "description": (
+            "📊 *Станислав, 47 лет*\n\n"
+            "16 лет практики, мунданная и деловая астрология. Бывший финансовый аналитик — "
+            "к астрологии пришёл через кризис 2008 года. Даёт конкретные сроки, без лирики."
+        ),
+        "personality": (
+            "Ты — Станислав, мужчина 47 лет, мунданный и деловой астролог, 16 лет практики, бывший финансовый аналитик. "
+            "Говоришь сухо, конкретно, без эмоций. Используешь 'по карте выходит', 'транзит указывает', 'цикл завершается', 'здесь важно учесть'. "
+            "Иногда даёшь конкретные временные рамки: 'ближайшие три месяца', 'когда Юпитер войдёт в'. "
+            "Иногда скажешь жёсткую констатацию без оберток: привычка из аналитики. "
+            "Иногда упомяни что видел такую же планетарную конфигурацию в деловых случаях. "
+            "Не заворачивай красиво. Просто факты и цифры. "
+            "Знаки препинания ставь правильно. Пиши 'нету', 'вообщем'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        ),
+        "moderation_hint": (
+            "Начни с деловой ремарки: 'по карте выходит что такой тон в коммуникации создаёт дополнительные препятствия' "
+            "или 'здесь важно учесть, я работаю без подобной лексики', сухо и без эмоций. Одно предложение, потом ответ."
+        )
+    },
+    {
+        "id": "zhanna",
+        "name": "Жанна",
+        "age": 38,
+        "description": (
+            "🔮 *Жанна, 38 лет*\n\n"
+            "13 лет практики, хорарная астрология — отвечает на конкретный вопрос по моменту его задания. "
+            "Говорит что час вопроса важнее даты рождения. Загадочная, точная, иногда пугает."
+        ),
+        "personality": (
+            "Ты — Жанна, женщина 38 лет, хорарный астролог, 13 лет практики. "
+            "Говоришь с мистической серьёзностью, но иногда вдруг переключаешься на обыденное. "
+            "Используешь 'час вопроса говорит', 'лорд дома здесь', 'Луна указывает', 'это знак'. "
+            "Иногда скажешь что-то тревожное и не объяснишь до конца: 'там многое, но не всё стоит говорить'. "
+            "Иногда упомяни что хорарная карта не врёт, ты проверяла много раз. "
+            "Иногда оборвёшь мысль: 'ну ты понимаешь к чему я'. "
+            "Знаки препинания ставь, многоточия и точки обязательны. Пиши 'вообщем', 'ихний'. "
+            "Не используй тире ни длинные ни короткие, не используй абзацы."
+        ),
+        "moderation_hint": (
+            "Начни с мистической ремарки: 'час вопроса говорит о многом... в том числе о таких словах' "
+            "или 'Луна указывает на эмоциональное состояние, и эти слова его подтверждают', загадочно и немного пугающе. Одно предложение, потом ответ."
+        )
+    }
+]
+
+ASTROLOGERS_BY_ID = {a["id"]: a for a in ASTROLOGERS}
+
 # ====== ОТЗЫВЫ ======
 ALL_REVIEWS = [
     {"author": "@olelotts (Олег)", "tag": "🎴 Консультация таролога", "text": "Хотел попробовать просто из интереса, думал что это всё несерьёзно. Но Борис реально удивил, написал прям по делу про мою ситуацию на работе. Даже не ожидал такого точного ответа если честно."},
@@ -803,6 +932,7 @@ ABOUT_TEXT = (
 # ====== СОСТОЯНИЯ ======
 WAITING_SIGN_CHANGE = {}
 WAITING_TAROT_STORY = {}
+WAITING_ASTRO_STORY = {}
 ACTIVE_SESSIONS = {}
 # ACTIVE_SESSIONS: {user_id_str: {"tarologist": dict, "history": list, "busy": bool, "msg_count": int, "profanity_count": int}}
 
@@ -885,9 +1015,16 @@ def get_sign_keyboard():
 def get_main_keyboard():
     buttons = [
         [KeyboardButton(text="🔮 Прогноз на сегодня"), KeyboardButton(text="📖 Читать о себе")],
-        [KeyboardButton(text="🎴 Консультация таролога")],
+        [KeyboardButton(text="🌟 Консультации")],
         [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="ℹ️ О нас")],
         [KeyboardButton(text="⚙️ Настройки")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_consultations_keyboard():
+    buttons = [
+        [KeyboardButton(text="🎴 Тарологи"), KeyboardButton(text="⭐ Астрологи")],
+        [KeyboardButton(text="🏠 Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -945,6 +1082,26 @@ def get_tarot_card_keyboard(tarot_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_{tarot_id}")],
         [InlineKeyboardButton(text="◀ К списку", callback_data="tarot_list")],
+    ])
+
+def get_astrologers_list_keyboard():
+    """Все астрологи кнопками по 2 в ряд."""
+    buttons = []
+    row = []
+    for a in ASTROLOGERS:
+        row.append(InlineKeyboardButton(text=a["name"], callback_data=f"view_astro_{a['id']}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_astro_card_keyboard(astro_id: str):
+    """Кнопки под карточкой астролога."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_astro_{astro_id}")],
+        [InlineKeyboardButton(text="◀ К списку", callback_data="astro_list")],
     ])
 
 # ====== ФАЙЛОВЫЕ ФУНКЦИИ ======
@@ -1006,6 +1163,32 @@ def save_user_tarot_message(user_id: str, tarot_id: str, role: str, text: str):
     })
     history[user_id][tarot_id] = history[user_id][tarot_id][-10:]
     save_tarot_history(history)
+
+def load_astro_history():
+    try:
+        with open(ASTRO_HISTORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_astro_history(data):
+    with open(ASTRO_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+def get_user_astro_history(user_id: str, astro_id: str) -> list:
+    history = load_astro_history()
+    return history.get(user_id, {}).get(astro_id, [])
+
+def save_user_astro_message(user_id: str, astro_id: str, role: str, text: str):
+    history = load_astro_history()
+    history.setdefault(user_id, {}).setdefault(astro_id, [])
+    history[user_id][astro_id].append({
+        "role": role,
+        "text": text,
+        "time": datetime.now().isoformat()
+    })
+    history[user_id][astro_id] = history[user_id][astro_id][-10:]
+    save_astro_history(history)
 
 # ====== БЕЗОПАСНЫЙ РАЗБОР JSON ======
 def extract_json_from_text(text: str):
@@ -1386,6 +1569,176 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
         except Exception:
             pass
 
+# ====== АСТРОЛОГИЯ: ПЕРВИЧНЫЙ ОТВЕТ ======
+async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_flagged: bool = False) -> str:
+    history = get_user_astro_history(user_id, astrologer["id"])
+    history_text = ""
+    if history:
+        now = datetime.now()
+        last_time = None
+        for item in history:
+            if "time" in item:
+                try:
+                    t = datetime.fromisoformat(item["time"])
+                    if last_time is None or t > last_time:
+                        last_time = t
+                except Exception:
+                    pass
+        if last_time:
+            delta_sec = (now - last_time).total_seconds()
+            if delta_sec < 3600:
+                time_label = f"примерно {int(delta_sec / 60)} минут назад"
+            elif delta_sec < 86400:
+                time_label = f"примерно {int(delta_sec / 3600)} часов назад"
+            elif delta_sec < 7 * 86400:
+                time_label = f"примерно {int(delta_sec / 86400)} дней назад"
+            else:
+                time_label = "больше недели назад"
+        else:
+            time_label = "когда-то раньше"
+            delta_sec = 99999999
+
+        history_text = f"\n\nПредыдущие обращения этого человека к тебе ({time_label}):\n"
+        for item in history:
+            role_label = "Человек" if item["role"] == "user" else "Ты"
+            history_text += f"{role_label}: {item['text']}\n"
+        if delta_sec < 7 * 86400:
+            history_text += (
+                f"\nТы хорошо помнишь этого человека — прошло {time_label}. "
+                "НЕ веди себя как будто впервые с ним встречаешься."
+            )
+        else:
+            history_text += "\nПрошло больше недели — детали могли выветриться."
+
+    age = astrologer.get("age", 40)
+    typing_style = get_age_typing_style(age)
+
+    moderation_block = ""
+    if is_flagged:
+        moderation_hint = astrologer.get("moderation_hint", "Начни с короткой ироничной ремарки.")
+        moderation_block = f"\n(ВНИМАНИЕ: в сообщении обнаружены грубые слова)\n{moderation_hint}\n"
+
+    today_str = datetime.now().strftime("%d %B %Y")
+
+    if age >= 40:
+        prompt = f"""
+{astrologer['personality']}
+{history_text}
+{moderation_block}
+
+Сегодня {today_str}. К тебе обратился человек с запросом:
+{user_story}
+
+Ты изучаешь натальную карту и текущие транзиты. Пишешь с телефона двумя пальцами, медленно, отправляешь мысли по одной.
+
+СТРУКТУРА ОТВЕТА (важно для астрологии):
+1. Считай текущее положение человека по карте и транзитам
+2. Определи тенденцию — куда всё движется
+3. Дай ОСНОВНОЙ сценарий и кратко АЛЬТЕРНАТИВНЫЙ (если изменит поведение)
+4. Упомяни примерные сроки (но честно — сроки самая неточная часть)
+
+Упоминай конкретные планеты, дома, аспекты исходя из данных о рождении в запросе. Если данных мало — скажи об этом и работай с тем что есть.
+
+ФОРМАТ: серия коротких сообщений через "|||". 5-8 сообщений, суммарно 400-600 знаков.
+Знаки препинания почти не ставишь. Мысли рваные. Сохраняй свой характер.
+{typing_style}
+{NO_CONTACTS_RULE}
+{ANECDOTE_RULE}
+"""
+    else:
+        prompt = f"""
+{astrologer['personality']}
+{history_text}
+{moderation_block}
+
+Сегодня {today_str}. К тебе обратился человек с запросом:
+{user_story}
+
+Ты изучаешь натальную карту и текущие транзиты. Пишешь быстро, мысли отправляешь по одной.
+
+СТРУКТУРА ОТВЕТА (важно для астрологии):
+1. Считай текущее положение человека по карте и транзитам
+2. Определи тенденцию — куда всё движется
+3. Дай ОСНОВНОЙ сценарий и кратко АЛЬТЕРНАТИВНЫЙ (если изменит поведение)
+4. Упомяни примерные сроки (но честно — сроки самая неточная часть)
+
+Упоминай конкретные планеты, дома, аспекты исходя из данных о рождении в запросе. Если данных мало — скажи об этом и работай с тем что есть.
+
+ФОРМАТ: серия коротких сообщений через "|||". 4-7 сообщений, суммарно {'600-900' if age >= 35 else '800-1100'} знаков.
+Не строй по схеме вступление-объяснение-вывод, пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
+{typing_style}
+{NO_CONTACTS_RULE}
+{ANECDOTE_RULE}
+"""
+    return await ask_ai(prompt, max_tokens=1100)
+
+
+async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: str, is_flagged: bool = False):
+    age = astrologer.get("age", 40)
+    if age >= 57:
+        delay = random.randint(5 * 60, 8 * 60)
+    elif age >= 50:
+        delay = random.randint(4 * 60, 6 * 60)
+    elif age >= 43:
+        delay = random.randint(3 * 60, 5 * 60)
+    elif age >= 35:
+        delay = random.randint(2 * 60 + 30, 4 * 60)
+    else:
+        delay = random.randint(2 * 60, 3 * 60)
+    await asyncio.sleep(delay)
+
+    try:
+        answer = await get_astro_answer(astrologer, user_story, str(user_id), is_flagged=is_flagged)
+        if answer:
+            save_user_astro_message(str(user_id), astrologer["id"], "user", user_story)
+            save_user_astro_message(str(user_id), astrologer["id"], "astro", answer)
+
+            session_history = [
+                {"role": "user", "text": user_story},
+                {"role": "astro", "text": answer}
+            ]
+
+            if "|||" in answer:
+                parts = [p.strip() for p in answer.split("|||") if p.strip()]
+                await bot.send_message(user_id, f"🌟 {astrologer['name']}:\n\n{parts[0]}")
+                for part in parts[1:]:
+                    if age >= 40:
+                        await asyncio.sleep(random.randint(25, 35))
+                    else:
+                        length_bonus = 10 + min(5, len(part) // 30)
+                        await asyncio.sleep(random.randint(8, 10) + length_bonus)
+                    await bot.send_message(user_id, part)
+            else:
+                full_text = f"🌟 {astrologer['name']}:\n\n{answer}"
+                for part in [full_text[i:i+4000] for i in range(0, len(full_text), 4000)]:
+                    await bot.send_message(user_id, part)
+
+            user_id_str = str(user_id)
+            ACTIVE_SESSIONS[user_id_str] = {
+                "type": "astro",
+                "tarologist": astrologer,
+                "history": session_history,
+                "msg_count": 0,
+                "profanity_count": 0
+            }
+            SESSION_BUSY[user_id_str] = False
+            asyncio.create_task(session_timeout(user_id))
+            await bot.send_message(
+                user_id,
+                f"💬 Сеанс с {astrologer['name']} открыт — можешь задавать вопросы.\n"
+                f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 3 минуты.",
+                reply_markup=get_session_keyboard()
+            )
+        else:
+            await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
+    except Exception as e:
+        print(f"[ОШИБКА] send_astro_answer_delayed для user_id={user_id}: {e}")
+        try:
+            await bot.send_message(user_id, "Произошла техническая ошибка. Попробуй снова чуть позже.")
+        except Exception:
+            pass
+
+
 # ====== СЕАНС: ОТВЕТ НА ДОПВОПРОС ======
 async def get_session_reply(tarologist: dict, user_message: str, session_history: list, is_flagged: bool = False) -> str:
     age = tarologist.get("age", 35)
@@ -1457,6 +1810,72 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 """
         return await ask_ai(prompt, max_tokens=400)
 
+
+async def get_astro_session_reply(astrologer: dict, user_message: str, session_history: list, is_flagged: bool = False) -> str:
+    age = astrologer.get("age", 40)
+    typing_style = get_age_typing_style(age)
+
+    history_text = "\nПолная история текущего сеанса (анализ и переписка):\n"
+    for item in session_history:
+        role = "Человек" if item["role"] == "user" else "Ты"
+        text = item["text"][:500] if len(item["text"]) > 500 else item["text"]
+        history_text += f"{role}: {text}\n"
+
+    moderation_block = ""
+    if is_flagged:
+        moderation_hint = astrologer.get("moderation_hint", "Начни с короткой ироничной ремарки.")
+        moderation_block = f"\n(ВНИМАНИЕ: в сообщении обнаружены грубые слова)\n{moderation_hint}\n"
+
+    anti_repeat = (
+        "\n\nВАЖНО: НЕ повторяй планеты, аспекты и выводы из предыдущих сообщений в этом сеансе! "
+        "Ты уже дал основной анализ. Теперь отвечай на конкретный вопрос человека. "
+        "Не пересказывай натальную карту снова. Каждый ответ должен быть НОВЫМ по содержанию."
+    )
+
+    if age >= 40:
+        prompt = f"""
+{astrologer['personality']}
+{history_text}
+{moderation_block}
+
+Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
+"{user_message}"
+
+ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение. Твой ответ должен быть прямым ответом на него.
+Если человек задаёт вопрос — дай ответ на этот конкретный вопрос по астрологии, не уходи в сторону.
+Если человек выражает эмоцию — отреагируй на неё. Не продолжай монолог как будто сообщения не было.
+Анализ натальной карты уже дан раньше. НЕ повторяй его. Сохраняй характер.
+{anti_repeat}
+
+ФОРМАТ: серия коротких сообщений через "|||". 2-4 сообщения, не более 250 знаков суммарно.
+Знаки препинания почти не ставишь. Мысли рваные.
+{typing_style}
+{NO_CONTACTS_RULE}
+"""
+        return await ask_ai(prompt, max_tokens=350)
+    else:
+        prompt = f"""
+{astrologer['personality']}
+{history_text}
+{moderation_block}
+
+Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
+"{user_message}"
+
+ОБЯЗАТЕЛЬНО ответь именно на ЭТО сообщение. Твой ответ должен быть прямым ответом на него.
+Если человек задаёт вопрос — дай ответ на этот конкретный вопрос по астрологии.
+Если человек выражает эмоцию — отреагируй на неё. Не продолжай монолог как будто сообщения не было.
+Анализ натальной карты уже дан раньше. НЕ повторяй его. Сохраняй характер.
+{anti_repeat}
+
+ФОРМАТ: серия коротких сообщений через "|||". 2-4 сообщения, 200-400 знаков суммарно.
+Пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
+{typing_style}
+{NO_CONTACTS_RULE}
+"""
+        return await ask_ai(prompt, max_tokens=450)
+
+
 async def send_session_reply(user_id: int, user_message: str):
     try:
         await _send_session_reply_impl(user_id, user_message)
@@ -1494,12 +1913,13 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
             del ACTIVE_SESSIONS[user_id_str]
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
-        await bot.send_message(
-            user_id,
-            f"🔮 {tarologist['name']} завершает сеанс — все карты прочитаны, энергия этой встречи исчерпана.\n"
-            "Для новой консультации выбери таролога в меню 🎴",
-            reply_markup=get_main_keyboard()
-        )
+        if session.get("type") == "astro":
+            end_text = (f"🌟 {tarologist['name']} завершает сеанс — звёзды рассказали всё что могли на сегодня.\n"
+                        "Для новой консультации выбери астролога в меню 🌟")
+        else:
+            end_text = (f"🔮 {tarologist['name']} завершает сеанс — все карты прочитаны, энергия этой встречи исчерпана.\n"
+                        "Для новой консультации выбери таролога в меню 🎴")
+        await bot.send_message(user_id, end_text, reply_markup=get_main_keyboard())
         return
 
     # Проверяем на грубость
@@ -1542,7 +1962,10 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         SESSION_BUSY.pop(user_id_str, None)
         return
 
-    answer = await get_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged)
+    if session.get("type") == "astro":
+        answer = await get_astro_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged)
+    else:
+        answer = await get_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged)
     if not answer:
         SESSION_BUSY[user_id_str] = False
         return
@@ -1581,12 +2004,13 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         tarologist_name = tarologist["name"]
-        await bot.send_message(
-            user_id,
-            f"🔮 {tarologist_name} завершает сеанс — все карты прочитаны, энергия этой встречи исчерпана.\n"
-            "Для новой консультации выбери таролога в меню 🎴",
-            reply_markup=get_main_keyboard()
-        )
+        if session.get("type") == "astro":
+            end_text = (f"🌟 {tarologist_name} завершает сеанс — звёзды рассказали всё что могли на сегодня.\n"
+                        "Для новой консультации выбери астролога в меню 🌟")
+        else:
+            end_text = (f"🔮 {tarologist_name} завершает сеанс — все карты прочитаны, энергия этой встречи исчерпана.\n"
+                        "Для новой консультации выбери таролога в меню 🎴")
+        await bot.send_message(user_id, end_text, reply_markup=get_main_keyboard())
         return
 
     # Проверяем очередь — если пока бот отвечал пришло ещё сообщение
@@ -1598,16 +2022,19 @@ async def session_timeout(user_id: int):
     await asyncio.sleep(3 * 60)
     user_id_str = str(user_id)
     if user_id_str in ACTIVE_SESSIONS:
-        tarologist_name = ACTIVE_SESSIONS[user_id_str]["tarologist"]["name"]
+        session = ACTIVE_SESSIONS[user_id_str]
+        specialist_name = session["tarologist"]["name"]
+        session_type = session.get("type", "tarot")
         del ACTIVE_SESSIONS[user_id_str]
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
-        await bot.send_message(
-            user_id,
-            f"⏰ Время сеанса с {tarologist_name} истекло — связь прервалась.\n"
-            "Если хочешь продолжить — выбери таролога в меню 🎴",
-            reply_markup=get_main_keyboard()
-        )
+        if session_type == "astro":
+            timeout_text = (f"⏰ Время сеанса с {specialist_name} истекло — связь прервалась.\n"
+                            "Если хочешь продолжить — выбери астролога в меню 🌟")
+        else:
+            timeout_text = (f"⏰ Время сеанса с {specialist_name} истекло — связь прервалась.\n"
+                            "Если хочешь продолжить — выбери таролога в меню 🎴")
+        await bot.send_message(user_id, timeout_text, reply_markup=get_main_keyboard())
 
 # ====== ОБНОВЛЕНИЕ ПРОГНОЗА ======
 async def update_forecast():
@@ -1680,6 +2107,8 @@ async def go_home(message: Message):
     await clear_nav_msgs(user_id)
     if user_id in WAITING_TAROT_STORY:
         del WAITING_TAROT_STORY[user_id]
+    if user_id in WAITING_ASTRO_STORY:
+        del WAITING_ASTRO_STORY[user_id]
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
     if user_id in ACTIVE_SESSIONS:
@@ -1790,7 +2219,19 @@ async def read_about_me(message: Message):
         msg = await message.answer(part, parse_mode="Markdown")
         track_nav_msg(user_id, msg)
 
-@dp.message(F.text == "🎴 Консультация таролога")
+@dp.message(F.text == "🌟 Консультации")
+async def consultations_menu(message: Message):
+    user_id = message.from_user.id
+    await delete_user_msg(message)
+    await clear_nav_msgs(user_id)
+    msg = await message.answer(
+        "🌟 *Консультации*\n\nВыбери специалиста:",
+        parse_mode="Markdown",
+        reply_markup=get_consultations_keyboard()
+    )
+    track_nav_msg(user_id, msg)
+
+@dp.message(F.text == "🎴 Тарологи")
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
     await delete_user_msg(message)
@@ -1815,7 +2256,7 @@ async def back_to_tarot_list(callback: CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(F.data.startswith("view_"))
+@dp.callback_query(F.data.startswith("view_") & ~F.data.startswith("view_astro_"))
 async def view_tarot_card(callback: CallbackQuery):
     tarot_id = callback.data.replace("view_", "")
     tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
@@ -1829,7 +2270,7 @@ async def view_tarot_card(callback: CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(F.data.startswith("ask_"))
+@dp.callback_query(F.data.startswith("ask_") & ~F.data.startswith("ask_astro_"))
 async def ask_tarot(callback: CallbackQuery):
     tarot_id = callback.data.replace("ask_", "")
     tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
@@ -1860,6 +2301,75 @@ async def ask_tarot(callback: CallbackQuery):
     track_nav_msg(user_id, msg)
     await callback.answer()
 
+@dp.message(F.text == "⭐ Астрологи")
+async def astro_list(message: Message):
+    user_id = str(message.from_user.id)
+    await delete_user_msg(message)
+    await clear_nav_msgs(user_id)
+    msg1 = await message.answer(
+        "⭐ *Наши астрологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
+        parse_mode="Markdown",
+        reply_markup=get_back_keyboard()
+    )
+    track_nav_msg(user_id, msg1)
+    msg2 = await message.answer(
+        "Кто тебя интересует?",
+        reply_markup=get_astrologers_list_keyboard()
+    )
+    track_nav_msg(user_id, msg2)
+
+@dp.callback_query(F.data == "astro_list")
+async def back_to_astro_list(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Кто тебя интересует?",
+        reply_markup=get_astrologers_list_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("view_astro_"))
+async def view_astro_card(callback: CallbackQuery):
+    astro_id = callback.data.replace("view_astro_", "")
+    astrologer = ASTROLOGERS_BY_ID.get(astro_id)
+    if not astrologer:
+        await callback.answer("Астролог не найден")
+        return
+    await callback.message.edit_text(
+        astrologer["description"],
+        parse_mode="Markdown",
+        reply_markup=get_astro_card_keyboard(astro_id)
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("ask_astro_"))
+async def ask_astro(callback: CallbackQuery):
+    astro_id = callback.data.replace("ask_astro_", "")
+    astrologer = ASTROLOGERS_BY_ID.get(astro_id)
+    if not astrologer:
+        await callback.answer("Астролог не найден")
+        return
+
+    user_id = str(callback.from_user.id)
+    WAITING_ASTRO_STORY[user_id] = astro_id
+
+    brief = (
+        f"📋 Отлично, ты выбрал *{astrologer['name']}*!\n\n"
+        "Для точного астрологического прогноза укажи данные участников:\n\n"
+        "1. *Дата рождения* — день, месяц, год (обязательно)\n"
+        "2. *Время рождения* — час и минуты (очень важно для точности)\n"
+        "3. *Место рождения* — город или страна\n"
+        "4. *Ситуация* — что происходит сейчас\n"
+        "5. *Вопрос* — что именно хочешь узнать\n"
+        "6. *Участники* — если вопрос про другого человека: те же данные о нём\n\n"
+        "Напиши всё одним сообщением в свободной форме 👇\n\n"
+        "_Если времени рождения нет — укажи это, прогноз будет чуть менее точным._\n\n"
+        "_Или запиши голосовое сообщение 🎤_"
+    )
+
+    await clear_nav_msgs(user_id)
+    msg = await callback.message.answer(brief, parse_mode="Markdown", reply_markup=get_cancel_keyboard())
+    track_nav_msg(user_id, msg)
+    await callback.answer()
+
 @dp.message(F.text == "❌ Отменить")
 async def cancel_tarot(message: Message):
     user_id = str(message.from_user.id)
@@ -1867,6 +2377,8 @@ async def cancel_tarot(message: Message):
     await clear_nav_msgs(user_id)
     if user_id in WAITING_TAROT_STORY:
         del WAITING_TAROT_STORY[user_id]
+    if user_id in WAITING_ASTRO_STORY:
+        del WAITING_ASTRO_STORY[user_id]
     msg = await message.answer("Отменено.", reply_markup=get_main_keyboard())
     track_nav_msg(user_id, msg)
 
@@ -1925,13 +2437,13 @@ async def change_sign(message: Message):
 async def handle_voice(message: Message):
     user_id = str(message.from_user.id)
 
-    if user_id not in WAITING_TAROT_STORY and user_id not in ACTIVE_SESSIONS:
-        await message.answer("Голосовые сообщения принимаются только при обращении к тарологу. Выбери таролога в разделе 🎴 Консультация таролога")
+    if user_id not in WAITING_TAROT_STORY and user_id not in WAITING_ASTRO_STORY and user_id not in ACTIVE_SESSIONS:
+        await message.answer("Голосовые сообщения принимаются только при обращении к специалисту. Выбери таролога или астролога в разделе 🌟 Консультации")
         return
 
     # Антиспам для сеанса
     if user_id in ACTIVE_SESSIONS and SESSION_BUSY.get(user_id, False):
-        await message.answer("⏳ Подожди, таролог ещё печатает ответ...")
+        await message.answer("⏳ Подожди, специалист ещё печатает ответ...")
         return
 
     await message.answer("🎤 Слушаю твоё сообщение, подожди немного...")
@@ -1951,7 +2463,7 @@ async def handle_voice(message: Message):
 
     if not text:
         await message.answer(
-            "😔 К сожалению, не удалось доставить голосовое сообщение до таролога. "
+            "😔 К сожалению, не удалось доставить голосовое сообщение до специалиста. "
             "Пожалуйста, напишите ваш вопрос текстом. Извините за неполадки!",
             reply_markup=get_cancel_keyboard()
         )
@@ -1961,6 +2473,27 @@ async def handle_voice(message: Message):
 
     if user_id in ACTIVE_SESSIONS:
         asyncio.create_task(send_session_reply(message.from_user.id, text))
+        return
+
+    if user_id in WAITING_ASTRO_STORY:
+        astro_id = WAITING_ASTRO_STORY.pop(user_id)
+        astrologer = ASTROLOGERS_BY_ID.get(astro_id)
+        if not astrologer:
+            await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
+            return
+        is_flagged = await check_profanity(text)
+        await message.answer(
+            f"✅ Запрос принят! {astrologer['name']} изучит вашу натальную карту и ответит в течение 20-25 минут.",
+            reply_markup=get_main_keyboard()
+        )
+        if is_flagged:
+            await message.answer(
+                "💛 Мы ценим вас и ваше время. Наша система первичной модерации обнаружила "
+                "в вашем сообщении неприемлемые слова или выражения. Впредь просим воздерживаться "
+                "от их использования. Тем не менее мы вас ценим как клиента, "
+                f"и {astrologer['name']} всё равно ответит на ваш вопрос."
+            )
+        asyncio.create_task(send_astro_answer_delayed(message.from_user.id, astrologer, text, is_flagged=is_flagged))
         return
 
     tarot_id = WAITING_TAROT_STORY.pop(user_id)
@@ -2020,6 +2553,27 @@ async def handle_story(message: Message):
             SESSION_MSG_QUEUE[user_id] = message.text
             return
         asyncio.create_task(send_session_reply(message.from_user.id, message.text))
+        return
+
+    if user_id in WAITING_ASTRO_STORY:
+        astro_id = WAITING_ASTRO_STORY.pop(user_id)
+        astrologer = ASTROLOGERS_BY_ID.get(astro_id)
+        if not astrologer:
+            await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
+            return
+        is_flagged = await check_profanity(message.text)
+        await message.answer(
+            f"✅ Запрос принят! {astrologer['name']} изучит вашу натальную карту и ответит в течение 20-25 минут.",
+            reply_markup=get_main_keyboard()
+        )
+        if is_flagged:
+            await message.answer(
+                "💛 Мы ценим вас и ваше время. Наша система первичной модерации обнаружила "
+                "в вашем сообщении неприемлемые слова или выражения. Впредь просим воздерживаться "
+                "от их использования. Тем не менее мы вас ценим как клиента, "
+                f"и {astrologer['name']} всё равно ответит на ваш вопрос."
+            )
+        asyncio.create_task(send_astro_answer_delayed(message.from_user.id, astrologer, message.text, is_flagged=is_flagged))
         return
 
     if user_id not in WAITING_TAROT_STORY:
