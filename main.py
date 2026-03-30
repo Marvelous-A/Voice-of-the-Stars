@@ -943,7 +943,8 @@ ABOUT_TEXT = (
 WAITING_SIGN_CHANGE = {}
 WAITING_TAROT_STORY = {}
 WAITING_ASTRO_STORY = {}
-WAITING_REVIEW = {}   # {user_id: {"step": "topic"|"anon"|"name"|"text", "topic": str, "anonymous": bool, "name": str}}
+WAITING_REVIEW = {}        # {user_id: {"step": "topic"|"anon"|"name"|"text", ...}}
+WAITING_REVIEW_EDIT = {}   # {admin_id: review_id} — администратор редактирует текст отзыва
 ACTIVE_SESSIONS = {}
 # ACTIVE_SESSIONS: {user_id_str: {"tarologist": dict, "history": list, "busy": bool, "msg_count": int, "profanity_count": int}}
 
@@ -1258,10 +1259,13 @@ async def send_review_notification(review_id: str, review: dict):
             f"📅 *Дата:* {date_str}\n\n"
             f"💬 *Текст:*\n{review['text']}"
         )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"radmin_ok_{review_id}"),
-            InlineKeyboardButton(text="❌ Отклонить",   callback_data=f"radmin_no_{review_id}"),
-        ]])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"radmin_ok_{review_id}"),
+                InlineKeyboardButton(text="❌ Отклонить",   callback_data=f"radmin_no_{review_id}"),
+            ],
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"radmin_edit_{review_id}")],
+        ])
         try:
             await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown", reply_markup=keyboard)
         except Exception as e:
@@ -2610,6 +2614,35 @@ async def admin_reject_review(callback: CallbackQuery):
         )
     await callback.answer()
 
+@dp.callback_query(F.data.startswith("radmin_edit_"))
+async def admin_edit_review(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    review_id = callback.data.replace("radmin_edit_", "")
+    pending = load_pending_reviews()
+    if review_id not in pending:
+        await callback.answer("Отзыв не найден (уже обработан?).", show_alert=True)
+        return
+    WAITING_REVIEW_EDIT[str(callback.from_user.id)] = review_id
+    current_text = pending[review_id]["text"]
+    await callback.message.answer(
+        f"✏️ *Редактирование отзыва*\n\n"
+        f"Текущий текст:\n_{current_text}_\n\n"
+        f"Отправь новый текст отзыва. Автор и тема останутся без изменений.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"radmin_edit_cancel_{review_id}")
+        ]])
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("radmin_edit_cancel_"))
+async def admin_edit_cancel(callback: CallbackQuery):
+    WAITING_REVIEW_EDIT.pop(str(callback.from_user.id), None)
+    await callback.message.answer("Редактирование отменено.")
+    await callback.answer()
+
 @dp.message(F.text == "ℹ️ О нас")
 async def about_us(message: Message):
     user_id = message.from_user.id
@@ -2735,6 +2768,34 @@ async def end_session_manually(message: Message):
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_story(message: Message):
     user_id = str(message.from_user.id)
+
+    # ====== РЕДАКТИРОВАНИЕ ОТЗЫВА АДМИНИСТРАТОРОМ ======
+    if user_id in WAITING_REVIEW_EDIT and message.from_user.id == ADMIN_ID:
+        review_id = WAITING_REVIEW_EDIT.pop(user_id)
+        new_text = message.text.strip()
+        if len(new_text) < 10:
+            await message.answer("Слишком короткий текст. Попробуй ещё раз.")
+            WAITING_REVIEW_EDIT[user_id] = review_id
+            return
+        pending = load_pending_reviews()
+        if review_id not in pending:
+            await message.answer("Отзыв не найден — возможно, уже был обработан.")
+            return
+        pending[review_id]["text"] = new_text
+        save_pending_reviews(pending)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"radmin_ok_{review_id}"),
+                InlineKeyboardButton(text="❌ Отклонить",   callback_data=f"radmin_no_{review_id}"),
+            ],
+            [InlineKeyboardButton(text="✏️ Редактировать ещё", callback_data=f"radmin_edit_{review_id}")],
+        ])
+        await message.answer(
+            f"✅ Текст обновлён. Новый вариант:\n\n_{new_text}_\n\nЧто делаем с отзывом?",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        return
 
     # ====== ПОТОК ОТЗЫВА ======
     if user_id in WAITING_REVIEW:
