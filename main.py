@@ -2269,36 +2269,48 @@ async def session_timeout(user_id: int):
         await bot.send_message(user_id, timeout_text, reply_markup=get_main_keyboard())
 
 # ====== ОБНОВЛЕНИЕ ПРОГНОЗА ======
+def _msk_now() -> datetime:
+    """Текущее время по Москве (UTC+3)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=3)
+
 async def update_forecast():
-    print(f"[{datetime.now()}] Обновляю прогноз...")
-    try:
-        forecast = await get_horoscope()
-        if forecast:
-            save_forecast({"date": datetime.now().date().isoformat(), "ru": forecast})
-            print("Прогноз обновлён!")
-        else:
-            print("Прогноз не обновлён, пустой ответ API")
-    except Exception as e:
-        print("Ошибка при обновлении прогноза:", e)
+    msk = _msk_now()
+    print(f"[MSK {msk}] Обновляю прогноз...")
+    for attempt in range(1, 4):  # до 3 попыток
+        try:
+            forecast = await get_horoscope()
+            if forecast:
+                save_forecast({"date": msk.date().isoformat(), "ru": forecast})
+                print(f"Прогноз обновлён (попытка {attempt})")
+                return
+            else:
+                print(f"Попытка {attempt}: пустой ответ API, жду 2 мин...")
+        except Exception as e:
+            print(f"Попытка {attempt}: ошибка — {e}, жду 2 мин...")
+        await asyncio.sleep(120)
+    print("Прогноз так и не обновлён после 3 попыток — оставляем вчерашний")
 
 # ====== УТРЕННИЕ УВЕДОМЛЕНИЯ ======
 async def send_morning_notifications():
-    print(f"[{datetime.now()}] Отправляю утренние уведомления...")
+    msk = _msk_now()
+    print(f"[MSK {msk}] Отправляю утренние уведомления...")
     users = load_users()
     for user_id, user_data in users.items():
         if "sign" not in user_data:
             continue
         sign = user_data["sign"]
         try:
-            msg = await get_morning_message(sign)
-            if msg:
-                await bot.send_message(int(user_id), msg)
+            msg = random.choice(MORNING_TEMPLATES).format(sign=sign)
+            await bot.send_message(int(user_id), msg)
         except Exception as e:
             print(f"Ошибка отправки уведомления пользователю {user_id}:", e)
 
 # ====== ПЛАНИРОВЩИК ======
 async def scheduler():
-    today = datetime.now().date()
+    msk = _msk_now()
+    today = msk.date()
+
+    # При старте: обновить прогноз если он устарел
     forecast_data = load_forecast()
     if not forecast_data or forecast_data.get("date") != today.isoformat():
         await update_forecast()
@@ -2306,20 +2318,28 @@ async def scheduler():
     forecast_updated_date = today
     morning_sent_date = None
 
-    while True:
-        now = datetime.now()
-        today = now.date()
+    # При старте: если уже прошло 8 утра МСК и уведомления ещё не отправляли сегодня — отправить
+    if msk.hour >= 8:
+        morning_sent_date = today
+        await send_morning_notifications()
 
-        if now.hour == 0 and now.minute == 0 and forecast_updated_date != today:
+    while True:
+        msk = _msk_now()
+        today = msk.date()
+
+        # Обновление прогноза в полночь по МСК
+        if msk.hour == 0 and msk.minute == 0 and forecast_updated_date != today:
             forecast_updated_date = today
             await update_forecast()
 
-        if now.hour == 8 and now.minute == 0 and morning_sent_date != today:
+        # Утренние уведомления в 8:00 по МСК
+        # Проверяем весь час 8:xx — чтобы не пропустить из-за перезапуска
+        if msk.hour == 8 and morning_sent_date != today:
             morning_sent_date = today
             await send_morning_notifications()
 
-        next_minute = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)
-        await asyncio.sleep((next_minute - now).total_seconds())
+        next_minute = (msk + timedelta(minutes=1)).replace(second=0, microsecond=0)
+        await asyncio.sleep((next_minute - msk).total_seconds())
 
 # ====== ОБРАБОТЧИКИ ======
 @dp.message(F.text == "/start")
