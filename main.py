@@ -2325,10 +2325,9 @@ async def scheduler():
     forecast_updated_date = today
     morning_sent_date = None
 
-    # При старте: если уже прошло 8 утра МСК и уведомления ещё не отправляли сегодня — отправить
+    # Если при старте уже прошло 8 утра — отмечаем как отправленное, чтобы не слать повторно
     if msk.hour >= 8:
         morning_sent_date = today
-        await send_morning_notifications()
 
     while True:
         msk = _msk_now()
