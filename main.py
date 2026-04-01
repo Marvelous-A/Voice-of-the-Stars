@@ -1076,7 +1076,7 @@ def get_tarologists_list_keyboard():
 def get_tarot_card_keyboard(tarot_id: str):
     """Кнопки под карточкой таролога."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выбрать — 150 ₽", callback_data=f"ask_{tarot_id}")],
+        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_{tarot_id}")],
         [InlineKeyboardButton(text="◀ К списку", callback_data="tarot_list")],
     ])
 
@@ -2365,6 +2365,62 @@ async def start(message: Message):
         save_users(users)
         await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
         asyncio.create_task(_notify_new_user(message))
+
+@dp.message(F.text.startswith("/user "))
+async def admin_user_detail(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    query = message.text.replace("/user ", "").strip().lstrip("@")
+    users = load_users()
+
+    # Ищем по username или по ID
+    found_uid = None
+    found_data = None
+    for uid, data in users.items():
+        if uid == query or data.get("username", "").lower() == query.lower():
+            found_uid = uid
+            found_data = data
+            break
+
+    if not found_uid:
+        await message.answer(f"Пользователь «{query}» не найден.\nИщи по ID или @username.")
+        return
+
+    activity = found_data.get("activity", {})
+    username = found_data.get("username", "")
+    full_name = found_data.get("full_name", "")
+    sign = found_data.get("sign", "не выбран")
+    joined = found_data.get("joined_at", "")
+    joined_str = datetime.fromisoformat(joined).strftime("%d.%m.%Y %H:%M") if joined else "—"
+    last_seen = activity.get("last_seen", "")
+    last_seen_str = datetime.fromisoformat(last_seen).strftime("%d.%m.%Y %H:%M") if last_seen else "—"
+
+    if username:
+        user_label = f"@{username}"
+        if full_name:
+            user_label += f" ({full_name})"
+    elif full_name:
+        user_label = full_name
+    else:
+        user_label = f"ID {found_uid}"
+
+    text = (
+        f"👤 *{user_label}*\n"
+        f"🆔 ID: `{found_uid}`\n"
+        f"♈ Знак: {sign}\n"
+        f"📅 Зарегистрирован: {joined_str}\n"
+        f"🕐 Последняя активность: {last_seen_str}\n\n"
+        f"📊 *Использование услуг:*\n"
+        f"  🔮 Прогнозы: {activity.get('forecast', 0)}\n"
+        f"  📖 Читать о себе: {activity.get('about_me', 0)}\n"
+        f"  🎴 Консультации таролога: {activity.get('tarot', 0)}\n"
+        f"  ⭐ Консультации астролога: {activity.get('astro', 0)}\n"
+        f"  ✍️ Отправил отзывов: {activity.get('review', 0)}\n"
+        f"  📈 Всего действий: {activity.get('total', 0)}"
+    )
+    await message.answer(text, parse_mode="Markdown")
+
 
 @dp.message(F.text == "/users")
 async def admin_users(message: Message):
