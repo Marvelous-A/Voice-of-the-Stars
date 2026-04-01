@@ -1076,7 +1076,7 @@ def get_tarologists_list_keyboard():
 def get_tarot_card_keyboard(tarot_id: str):
     """Кнопки под карточкой таролога."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_{tarot_id}")],
+        [InlineKeyboardButton(text="✅ Выбрать — 150 ₽", callback_data=f"ask_{tarot_id}")],
         [InlineKeyboardButton(text="◀ К списку", callback_data="tarot_list")],
     ])
 
