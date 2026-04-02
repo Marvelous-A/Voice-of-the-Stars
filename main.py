@@ -1113,11 +1113,26 @@ def save_users(data):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
-def get_sessions_used(user_id: str) -> int:
-    """Сколько платных сеансов уже использовал пользователь."""
+def get_sessions_today(user_id: str) -> int:
+    """Сколько сеансов пользователь провёл сегодня."""
     users = load_users()
-    activity = users.get(user_id, {}).get("activity", {})
-    return activity.get("tarot", 0) + activity.get("astro", 0)
+    daily = users.get(user_id, {}).get("sessions_daily", {})
+    today = _msk_now().date().isoformat()
+    if daily.get("date") != today:
+        return 0
+    return daily.get("count", 0)
+
+def increment_sessions_today(user_id: str):
+    """Увеличивает счётчик дневных сеансов."""
+    users = load_users()
+    users.setdefault(user_id, {})
+    today = _msk_now().date().isoformat()
+    daily = users[user_id].get("sessions_daily", {})
+    if daily.get("date") != today:
+        daily = {"date": today, "count": 0}
+    daily["count"] += 1
+    users[user_id]["sessions_daily"] = daily
+    save_users(users)
 
 def track_activity(user_id: str, action: str):
     """Записывает активность пользователя. action: 'forecast'|'about_me'|'tarot'|'astro'|'review'"""
@@ -1763,6 +1778,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
             }
             SESSION_BUSY[user_id_str] = False
             track_activity(user_id_str, "tarot")
+            increment_sessions_today(user_id_str)
             asyncio.create_task(session_timeout(user_id))
             await bot.send_message(
                 user_id,
@@ -1905,6 +1921,7 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
             save_user_astro_message(str(user_id), astrologer["id"], "user", user_story)
             save_user_astro_message(str(user_id), astrologer["id"], "astro", answer)
             track_activity(str(user_id), "astro")
+            increment_sessions_today(str(user_id))
 
             session_history = [
                 {"role": "user", "text": user_story},
@@ -2666,14 +2683,14 @@ async def consultations_menu(message: Message):
 @dp.message(F.text == "🎴 Тарологи")
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
-    used = get_sessions_used(user_id)
+    used = get_sessions_today(user_id)
     remaining = max(0, FREE_SESSIONS_LIMIT - used)
     is_admin = message.from_user.id == ADMIN_ID
 
     if not is_admin and remaining == 0:
         await message.answer(
             "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
-            f"Каждому пользователю доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — ты уже использовал все.\n\n"
+            f"Каждый день доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — на сегодня ты уже использовал все.\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
             reply_markup=get_main_keyboard()
@@ -2734,7 +2751,7 @@ async def ask_tarot(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    if callback.from_user.id != ADMIN_ID and get_sessions_used(user_id) >= FREE_SESSIONS_LIMIT:
+    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= FREE_SESSIONS_LIMIT:
         await callback.message.answer(
             "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
@@ -2766,14 +2783,14 @@ async def ask_tarot(callback: CallbackQuery):
 @dp.message(F.text == "⭐ Астрологи")
 async def astro_list(message: Message):
     user_id = str(message.from_user.id)
-    used = get_sessions_used(user_id)
+    used = get_sessions_today(user_id)
     remaining = max(0, FREE_SESSIONS_LIMIT - used)
     is_admin = message.from_user.id == ADMIN_ID
 
     if not is_admin and remaining == 0:
         await message.answer(
             "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
-            f"Каждому пользователю доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — ты уже использовал все.\n\n"
+            f"Каждый день доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — на сегодня ты уже использовал все.\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
             reply_markup=get_main_keyboard()
@@ -2834,7 +2851,7 @@ async def ask_astro(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    if callback.from_user.id != ADMIN_ID and get_sessions_used(user_id) >= FREE_SESSIONS_LIMIT:
+    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= FREE_SESSIONS_LIMIT:
         await callback.message.answer(
             "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
