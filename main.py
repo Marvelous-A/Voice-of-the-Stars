@@ -954,6 +954,7 @@ SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообще
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
 MAX_SESSION_PROFANITY = 2  # после стольких грубостей в сеансе — завершаем
+FREE_SESSIONS_LIMIT = 2   # бесплатных сеансов на пользователя (таро + астро вместе)
 
 # ====== ЗАПРЕТ ВНЕШНИХ КОНТАКТОВ (вставляется во все промпты) ======
 NO_CONTACTS_RULE = (
@@ -1111,6 +1112,12 @@ def load_users():
 def save_users(data):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
+
+def get_sessions_used(user_id: str) -> int:
+    """Сколько платных сеансов уже использовал пользователь."""
+    users = load_users()
+    activity = users.get(user_id, {}).get("activity", {})
+    return activity.get("tarot", 0) + activity.get("astro", 0)
 
 def track_activity(user_id: str, action: str):
     """Записывает активность пользователя. action: 'forecast'|'about_me'|'tarot'|'astro'|'review'"""
@@ -2403,7 +2410,7 @@ async def admin_user_detail(message: Message):
     elif full_name:
         user_label = full_name
     else:
-        user_label = f"ID {found_uid}"
+        user_label = "—"
 
     text = (
         f"👤 *{user_label}*\n"
@@ -2659,12 +2666,34 @@ async def consultations_menu(message: Message):
 @dp.message(F.text == "🎴 Тарологи")
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
-    msg1 = await message.answer(
-        "🔯 *Наши тарологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
+    used = get_sessions_used(user_id)
+    remaining = max(0, FREE_SESSIONS_LIMIT - used)
+    is_admin = message.from_user.id == ADMIN_ID
+
+    if not is_admin and remaining == 0:
+        await message.answer(
+            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
+            f"Каждому пользователю доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — ты уже использовал все.\n\n"
+            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    if not is_admin and remaining <= FREE_SESSIONS_LIMIT:
+        limit_note = (
+            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* бесплатных сеанса из {FREE_SESSIONS_LIMIT}. "
+            "Скоро появится возможность оплатить дополнительные консультации."
+        )
+    else:
+        limit_note = ""
+
+    await message.answer(
+        f"🔯 *Наши тарологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇{limit_note}",
         parse_mode="Markdown",
         reply_markup=get_back_keyboard()
     )
-    msg2 = await message.answer(
+    await message.answer(
         "Кто тебя интересует?",
         reply_markup=get_tarologists_list_keyboard()
     )
@@ -2705,6 +2734,15 @@ async def ask_tarot(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
+    if callback.from_user.id != ADMIN_ID and get_sessions_used(user_id) >= FREE_SESSIONS_LIMIT:
+        await callback.message.answer(
+            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
+            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+
     WAITING_TAROT_STORY[user_id] = tarot_id
 
     brief = (
@@ -2728,12 +2766,34 @@ async def ask_tarot(callback: CallbackQuery):
 @dp.message(F.text == "⭐ Астрологи")
 async def astro_list(message: Message):
     user_id = str(message.from_user.id)
-    msg1 = await message.answer(
-        "⭐ *Наши астрологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇",
+    used = get_sessions_used(user_id)
+    remaining = max(0, FREE_SESSIONS_LIMIT - used)
+    is_admin = message.from_user.id == ADMIN_ID
+
+    if not is_admin and remaining == 0:
+        await message.answer(
+            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
+            f"Каждому пользователю доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — ты уже использовал все.\n\n"
+            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    if not is_admin and remaining <= FREE_SESSIONS_LIMIT:
+        limit_note = (
+            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* бесплатных сеанса из {FREE_SESSIONS_LIMIT}. "
+            "Скоро появится возможность оплатить дополнительные консультации."
+        )
+    else:
+        limit_note = ""
+
+    await message.answer(
+        f"⭐ *Наши астрологи*\n\nНажми на имя — увидишь карточку специалиста и сможешь выбрать его 👇{limit_note}",
         parse_mode="Markdown",
         reply_markup=get_back_keyboard()
     )
-    msg2 = await message.answer(
+    await message.answer(
         "Кто тебя интересует?",
         reply_markup=get_astrologers_list_keyboard()
     )
@@ -2774,6 +2834,15 @@ async def ask_astro(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
+    if callback.from_user.id != ADMIN_ID and get_sessions_used(user_id) >= FREE_SESSIONS_LIMIT:
+        await callback.message.answer(
+            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
+            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+
     WAITING_ASTRO_STORY[user_id] = astro_id
 
     brief = (
