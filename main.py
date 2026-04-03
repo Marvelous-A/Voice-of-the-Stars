@@ -1013,7 +1013,7 @@ def get_main_keyboard():
     buttons = [
         [KeyboardButton(text="🔮 Прогноз на сегодня"), KeyboardButton(text="📖 Читать о себе")],
         [KeyboardButton(text="🌟 Консультации")],
-        [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="ℹ️ О нас")],
+        [KeyboardButton(text="⭐ Отзывы")],  # [KeyboardButton(text="ℹ️ О нас")],
         [KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -3057,10 +3057,10 @@ async def admin_edit_cancel(callback: CallbackQuery):
     await callback.message.answer("Редактирование отменено.")
     await callback.answer()
 
-@dp.message(F.text == "ℹ️ О нас")
-async def about_us(message: Message):
-    user_id = message.from_user.id
-    msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown", reply_markup=get_main_keyboard())
+# @dp.message(F.text == "ℹ️ О нас")
+# async def about_us(message: Message):
+#     user_id = message.from_user.id
+#     msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @dp.message(F.text == "⚙️ Настройки")
 async def settings(message: Message):
