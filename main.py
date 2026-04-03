@@ -1028,6 +1028,7 @@ def get_consultations_keyboard():
 def get_settings_keyboard():
     buttons = [
         [KeyboardButton(text="♈ Изменить знак зодиака")],
+        [KeyboardButton(text="📄 Оферта")],
         [KeyboardButton(text="🏠 Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -3065,6 +3066,16 @@ async def about_us(message: Message):
 async def settings(message: Message):
     user_id = message.from_user.id
     msg = await message.answer("⚙️ Настройки:", reply_markup=get_settings_keyboard())
+
+@dp.message(F.text == "📄 Оферта")
+async def show_offer(message: Message):
+    await message.answer(
+        "📄 *Публичная оферта*\n\nУсловия оказания услуг, реквизиты и контактные данные:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Открыть оферту", url="https://docs.google.com/document/d/1ZTZsjsR7GGW6F6p8Cdfh7cWMjSF8fHy1s5mHsh4xgF8/edit?usp=sharing")
+        ]])
+    )
 
 @dp.message(F.text == "♈ Изменить знак зодиака")
 async def change_sign(message: Message):
