@@ -2586,6 +2586,11 @@ async def set_sign(message: Message):
 
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
+        # Сбрасываем кэш прогноза, чтобы при смене знака показывался новый прогноз
+        users = load_users()
+        users.setdefault(user_id, {}).pop("forecast_date", None)
+        users[user_id].pop("forecast_msg_id", None)
+        save_users(users)
         msg = await message.answer(f"Знак зодиака изменён на {message.text}! ✨", reply_markup=get_main_keyboard())
         return
 
