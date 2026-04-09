@@ -1028,7 +1028,7 @@ def get_consultations_keyboard():
 def get_settings_keyboard():
     buttons = [
         [KeyboardButton(text="♈ Изменить знак зодиака")],
-        [KeyboardButton(text="📄 Оферта")],
+        [KeyboardButton(text="📄 Оферта"), KeyboardButton(text="📞 Контакты")],
         [KeyboardButton(text="🏠 Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -3075,6 +3075,17 @@ async def show_offer(message: Message):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Открыть оферту", url="https://docs.google.com/document/d/1ZTZsjsR7GGW6F6p8Cdfh7cWMjSF8fHy1s5mHsh4xgF8/edit?usp=sharing")
         ]])
+    )
+
+@dp.message(F.text == "📞 Контакты")
+async def show_contacts(message: Message):
+    await message.answer(
+        "📞 *Контактные данные*\n\n"
+        "Исполнитель: Яковенко Андрей Алексеевич\n"
+        "ИНН: 503114316367\n"
+        "Телефон: +7 966 141-63-65\n"
+        "E-mail: andreyyakovenko05@mail.ru",
+        parse_mode="Markdown"
     )
 
 @dp.message(F.text == "♈ Изменить знак зодиака")
