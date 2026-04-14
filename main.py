@@ -2447,7 +2447,7 @@ async def admin_user_detail(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
-@dp.message(F.text == "/users")
+@dp.message(F.text.regexp(r"^/users(@\w+)?$"))
 async def admin_users(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
@@ -2485,7 +2485,7 @@ async def admin_users(message: Message):
         await message.answer(header + "\n".join(chunk), parse_mode="Markdown")
 
 
-@dp.message(F.text == "/stats")
+@dp.message(F.text.regexp(r"^/stats(@\w+)?$"))
 async def admin_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
