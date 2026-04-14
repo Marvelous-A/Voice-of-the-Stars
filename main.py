@@ -2467,11 +2467,11 @@ async def admin_users(message: Message):
         total = data.get("activity", {}).get("total", 0)
 
         if username:
-            user_label = f"@{username}"
+            user_label = f"@{username} [{uid}]"
             if full_name:
                 user_label += f" ({full_name})"
         elif full_name:
-            user_label = full_name
+            user_label = f"{full_name} [{uid}]"
         else:
             user_label = f"ID {uid}"
 
@@ -2481,8 +2481,8 @@ async def admin_users(message: Message):
     chunk_size = 50
     for i in range(0, len(lines), chunk_size):
         chunk = lines[i:i + chunk_size]
-        header = f"👥 *Пользователи ({i+1}–{min(i+chunk_size, len(lines))} из {len(lines)})*\n\n" if i == 0 else ""
-        await message.answer(header + "\n".join(chunk), parse_mode="Markdown")
+        header = f"👥 Пользователи ({i+1}–{min(i+chunk_size, len(lines))} из {len(lines)})\n\n" if i == 0 else ""
+        await message.answer(header + "\n".join(chunk))
 
 
 @dp.message(F.text.regexp(r"^/stats(@\w+)?$"))
