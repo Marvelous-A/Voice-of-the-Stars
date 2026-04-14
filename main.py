@@ -2737,7 +2737,7 @@ async def view_tarot_card(callback: CallbackQuery):
         await callback.answer("Таролог не найден")
         return
     await callback.message.edit_text(
-        tarologist["description"],
+        tarologist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты (раздел «⚙️ Настройки» → «📄 Оферта»)._",
         parse_mode="Markdown",
         reply_markup=get_tarot_card_keyboard(tarot_id)
     )
@@ -2837,7 +2837,7 @@ async def view_astro_card(callback: CallbackQuery):
         await callback.answer("Астролог не найден")
         return
     await callback.message.edit_text(
-        astrologer["description"],
+        astrologer["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты (раздел «⚙️ Настройки» → «📄 Оферта»)._",
         parse_mode="Markdown",
         reply_markup=get_astro_card_keyboard(astro_id)
     )
