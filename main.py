@@ -3227,6 +3227,36 @@ async def handle_story(message: Message):
 
     asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, message.text, is_flagged=is_flagged))
 
+# ====== HEARTBEAT ======
+_bot_started_at = _msk_now()
+
+async def heartbeat():
+    """Ежедневный отчёт о здоровье бота в 12:00 МСК и проверка каждые 30 минут."""
+    last_daily_report = None
+    while True:
+        try:
+            msk = _msk_now()
+            uptime = msk - _bot_started_at
+            hours = int(uptime.total_seconds() // 3600)
+            minutes = int((uptime.total_seconds() % 3600) // 60)
+
+            # Ежедневный отчёт в 12:00 МСК
+            if msk.hour == 12 and last_daily_report != msk.date():
+                last_daily_report = msk.date()
+                if ADMIN_ID:
+                    users = load_users()
+                    text = (
+                        f"📊 Ежедневный отчёт:\n"
+                        f"• Аптайм: {hours}ч {minutes}м\n"
+                        f"• Пользователей: {len(users)}\n"
+                        f"• Статус: работает ✅"
+                    )
+                    await bot.send_message(ADMIN_ID, text)
+        except Exception as e:
+            print(f"[heartbeat] Ошибка: {e}")
+
+        await asyncio.sleep(1800)  # проверка каждые 30 минут
+
 # ====== ЗАПУСК ======
 async def on_startup(bot):
     if ADMIN_ID:
@@ -3237,6 +3267,7 @@ async def on_startup(bot):
 
 async def main():
     asyncio.create_task(scheduler())
+    asyncio.create_task(heartbeat())
     await on_startup(bot)
     await dp.start_polling(bot)
 
