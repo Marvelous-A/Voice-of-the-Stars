@@ -31,6 +31,7 @@ ADMIN_ID = int(getenv("ADMIN_ID", "0"))       # Telegram ID администра
 EMAIL_FROM = getenv("EMAIL_FROM", "")         # Почта ОТ кого шлём уведомления (заполни в .env)
 EMAIL_PASSWORD = getenv("EMAIL_PASSWORD", "") # Пароль от этой почты (заполни в .env)
 EMAIL_TO = "mogneto.r@mail.ru"               # Куда приходят уведомления
+CHANNEL_ID = getenv("CHANNEL_ID", "")        # ID или @username канала для автопостинга
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 
@@ -2023,6 +2024,111 @@ async def send_morning_notifications():
         except Exception as e:
             print(f"Ошибка отправки уведомления пользователю {user_id}:", e)
 
+# ====== АВТОПОСТИНГ В КАНАЛ ======
+CHANNEL_POST_TOPICS = [
+    "Напиши короткий интересный пост о том, что означает, если тебе снится вода (река, море, дождь). Свяжи с астрологией и знаками зодиака.",
+    "Напиши пост о том, какие знаки зодиака обладают самой сильной интуицией и почему. Приведи примеры из жизни.",
+    "Напиши пост о лунных фазах и их влиянии на эмоции и решения. Дай практический совет.",
+    "Напиши пост про карту Таро дня — выбери случайную карту из Старших Арканов и расскажи её значение и послание на сегодня.",
+    "Напиши пост о том, какие кристаллы и камни подходят разным знакам зодиака и почему.",
+    "Напиши пост о ретроградном Меркурии — что это, как влияет и что делать, а чего избегать.",
+    "Напиши пост о совместимости стихий в любви: Огонь+Вода, Земля+Воздух — неожиданные пары.",
+    "Напиши пост о том, что означают повторяющиеся числа (11:11, 22:22) с точки зрения нумерологии и астрологии.",
+    "Напиши пост о том, как знак зодиака влияет на стиль общения и конфликты в отношениях.",
+    "Напиши пост о том, какие знаки зодиака самые везучие в деньгах и как другим знакам привлечь финансовую удачу.",
+    "Напиши пост о значении снов: если снятся кошки, змеи или полёты — что это значит с мистической точки зрения.",
+    "Напиши пост о Чёрной Луне (Лилит) в астрологии — что это и как влияет на характер.",
+    "Напиши пост о том, как узнать свою кармическую задачу по дате рождения.",
+    "Напиши пост о том, какие знаки зодиака чаще всего видят вещие сны.",
+    "Напиши пост о Таро и психологии — как расклад помогает разобраться в себе.",
+    "Напиши пост о том, какие ритуалы на новолуние действительно работают по мнению астрологов.",
+    "Напиши пост о домах в астрологии — что значит, если у тебя сильный 8-й или 12-й дом.",
+    "Напиши пост о том, как разные знаки зодиака переживают расставание и как им восстановиться.",
+    "Напиши пост о знаках зодиака и их теневых сторонах — о чём каждый знак предпочитает молчать.",
+    "Напиши пост о том, что такое натальная карта и почему солнечный знак — это только верхушка айсберга.",
+    "Напиши пост о мистических совпадениях и синхронностях — что они значат и как их замечать.",
+    "Напиши пост о том, какие знаки зодиака лучшие эмпаты и как это влияет на их жизнь.",
+    "Напиши пост о том, как планета-покровитель знака влияет на характер и судьбу.",
+    "Напиши пост о гадании на кофейной гуще — символы и их значения.",
+    "Напиши пост о том, почему одним знакам зодиака легко медитировать, а другим — сложно.",
+]
+
+CHANNEL_POST_INTERVAL = 30  # интервал постинга в минутах
+CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
+PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
+
+# Ключевые слова для поиска картинок по темам
+CHANNEL_IMAGE_KEYWORDS = [
+    "astrology", "zodiac signs", "tarot cards", "moon phases",
+    "crystals healing", "mystical night sky", "constellation stars",
+    "fortune telling", "horoscope", "meditation spiritual",
+    "full moon", "starry night", "candles mystic", "cosmic universe",
+    "aurora borealis", "nebula space", "sunset mystical",
+]
+
+async def fetch_pexels_image(query: str) -> str:
+    """Ищет картинку на Pexels и возвращает URL."""
+    if not PEXELS_API_KEY:
+        return ""
+    try:
+        url = "https://api.pexels.com/v1/search"
+        headers = {"Authorization": PEXELS_API_KEY}
+        params = {"query": query, "per_page": 15, "orientation": "landscape"}
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.get(url, headers=headers, params=params) as resp:
+                data = await resp.json(content_type=None)
+                photos = data.get("photos", [])
+                if photos:
+                    photo = random.choice(photos)
+                    return photo["src"]["large"]
+    except Exception as e:
+        print(f"[Pexels] Ошибка: {e}")
+    return ""
+
+async def generate_channel_post() -> str:
+    """Генерирует пост для канала через ИИ."""
+    topic = random.choice(CHANNEL_POST_TOPICS)
+    prompt = (
+        f"{topic}\n\n"
+        "Требования к посту:\n"
+        "— Длина: 500-1000 символов (короткий, но содержательный)\n"
+        "— Стиль: дружелюбный, увлекательный, с лёгкой интригой\n"
+        "— Пиши на русском языке\n"
+        "— Используй 1-2 эмодзи, не больше\n"
+        "— Не используй хештеги\n"
+        "— В конце можешь задать вопрос читателям, чтобы вовлечь в обсуждение\n"
+        "— Не начинай с приветствия\n"
+        "— Не упоминай никакие ссылки, аккаунты или контакты"
+    )
+    return await ask_ai(prompt, max_tokens=600)
+
+async def post_to_channel():
+    """Генерирует и отправляет пост в канал с картинкой."""
+    if not CHANNEL_ID:
+        return
+    try:
+        text = await generate_channel_post()
+        if not text:
+            print("[Автопостинг] ИИ не вернул текст, пропускаю")
+            return
+
+        # Пытаемся найти картинку
+        image_url = ""
+        if PEXELS_API_KEY:
+            keyword = random.choice(CHANNEL_IMAGE_KEYWORDS)
+            image_url = await fetch_pexels_image(keyword)
+
+        if image_url:
+            await bot.send_photo(CHANNEL_ID, photo=image_url, caption=text)
+        else:
+            await bot.send_message(CHANNEL_ID, text)
+
+        msk = _msk_now()
+        print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID}")
+    except Exception as e:
+        print(f"[Автопостинг] Ошибка: {e}")
+
 # ====== ПЛАНИРОВЩИК ======
 async def scheduler():
     msk = _msk_now()
@@ -2035,6 +2141,7 @@ async def scheduler():
 
     forecast_updated_date = today
     morning_sent_date = None
+    last_channel_post = None  # время последнего поста в канал
 
     # Если при старте уже прошло 8 утра — отмечаем как отправленное, чтобы не слать повторно
     if msk.hour >= 8:
@@ -2054,6 +2161,17 @@ async def scheduler():
         if msk.hour == 8 and morning_sent_date != today:
             morning_sent_date = today
             await send_morning_notifications()
+
+        # Автопостинг в канал каждые 30 минут в активные часы
+        if CHANNEL_ACTIVE_HOURS[0] <= msk.hour < CHANNEL_ACTIVE_HOURS[1]:
+            should_post = False
+            if last_channel_post is None:
+                should_post = True
+            elif (msk - last_channel_post).total_seconds() >= CHANNEL_POST_INTERVAL * 60:
+                should_post = True
+            if should_post:
+                last_channel_post = msk
+                await post_to_channel()
 
         next_minute = (msk + timedelta(minutes=1)).replace(second=0, microsecond=0)
         await asyncio.sleep((next_minute - msk).total_seconds())
