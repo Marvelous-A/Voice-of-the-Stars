@@ -695,26 +695,62 @@ def get_effective_session_limit(user_id: str) -> int:
     """Общий лимит сеансов на сегодня = базовый + бонусные."""
     return FREE_SESSIONS_LIMIT + get_bonus_sessions(user_id)
 
-def grant_referral_bonus(referrer_id: str, new_user_id: str) -> bool:
-    """Начисляет бонус за приглашение друга. Возвращает True если бонус начислен."""
+def save_referral_link(referrer_id: str, new_user_id: str) -> bool:
+    """Сохраняет связь реферер→друг. Бонус начислится когда друг пройдёт первый сеанс."""
     users = load_users()
     referrer = users.get(referrer_id)
     if not referrer:
         return False
-    # Проверяем что этот новый пользователь ещё не был учтён
-    referrals = referrer.get("referrals", [])
-    if new_user_id in referrals:
+    # Нельзя пригласить того, кто уже привязан
+    users.setdefault(new_user_id, {})
+    if users[new_user_id].get("referred_by"):
         return False
-    referrals.append(new_user_id)
+    users[new_user_id]["referred_by"] = referrer_id
+    users[new_user_id]["referral_bonus_granted"] = False  # бонус ещё не начислен
+    save_users(users)
+    return True
+
+def _try_grant_referral_bonus(user_id: str):
+    """Проверяет, пришёл ли пользователь по реферальной ссылке и нужно ли начислить бонус рефереру.
+    Вызывается при завершении первого сеанса пользователя."""
+    users = load_users()
+    user_data = users.get(user_id, {})
+    referrer_id = user_data.get("referred_by")
+    if not referrer_id:
+        return None
+    if user_data.get("referral_bonus_granted"):
+        return None
+    # Начисляем бонус рефереру
+    referrer = users.get(referrer_id)
+    if not referrer:
+        return None
+    referrals = referrer.get("referrals", [])
+    if user_id not in referrals:
+        referrals.append(user_id)
     referrer["referrals"] = referrals
     referrer["bonus_sessions"] = referrer.get("bonus_sessions", 0) + BONUS_SESSIONS_PER_REFERRAL
     referrer["referrals_total"] = referrer.get("referrals_total", 0) + 1
     users[referrer_id] = referrer
-    # Сохраняем у нового пользователя кто его пригласил
-    users.setdefault(new_user_id, {})
-    users[new_user_id]["referred_by"] = referrer_id
+    # Отмечаем что бонус начислен
+    users[user_id]["referral_bonus_granted"] = True
     save_users(users)
-    return True
+    return referrer_id
+
+async def check_and_grant_referral_bonus(user_id: str):
+    """Проверяет реферальную связь и начисляет бонус рефереру при первом сеансе друга."""
+    referrer_id = _try_grant_referral_bonus(user_id)
+    if referrer_id:
+        try:
+            users = load_users()
+            friend_name = users.get(user_id, {}).get("full_name", user_id)
+            await bot.send_message(
+                int(referrer_id),
+                f"🎉 Твой друг *{friend_name}* прошёл первую консультацию\\!\n"
+                f"Тебе начислен *\\+{BONUS_SESSIONS_PER_REFERRAL} бонусный сеанс*\\. 🌟",
+                parse_mode="MarkdownV2"
+            )
+        except Exception:
+            pass
 
 def save_forecast(data):
     with open(FORECAST_FILE, "w", encoding="utf-8") as f:
@@ -1316,6 +1352,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
             SESSION_BUSY[user_id_str] = False
             track_activity(user_id_str, "tarot")
             increment_sessions_today(user_id_str)
+            asyncio.create_task(check_and_grant_referral_bonus(user_id_str))
             asyncio.create_task(session_timeout(user_id))
             await bot.send_message(
                 user_id,
@@ -1459,6 +1496,7 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
             save_user_astro_message(str(user_id), astrologer["id"], "astro", answer)
             track_activity(str(user_id), "astro")
             increment_sessions_today(str(user_id))
+            asyncio.create_task(check_and_grant_referral_bonus(str(user_id)))
 
             session_history = [
                 {"role": "user", "text": user_story},
@@ -1933,16 +1971,15 @@ async def start(message: Message):
         save_users(users)
         await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
         asyncio.create_task(_notify_new_user(message))
-        # Начисляем бонус пригласившему
+        # Сохраняем реферальную связь (бонус начислится после первого сеанса друга)
         if ref_id:
-            granted = grant_referral_bonus(ref_id, user_id)
-            if granted and ADMIN_ID:
+            saved = save_referral_link(ref_id, user_id)
+            if saved:
                 try:
-                    new_name = message.from_user.full_name or user_id
                     await bot.send_message(
                         int(ref_id),
-                        f"🎉 Твой друг *{new_name}* присоединился по твоей ссылке\\!\n"
-                        f"Тебе начислен *\\+{BONUS_SESSIONS_PER_REFERRAL} бонусный сеанс*\\. 🌟",
+                        "👋 Твой друг перешёл по твоей ссылке\\!\n"
+                        "Бонусный сеанс начислится, когда друг пройдёт свою первую консультацию\\. 🌟",
                         parse_mode="MarkdownV2"
                     )
                 except Exception:
@@ -2657,14 +2694,20 @@ async def referral_menu(message: Message):
     user_data = users.get(user_id, {})
     total_refs = user_data.get("referrals_total", 0)
     bonus = user_data.get("bonus_sessions", 0)
+    # Считаем друзей, которые пришли но ещё не прошли сеанс
+    pending_refs = 0
+    for uid, udata in users.items():
+        if udata.get("referred_by") == user_id and not udata.get("referral_bonus_granted"):
+            pending_refs += 1
+    pending_line = f"\n⏳ Ждут первого сеанса: *{pending_refs}*" if pending_refs > 0 else ""
     text = (
         "🎁 *Пригласи друга — получи бонусный сеанс\\!*\n\n"
         "Отправь эту ссылку другу:\n"
         f"`{ref_link}`\n\n"
-        "Когда друг запустит бота по твоей ссылке, "
+        "Когда друг пройдёт свою первую консультацию, "
         f"тебе начислится *\\+{BONUS_SESSIONS_PER_REFERRAL} бонусный сеанс* "
         "с любым тарологом или астрологом\\. 🌟\n\n"
-        f"👥 Приглашено друзей: *{total_refs}*\n"
+        f"👥 Приглашено друзей: *{total_refs}*{pending_line}\n"
         f"🎴 Бонусных сеансов доступно: *{bonus}*"
     )
     await message.answer(text, parse_mode="MarkdownV2", reply_markup=get_main_keyboard())
