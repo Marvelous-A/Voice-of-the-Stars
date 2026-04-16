@@ -24,6 +24,7 @@ load_dotenv()
 # ====== Токены ======
 TOKEN = getenv("BOT_TOKEN")
 OPENROUTER_KEY = getenv("OPENROUTER_KEY")
+GROQ_API_KEY = getenv("GROQ_API_KEY")
 
 # ====== Администратор и почта ======
 ADMIN_ID = int(getenv("ADMIN_ID", "0"))       # Telegram ID администратора (заполни в .env)
@@ -983,23 +984,6 @@ ANECDOTE_RULE = (
 )
 
 # ====== VOSK МОДЕЛЬ ======
-VOSK_MODEL = None
-VOSK_MODEL_PATH = "vosk-model-small-ru-0.22"
-
-def init_vosk():
-    global VOSK_MODEL
-    try:
-        from vosk import Model
-        if os.path.exists(VOSK_MODEL_PATH):
-            VOSK_MODEL = Model(VOSK_MODEL_PATH)
-            print("Vosk модель загружена успешно!")
-        else:
-            print(f"Vosk модель не найдена по пути {VOSK_MODEL_PATH}. Скачайте модель: https://alphacephei.com/vosk/models")
-            print("Распакуйте архив в папку с ботом.")
-    except ImportError:
-        print("Библиотека vosk не установлена. Установите: pip install vosk")
-    except Exception as e:
-        print(f"Ошибка загрузки Vosk модели: {e}")
 
 # ====== КНОПКИ ======
 def get_sign_keyboard():
@@ -1458,70 +1442,34 @@ async def get_morning_message(sign: str) -> str:
     template = random.choice(MORNING_TEMPLATES)
     return template.format(sign=sign)
 
-# ====== РАСПОЗНАВАНИЕ ГОЛОСА (VOSK, бесплатно) ======
+# ====== РАСПОЗНАВАНИЕ ГОЛОСА (Groq Whisper, бесплатно) ======
 async def transcribe_voice(ogg_file_path: str) -> str:
-    """Распознавание голоса через Vosk (офлайн, бесплатно)"""
-    global VOSK_MODEL
-
-    if VOSK_MODEL is None:
-        print("Vosk модель не загружена, распознавание невозможно")
+    """Распознавание голоса через Groq Whisper API (бесплатно)"""
+    if not GROQ_API_KEY:
+        print("GROQ_API_KEY не задан, распознавание невозможно")
         return ""
 
-    wav_file_path = ogg_file_path.replace(".ogg", ".wav")
-
     try:
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-i", ogg_file_path, "-ar", "16000", "-ac", "1", "-f", "wav", wav_file_path, "-y",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await process.wait()
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
 
-        if process.returncode != 0:
-            print("Ошибка конвертации ogg в wav")
-            return ""
+        data = aiohttp.FormData()
+        data.add_field("file", open(ogg_file_path, "rb"), filename="voice.ogg", content_type="audio/ogg")
+        data.add_field("model", "whisper-large-v3-turbo")
+        data.add_field("language", "ru")
 
-        from vosk import KaldiRecognizer
-        import wave
-
-        wf = wave.open(wav_file_path, "rb")
-
-        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getframerate() != 16000:
-            print("Неверный формат WAV файла")
-            wf.close()
-            return ""
-
-        rec = KaldiRecognizer(VOSK_MODEL, wf.getframerate())
-        rec.SetWords(True)
-
-        results = []
-        while True:
-            data = wf.readframes(4000)
-            if len(data) == 0:
-                break
-            if rec.AcceptWaveform(data):
-                part_result = json.loads(rec.Result())
-                if part_result.get("text"):
-                    results.append(part_result["text"])
-
-        final_result = json.loads(rec.FinalResult())
-        if final_result.get("text"):
-            results.append(final_result["text"])
-
-        wf.close()
-
-        full_text = " ".join(results).strip()
-        return full_text
-
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, headers=headers, data=data) as resp:
+                result = await resp.json(content_type=None)
+                if "text" in result:
+                    return result["text"].strip()
+                else:
+                    print("Ошибка Groq Whisper:", result)
+                    return ""
     except Exception as e:
         print(f"Ошибка распознавания голоса: {e}")
         return ""
-    finally:
-        try:
-            if os.path.exists(wav_file_path):
-                os.remove(wav_file_path)
-        except:
-            pass
 
 # ====== СТИЛЬ НАБОРА ПО ВОЗРАСТУ ======
 def get_age_typing_style(age: int) -> str:
@@ -3361,7 +3309,6 @@ async def handle_story(message: Message):
 
 # ====== ЗАПУСК ======
 async def main():
-    init_vosk()
     asyncio.create_task(scheduler())
     await dp.start_polling(bot)
 
