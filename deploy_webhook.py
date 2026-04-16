@@ -2,9 +2,7 @@
 GitHub Webhook receiver — auto-deploy on push.
 Listens on port 9000, verifies the secret, runs git pull and restarts the bot.
 
-Usage on the server:
-    nohup /root/Voice-of-the-Stars/venv/bin/python3 deploy_webhook.py > webhook.log 2>&1 &
-
+Managed by systemd: bot.service and deploy-webhook.service
 Set WEBHOOK_SECRET in .env (same value as in GitHub webhook settings).
 """
 
@@ -12,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import socket
 import subprocess
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -55,15 +54,8 @@ def deploy():
         text=True,
     )
 
-    # restart bot
-    subprocess.run(["pkill", "-9", "-f", "main.py"], cwd=PROJECT_DIR)
-    subprocess.Popen(
-        [VENV_PYTHON, "main.py"],
-        cwd=PROJECT_DIR,
-        stdout=open(os.path.join(PROJECT_DIR, "bot.log"), "a"),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    # restart bot via systemd
+    subprocess.run(["systemctl", "restart", "bot.service"], check=False)
     print("=== Bot restarted ===", flush=True)
 
 
@@ -96,8 +88,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Webhook listener is running")
 
 
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+    allow_reuse_port = True
+
+
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", PORT), WebhookHandler)
+    server = ReusableHTTPServer(("0.0.0.0", PORT), WebhookHandler)
     print(f"Webhook server listening on port {PORT}", flush=True)
     try:
         server.serve_forever()
