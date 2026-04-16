@@ -547,7 +547,7 @@ def get_main_keyboard():
         [KeyboardButton(text="🔮 Прогноз на сегодня"), KeyboardButton(text="📖 Читать о себе")],
         [KeyboardButton(text="🌟 Консультации")],
         [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="ℹ️ О нас")],
-        [KeyboardButton(text="⚙️ Настройки")]
+        [KeyboardButton(text="🎁 Пригласи друга"), KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -657,7 +657,7 @@ def get_sessions_today(user_id: str) -> int:
     return daily.get("count", 0)
 
 def increment_sessions_today(user_id: str):
-    """Увеличивает счётчик дневных сеансов."""
+    """Увеличивает счётчик дневных сеансов. Списывает бонусный сеанс если базовый лимит исчерпан."""
     users = load_users()
     users.setdefault(user_id, {})
     today = _msk_now().date().isoformat()
@@ -666,6 +666,11 @@ def increment_sessions_today(user_id: str):
         daily = {"date": today, "count": 0}
     daily["count"] += 1
     users[user_id]["sessions_daily"] = daily
+    # Если превысили базовый лимит — списываем бонусный сеанс
+    if daily["count"] > FREE_SESSIONS_LIMIT:
+        bonus = users[user_id].get("bonus_sessions", 0)
+        if bonus > 0:
+            users[user_id]["bonus_sessions"] = bonus - 1
     save_users(users)
 
 def track_activity(user_id: str, action: str):
@@ -677,6 +682,39 @@ def track_activity(user_id: str, action: str):
     stats["total"] = stats.get("total", 0) + 1
     stats["last_seen"] = datetime.now().isoformat()
     save_users(users)
+
+# ====== РЕФЕРАЛЬНАЯ СИСТЕМА ======
+BONUS_SESSIONS_PER_REFERRAL = 1  # сколько бонусных сеансов за каждого друга
+
+def get_bonus_sessions(user_id: str) -> int:
+    """Возвращает количество неиспользованных бонусных сеансов у пользователя."""
+    users = load_users()
+    return users.get(user_id, {}).get("bonus_sessions", 0)
+
+def get_effective_session_limit(user_id: str) -> int:
+    """Общий лимит сеансов на сегодня = базовый + бонусные."""
+    return FREE_SESSIONS_LIMIT + get_bonus_sessions(user_id)
+
+def grant_referral_bonus(referrer_id: str, new_user_id: str) -> bool:
+    """Начисляет бонус за приглашение друга. Возвращает True если бонус начислен."""
+    users = load_users()
+    referrer = users.get(referrer_id)
+    if not referrer:
+        return False
+    # Проверяем что этот новый пользователь ещё не был учтён
+    referrals = referrer.get("referrals", [])
+    if new_user_id in referrals:
+        return False
+    referrals.append(new_user_id)
+    referrer["referrals"] = referrals
+    referrer["bonus_sessions"] = referrer.get("bonus_sessions", 0) + BONUS_SESSIONS_PER_REFERRAL
+    referrer["referrals_total"] = referrer.get("referrals_total", 0) + 1
+    users[referrer_id] = referrer
+    # Сохраняем у нового пользователя кто его пригласил
+    users.setdefault(new_user_id, {})
+    users[new_user_id]["referred_by"] = referrer_id
+    save_users(users)
+    return True
 
 def save_forecast(data):
     with open(FORECAST_FILE, "w", encoding="utf-8") as f:
@@ -1871,14 +1909,21 @@ async def scheduler():
         await asyncio.sleep((next_minute - msk).total_seconds())
 
 # ====== ОБРАБОТЧИКИ ======
-@dp.message(F.text == "/start")
+@dp.message(F.text.regexp(r"^/start(\s|$)"))
 async def start(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
+    is_new_user = user_id not in users or "sign" not in users.get(user_id, {})
     # Обновляем имя и username при каждом /start
     users.setdefault(user_id, {})
     users[user_id]["username"] = message.from_user.username or ""
     users[user_id]["full_name"] = message.from_user.full_name or ""
+    # Обработка реферальной ссылки (только для новых пользователей)
+    ref_id = None
+    if message.text and message.text.startswith("/start ref_") and is_new_user:
+        ref_id = message.text.replace("/start ref_", "").strip()
+        if ref_id == user_id:
+            ref_id = None  # нельзя пригласить самого себя
     if user_id in users and "sign" in users[user_id]:
         sign = users[user_id]["sign"]
         save_users(users)
@@ -1888,6 +1933,20 @@ async def start(message: Message):
         save_users(users)
         await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
         asyncio.create_task(_notify_new_user(message))
+        # Начисляем бонус пригласившему
+        if ref_id:
+            granted = grant_referral_bonus(ref_id, user_id)
+            if granted and ADMIN_ID:
+                try:
+                    new_name = message.from_user.full_name or user_id
+                    await bot.send_message(
+                        int(ref_id),
+                        f"🎉 Твой друг *{new_name}* присоединился по твоей ссылке\\!\n"
+                        f"Тебе начислен *\\+{BONUS_SESSIONS_PER_REFERRAL} бонусный сеанс*\\. 🌟",
+                        parse_mode="MarkdownV2"
+                    )
+                except Exception:
+                    pass
 
 @dp.message(F.text.startswith("/user "))
 async def admin_user_detail(message: Message):
@@ -1940,7 +1999,11 @@ async def admin_user_detail(message: Message):
         f"  🎴 Консультации таролога: {activity.get('tarot', 0)}\n"
         f"  ⭐ Консультации астролога: {activity.get('astro', 0)}\n"
         f"  ✍️ Отправил отзывов: {activity.get('review', 0)}\n"
-        f"  📈 Всего действий: {activity.get('total', 0)}"
+        f"  📈 Всего действий: {activity.get('total', 0)}\n\n"
+        f"🎁 *Реферальная система:*\n"
+        f"  Приглашено друзей: {found_data.get('referrals_total', 0)}\n"
+        f"  Бонусных сеансов осталось: {found_data.get('bonus_sessions', 0)}\n"
+        f"  Пришёл по ссылке от: {found_data.get('referred_by', '—')}"
     )
     await message.answer(text, parse_mode="Markdown")
 
@@ -2035,6 +2098,12 @@ async def admin_stats(message: Message):
     published_reviews = len(_load_reviews_from_file())
     pending_reviews = len(load_pending_reviews())
 
+    # Реферальная статистика
+    total_referrals = sum(u.get("referrals_total", 0) for u in users.values())
+    users_with_referrals = sum(1 for u in users.values() if u.get("referrals_total", 0) > 0)
+    total_bonus_remaining = sum(u.get("bonus_sessions", 0) for u in users.values())
+    came_by_referral = sum(1 for u in users.values() if u.get("referred_by"))
+
     text = (
         f"📊 *Статистика бота «Голос Звёзд»*\n"
         f"_{now.strftime('%d.%m.%Y %H:%M')}_\n\n"
@@ -2052,6 +2121,11 @@ async def admin_stats(message: Message):
         f"  🎴 Консультации таролога: *{totals['tarot']}*\n"
         f"  ⭐ Консультации астролога: *{totals['astro']}*\n"
         f"  ✍️ Отправили отзыв: *{totals['review']}*\n\n"
+        f"🎁 *Реферальная система*\n"
+        f"  Всего приглашений: *{total_referrals}*\n"
+        f"  Пришли по реферальной ссылке: *{came_by_referral}*\n"
+        f"  Пользователей-рефереров: *{users_with_referrals}*\n"
+        f"  Неиспользованных бонусов: *{total_bonus_remaining}*\n\n"
         f"⭐ *Отзывы*\n"
         f"  Опубликовано: *{published_reviews}*\n"
         f"  Ждут модерации: *{pending_reviews}*\n\n"
@@ -2188,23 +2262,29 @@ async def consultations_menu(message: Message):
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
     used = get_sessions_today(user_id)
-    remaining = max(0, FREE_SESSIONS_LIMIT - used)
+    effective_limit = get_effective_session_limit(user_id)
+    remaining = max(0, effective_limit - used)
     is_admin = message.from_user.id == ADMIN_ID
 
     if not is_admin and remaining == 0:
+        bonus = get_bonus_sessions(user_id)
+        hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
         await message.answer(
-            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
-            f"Каждый день доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — на сегодня ты уже использовал все.\n\n"
+            "🔒 *Лимит сеансов исчерпан*\n\n"
+            f"Базовый лимит: {FREE_SESSIONS_LIMIT} сеанса в день. "
+            f"Бонусных сеансов: {bonus}.{hint}\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
         return
 
-    if not is_admin and remaining <= FREE_SESSIONS_LIMIT:
+    if not is_admin and remaining <= effective_limit:
+        bonus = get_bonus_sessions(user_id)
+        bonus_note = f" (из них бонусных: {bonus})" if bonus > 0 else ""
         limit_note = (
-            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* бесплатных сеанса из {FREE_SESSIONS_LIMIT}. "
-            "Скоро появится возможность оплатить дополнительные консультации."
+            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* сеанса{bonus_note}. "
+            "Пригласи друга — получи ещё!"
         )
     else:
         limit_note = ""
@@ -2255,9 +2335,10 @@ async def ask_tarot(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= FREE_SESSIONS_LIMIT:
+    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= get_effective_session_limit(user_id):
         await callback.message.answer(
-            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
+            "🔒 *Лимит сеансов исчерпан*\n\n"
+            "🎁 Пригласи друга и получи бонусный сеанс!\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown"
         )
@@ -2288,23 +2369,29 @@ async def ask_tarot(callback: CallbackQuery):
 async def astro_list(message: Message):
     user_id = str(message.from_user.id)
     used = get_sessions_today(user_id)
-    remaining = max(0, FREE_SESSIONS_LIMIT - used)
+    effective_limit = get_effective_session_limit(user_id)
+    remaining = max(0, effective_limit - used)
     is_admin = message.from_user.id == ADMIN_ID
 
     if not is_admin and remaining == 0:
+        bonus = get_bonus_sessions(user_id)
+        hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
         await message.answer(
-            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
-            f"Каждый день доступно {FREE_SESSIONS_LIMIT} бесплатных сеанса — на сегодня ты уже использовал все.\n\n"
+            "🔒 *Лимит сеансов исчерпан*\n\n"
+            f"Базовый лимит: {FREE_SESSIONS_LIMIT} сеанса в день. "
+            f"Бонусных сеансов: {bonus}.{hint}\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
         return
 
-    if not is_admin and remaining <= FREE_SESSIONS_LIMIT:
+    if not is_admin and remaining <= effective_limit:
+        bonus = get_bonus_sessions(user_id)
+        bonus_note = f" (из них бонусных: {bonus})" if bonus > 0 else ""
         limit_note = (
-            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* бесплатных сеанса из {FREE_SESSIONS_LIMIT}. "
-            "Скоро появится возможность оплатить дополнительные консультации."
+            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* сеанса{bonus_note}. "
+            "Пригласи друга — получи ещё!"
         )
     else:
         limit_note = ""
@@ -2355,9 +2442,10 @@ async def ask_astro(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= FREE_SESSIONS_LIMIT:
+    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= get_effective_session_limit(user_id):
         await callback.message.answer(
-            "🔒 *Лимит бесплатных сеансов исчерпан*\n\n"
+            "🔒 *Лимит сеансов исчерпан*\n\n"
+            "🎁 Пригласи друга и получи бонусный сеанс!\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown"
         )
@@ -2559,6 +2647,27 @@ async def admin_edit_cancel(callback: CallbackQuery):
 async def about_us(message: Message):
     user_id = message.from_user.id
     msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+@dp.message(F.text == "🎁 Пригласи друга")
+async def referral_menu(message: Message):
+    user_id = str(message.from_user.id)
+    bot_info = await bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    users = load_users()
+    user_data = users.get(user_id, {})
+    total_refs = user_data.get("referrals_total", 0)
+    bonus = user_data.get("bonus_sessions", 0)
+    text = (
+        "🎁 *Пригласи друга — получи бонусный сеанс\\!*\n\n"
+        "Отправь эту ссылку другу:\n"
+        f"`{ref_link}`\n\n"
+        "Когда друг запустит бота по твоей ссылке, "
+        f"тебе начислится *\\+{BONUS_SESSIONS_PER_REFERRAL} бонусный сеанс* "
+        "с любым тарологом или астрологом\\. 🌟\n\n"
+        f"👥 Приглашено друзей: *{total_refs}*\n"
+        f"🎴 Бонусных сеансов доступно: *{bonus}*"
+    )
+    await message.answer(text, parse_mode="MarkdownV2", reply_markup=get_main_keyboard())
 
 @dp.message(F.text == "⚙️ Настройки")
 async def settings(message: Message):
