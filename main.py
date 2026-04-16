@@ -498,7 +498,6 @@ ACTIVE_SESSIONS = {}
 # ====== АНТИСПАМ: блокировка пока бот отвечает ======
 SESSION_BUSY = {}  # {user_id_str: bool} — True пока бот генерирует/отправляет ответ
 SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообщение если пользователь написал пока бот занят
-WAITING_COMPAT_SIGN = {}  # {user_id: sign1} — ждём выбор второго знака для совместимости
 
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
@@ -591,14 +590,18 @@ def get_back_keyboard():
         resize_keyboard=True
     )
 
-def get_compat_sign_keyboard(step: str):
-    """Inline-клавиатура для выбора знака в совместимости."""
-    prefix = "compat1_" if step == "first" else "compat2_"
+def get_compat_sign_keyboard(step: str, sign1_idx: int = -1):
+    """Inline-клавиатура для выбора знака в совместимости.
+    step='first' — выбор своего знака, step='second' — выбор партнёра (sign1_idx зашит в callback_data)."""
     rows = []
     for i in range(0, len(SIGNS), 3):
         row = []
-        for s in SIGNS[i:i+3]:
-            row.append(InlineKeyboardButton(text=s, callback_data=f"{prefix}{s}"))
+        for j in range(i, min(i + 3, len(SIGNS))):
+            if step == "first":
+                cb = f"compat1_{j}"
+            else:
+                cb = f"compat2_{sign1_idx}_{j}"
+            row.append(InlineKeyboardButton(text=SIGNS[j], callback_data=cb))
         rows.append(row)
     if step == "second":
         rows.append([InlineKeyboardButton(text="◀ Назад", callback_data="compat_back")])
@@ -2214,7 +2217,6 @@ async def go_home(message: Message):
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
     WAITING_REVIEW.pop(user_id, None)
-    WAITING_COMPAT_SIGN.pop(user_id, None)
     if user_id in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[user_id]
     SESSION_BUSY.pop(user_id, None)
@@ -2333,23 +2335,24 @@ async def compat_start(message: Message):
 
 @dp.callback_query(F.data.startswith("compat1_"))
 async def compat_pick_first(callback: CallbackQuery):
-    sign1 = callback.data.replace("compat1_", "")
-    if sign1 not in SIGNS:
+    try:
+        sign1_idx = int(callback.data.replace("compat1_", ""))
+    except ValueError:
         await callback.answer("Неизвестный знак")
         return
-    user_id = str(callback.from_user.id)
-    WAITING_COMPAT_SIGN[user_id] = sign1
+    if sign1_idx < 0 or sign1_idx >= len(SIGNS):
+        await callback.answer("Неизвестный знак")
+        return
+    sign1 = SIGNS[sign1_idx]
     await callback.message.edit_text(
         f"💕 Твой знак: *{sign1}*\n\nТеперь выбери знак партнёра или друга:",
         parse_mode="Markdown",
-        reply_markup=get_compat_sign_keyboard("second")
+        reply_markup=get_compat_sign_keyboard("second", sign1_idx)
     )
     await callback.answer()
 
 @dp.callback_query(F.data == "compat_back")
 async def compat_go_back(callback: CallbackQuery):
-    user_id = str(callback.from_user.id)
-    WAITING_COMPAT_SIGN.pop(user_id, None)
     await callback.message.edit_text(
         "💕 *Совместимость знаков*\n\nВыбери свой знак зодиака:",
         parse_mode="Markdown",
@@ -2359,19 +2362,23 @@ async def compat_go_back(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("compat2_"))
 async def compat_pick_second(callback: CallbackQuery):
-    sign2 = callback.data.replace("compat2_", "")
-    if sign2 not in SIGNS:
-        await callback.answer("Неизвестный знак")
+    # callback_data = "compat2_{sign1_idx}_{sign2_idx}"
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer("Ошибка, попробуй заново")
         return
-    user_id = str(callback.from_user.id)
-    sign1 = WAITING_COMPAT_SIGN.pop(user_id, None)
-    if not sign1:
-        await callback.message.edit_text(
-            "Что-то пошло не так, попробуй заново.",
-            reply_markup=None
-        )
-        await callback.answer()
+    try:
+        sign1_idx = int(parts[1])
+        sign2_idx = int(parts[2])
+    except ValueError:
+        await callback.answer("Ошибка, попробуй заново")
         return
+    if not (0 <= sign1_idx < len(SIGNS) and 0 <= sign2_idx < len(SIGNS)):
+        await callback.answer("Ошибка, попробуй заново")
+        return
+
+    sign1 = SIGNS[sign1_idx]
+    sign2 = SIGNS[sign2_idx]
 
     await callback.message.edit_text("⏳ Анализирую совместимость...")
     await callback.answer()
