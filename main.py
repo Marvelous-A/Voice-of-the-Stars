@@ -2860,8 +2860,8 @@ async def on_startup(bot):
     if ADMIN_ID:
         try:
             await bot.send_message(ADMIN_ID, "🔄 Бот перезапущен и работает.")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[on_startup] Не удалось отправить уведомление админу: {e}")
 
 async def main():
     asyncio.create_task(scheduler())
