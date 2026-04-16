@@ -498,6 +498,7 @@ ACTIVE_SESSIONS = {}
 # ====== АНТИСПАМ: блокировка пока бот отвечает ======
 SESSION_BUSY = {}  # {user_id_str: bool} — True пока бот генерирует/отправляет ответ
 SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообщение если пользователь написал пока бот занят
+WAITING_COMPAT_SIGN = {}  # {user_id: sign1} — ждём выбор второго знака для совместимости
 
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
@@ -545,7 +546,7 @@ def get_sign_keyboard():
 def get_main_keyboard():
     buttons = [
         [KeyboardButton(text="🔮 Прогноз на сегодня"), KeyboardButton(text="📖 Читать о себе")],
-        [KeyboardButton(text="🌟 Консультации")],
+        [KeyboardButton(text="💕 Совместимость"), KeyboardButton(text="🌟 Консультации")],
         [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="ℹ️ О нас")],
         [KeyboardButton(text="🎁 Пригласи друга"), KeyboardButton(text="⚙️ Настройки")]
     ]
@@ -589,6 +590,19 @@ def get_back_keyboard():
         keyboard=[[KeyboardButton(text="🏠 Главное меню")]],
         resize_keyboard=True
     )
+
+def get_compat_sign_keyboard(step: str):
+    """Inline-клавиатура для выбора знака в совместимости."""
+    prefix = "compat1_" if step == "first" else "compat2_"
+    rows = []
+    for i in range(0, len(SIGNS), 3):
+        row = []
+        for s in SIGNS[i:i+3]:
+            row.append(InlineKeyboardButton(text=s, callback_data=f"{prefix}{s}"))
+        rows.append(row)
+    if step == "second":
+        rows.append([InlineKeyboardButton(text="◀ Назад", callback_data="compat_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def get_ask_tarot_inline(tarot_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1057,6 +1071,25 @@ async def get_sign_description(sign: str) -> str:
 Не используй тире ни длинные ни короткие нигде в тексте.
 """
     return await ask_ai(prompt, max_tokens=1500)
+
+# ====== СОВМЕСТИМОСТЬ ЗНАКОВ ======
+async def get_compatibility(sign1: str, sign2: str) -> str:
+    prompt = f"""
+Сделай подробный и увлекательный разбор совместимости двух знаков зодиака: {sign1} и {sign2}.
+Структура:
+1. Общая совместимость (процент от 0 до 100 и краткий вердикт)
+2. Любовь и романтика
+3. Дружба и общение
+4. Возможные конфликты и как их решать
+5. Совет этой паре
+
+Пиши живым, тёплым, немного интригующим языком. Используй эмодзи для акцентов.
+Объём 200-300 слов. Только текст, без JSON.
+НЕ используй заголовки с решётками (#, ##, ###) — используй эмодзи вместо заголовков.
+ВАЖНО: весь текст строго на русском языке, без единого английского слова или фразы.
+Не используй тире ни длинные ни короткие нигде в тексте.
+"""
+    return await ask_ai(prompt, max_tokens=1200)
 
 # ====== УТРЕННЕЕ УВЕДОМЛЕНИЕ ======
 async def get_morning_message(sign: str) -> str:
@@ -2181,6 +2214,7 @@ async def go_home(message: Message):
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
     WAITING_REVIEW.pop(user_id, None)
+    WAITING_COMPAT_SIGN.pop(user_id, None)
     if user_id in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[user_id]
     SESSION_BUSY.pop(user_id, None)
@@ -2285,6 +2319,99 @@ async def read_about_me(message: Message):
             msg = await message.answer(part, parse_mode="Markdown", reply_markup=get_main_keyboard())
         else:
             msg = await message.answer(part, parse_mode="Markdown")
+
+# ====== СОВМЕСТИМОСТЬ ЗНАКОВ ======
+@dp.message(F.text == "💕 Совместимость")
+async def compat_start(message: Message):
+    user_id = str(message.from_user.id)
+    track_activity(user_id, "compatibility")
+    await message.answer(
+        "💕 *Совместимость знаков*\n\nВыбери свой знак зодиака:",
+        parse_mode="Markdown",
+        reply_markup=get_compat_sign_keyboard("first")
+    )
+
+@dp.callback_query(F.data.startswith("compat1_"))
+async def compat_pick_first(callback: CallbackQuery):
+    sign1 = callback.data.replace("compat1_", "")
+    if sign1 not in SIGNS:
+        await callback.answer("Неизвестный знак")
+        return
+    user_id = str(callback.from_user.id)
+    WAITING_COMPAT_SIGN[user_id] = sign1
+    await callback.message.edit_text(
+        f"💕 Твой знак: *{sign1}*\n\nТеперь выбери знак партнёра или друга:",
+        parse_mode="Markdown",
+        reply_markup=get_compat_sign_keyboard("second")
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "compat_back")
+async def compat_go_back(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    WAITING_COMPAT_SIGN.pop(user_id, None)
+    await callback.message.edit_text(
+        "💕 *Совместимость знаков*\n\nВыбери свой знак зодиака:",
+        parse_mode="Markdown",
+        reply_markup=get_compat_sign_keyboard("first")
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("compat2_"))
+async def compat_pick_second(callback: CallbackQuery):
+    sign2 = callback.data.replace("compat2_", "")
+    if sign2 not in SIGNS:
+        await callback.answer("Неизвестный знак")
+        return
+    user_id = str(callback.from_user.id)
+    sign1 = WAITING_COMPAT_SIGN.pop(user_id, None)
+    if not sign1:
+        await callback.message.edit_text(
+            "Что-то пошло не так, попробуй заново.",
+            reply_markup=None
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text("⏳ Анализирую совместимость...")
+    await callback.answer()
+
+    result = await get_compatibility(sign1, sign2)
+    if not result:
+        await callback.message.edit_text(
+            "Не удалось получить разбор совместимости, попробуй позже 🌙"
+        )
+        return
+
+    result = re.sub(r'#{1,6}\s*', '', result)
+    text = f"💕 *{sign1} + {sign2}*\n\n{result}"
+
+    # Кнопка «Поделиться» для вирусности
+    bot_info = await bot.get_me()
+    share_text = f"💕 Узнай совместимость своего знака зодиака!\nПопробуй бота: https://t.me/{bot_info.username}"
+    share_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Другая пара", callback_data="compat_restart")],
+        [InlineKeyboardButton(
+            text="📤 Поделиться с другом",
+            switch_inline_query=share_text
+        )]
+    ])
+
+    parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    for i, part in enumerate(parts):
+        if i == len(parts) - 1:
+            await callback.message.answer(part, parse_mode="Markdown", reply_markup=share_kb)
+        else:
+            await callback.message.answer(part, parse_mode="Markdown")
+
+@dp.callback_query(F.data == "compat_restart")
+async def compat_restart(callback: CallbackQuery):
+    await callback.message.answer(
+        "💕 *Совместимость знаков*\n\nВыбери свой знак зодиака:",
+        parse_mode="Markdown",
+        reply_markup=get_compat_sign_keyboard("first")
+    )
+    await callback.answer()
 
 @dp.message(F.text == "🌟 Консультации")
 async def consultations_menu(message: Message):
