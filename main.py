@@ -2375,6 +2375,19 @@ async def scheduler():
         await asyncio.sleep((next_minute - msk).total_seconds())
 
 # ====== ОБРАБОТЧИКИ ======
+@dp.message(F.text.regexp(r"^/ip(@\w+)?$"))
+async def admin_check_ip(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get("https://api.ipify.org?format=json",
+                             proxy="socks5://KWSUd0:VkZhgw@193.43.249.243:8000") as resp:
+                data = await resp.json()
+                await message.answer(f"Прокси IP: {data['ip']}")
+    except Exception as e:
+        await message.answer(f"Ошибка прокси: {e}")
+
 @dp.message(F.text == "/start")
 async def start(message: Message):
     users = load_users()
