@@ -15,6 +15,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
                             CallbackQuery, Voice)
+from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 from os import getenv
 
@@ -32,7 +33,8 @@ EMAIL_TO = "mogneto.r@mail.ru"               # Куда приходят уве�
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 
-bot = Bot(token=TOKEN)
+session = AiohttpSession(proxy="socks5://KWSUd0:VkZhgw@193.43.249.243:8000")
+bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
 # ====== ФАЙЛЫ ======
