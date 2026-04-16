@@ -15,7 +15,6 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
                             CallbackQuery, Voice)
-from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 from os import getenv
 
@@ -33,8 +32,7 @@ EMAIL_TO = "mogneto.r@mail.ru"               # Куда приходят уве�
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 
-session = AiohttpSession(proxy="socks5://KWSUd0:VkZhgw@193.43.249.243:8000")
-bot = Bot(token=TOKEN, session=session)
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # ====== ФАЙЛЫ ======
@@ -2380,14 +2378,17 @@ async def admin_check_ip(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     try:
+        import time
+        start = time.time()
         async with aiohttp.ClientSession() as s:
             async with s.get("https://ipapi.co/json/",
                              proxy="socks5://KWSUd0:VkZhgw@193.43.249.243:8000") as resp:
                 data = await resp.json()
+                ping = round((time.time() - start) * 1000)
                 ip = data.get("ip", "?")
                 country = data.get("country_name", "?")
                 city = data.get("city", "?")
-                await message.answer(f"Прокси IP: {ip}\nСтрана: {country}\nГород: {city}")
+                await message.answer(f"Прокси IP: {ip}\nСтрана: {country}\nГород: {city}\nПинг: {ping} мс")
     except Exception as e:
         await message.answer(f"Ошибка прокси: {e}")
 
