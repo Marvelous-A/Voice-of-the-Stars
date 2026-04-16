@@ -578,10 +578,11 @@ def get_sign_keyboard():
 
 def get_main_keyboard():
     buttons = [
-        [KeyboardButton(text="🔮 Прогноз на сегодня"), KeyboardButton(text="📖 Читать о себе")],
-        [KeyboardButton(text="💕 Совместимость"), KeyboardButton(text="🌟 Консультации")],
-        [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="ℹ️ О нас")],
-        [KeyboardButton(text="🎁 Пригласи друга"), KeyboardButton(text="⚙️ Настройки")]
+        [KeyboardButton(text="🔮 Прогноз на сегодня")],
+        [KeyboardButton(text="📖 Мой знак"), KeyboardButton(text="💕 Совместимость")],
+        [KeyboardButton(text="🌟 Консультация")],
+        [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="🎁 Друзьям")],
+        [KeyboardButton(text="ℹ️ О нас"), KeyboardButton(text="⚙️ Настройки")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -2361,7 +2362,7 @@ async def send_forecast(message: Message):
     # Восстанавливаем клавиатуру — она могла пропасть после удаления предыдущих сообщений
     nav_msg = await message.answer("☝️ Прогноз выше", reply_markup=get_main_keyboard())
 
-@dp.message(F.text == "📖 Читать о себе")
+@dp.message(F.text == "📖 Мой знак")
 async def read_about_me(message: Message):
     users = load_users()
     user_id = str(message.from_user.id)
@@ -2505,11 +2506,11 @@ async def compat_restart(callback: CallbackQuery):
     )
     await callback.answer()
 
-@dp.message(F.text == "🌟 Консультации")
+@dp.message(F.text == "🌟 Консультация")
 async def consultations_menu(message: Message):
     user_id = message.from_user.id
     msg = await message.answer(
-        "🌟 *Консультации*\n\nВыбери специалиста:",
+        "🌟 *Консультация*\n\nВыбери специалиста:",
         parse_mode="Markdown",
         reply_markup=get_consultations_keyboard()
     )
@@ -2904,7 +2905,7 @@ async def about_us(message: Message):
     user_id = message.from_user.id
     msg = await message.answer(ABOUT_TEXT, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-@dp.message(F.text == "🎁 Пригласи друга")
+@dp.message(F.text == "🎁 Друзьям")
 async def referral_menu(message: Message):
     user_id = str(message.from_user.id)
     bot_info = await bot.get_me()
@@ -2969,7 +2970,7 @@ async def handle_voice(message: Message):
     user_id = str(message.from_user.id)
 
     if user_id not in WAITING_TAROT_STORY and user_id not in WAITING_ASTRO_STORY and user_id not in ACTIVE_SESSIONS:
-        await message.answer("Голосовые сообщения принимаются только при обращении к специалисту. Выбери таролога или астролога в разделе 🌟 Консультации")
+        await message.answer("Голосовые сообщения принимаются только при обращении к специалисту. Выбери таролога или астролога в разделе 🌟 Консультация")
         return
 
     # Антиспам для сеанса
