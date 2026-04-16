@@ -1000,21 +1000,22 @@ async def transcribe_voice(ogg_file_path: str) -> str:
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
 
-        data = aiohttp.FormData()
-        data.add_field("file", open(ogg_file_path, "rb"), filename="voice.ogg", content_type="audio/ogg")
-        data.add_field("model", "whisper-large-v3-turbo")
-        data.add_field("language", "ru")
-        data.add_field("prompt", "Привет, как дела? Расскажи мне, пожалуйста, что произошло. Я думаю, это важно!")
-
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, headers=headers, data=data) as resp:
-                result = await resp.json(content_type=None)
-                if "text" in result:
-                    return result["text"].strip()
-                else:
-                    print("Ошибка Groq Whisper:", result)
-                    return ""
+            with open(ogg_file_path, "rb") as f:
+                data = aiohttp.FormData()
+                data.add_field("file", f, filename="voice.ogg", content_type="audio/ogg")
+                data.add_field("model", "whisper-large-v3-turbo")
+                data.add_field("language", "ru")
+                data.add_field("prompt", "Привет, как дела? Расскажи мне, пожалуйста, что произошло. Я думаю, это важно!")
+
+                async with session.post(url, headers=headers, data=data) as resp:
+                    result = await resp.json(content_type=None)
+                    if "text" in result:
+                        return result["text"].strip()
+                    else:
+                        print("Ошибка Groq Whisper:", result)
+                        return ""
     except Exception as e:
         print(f"Ошибка распознавания голоса: {e}")
         return ""
