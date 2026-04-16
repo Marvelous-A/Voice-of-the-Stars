@@ -2856,8 +2856,16 @@ async def handle_story(message: Message):
     asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, message.text, is_flagged=is_flagged))
 
 # ====== ЗАПУСК ======
+async def on_startup(bot):
+    if ADMIN_ID:
+        try:
+            await bot.send_message(ADMIN_ID, "🔄 Бот перезапущен и работает.")
+        except Exception:
+            pass
+
 async def main():
     asyncio.create_task(scheduler())
+    await on_startup(bot)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
