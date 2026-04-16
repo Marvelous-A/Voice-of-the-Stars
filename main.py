@@ -1004,6 +1004,7 @@ async def transcribe_voice(ogg_file_path: str) -> str:
         data.add_field("file", open(ogg_file_path, "rb"), filename="voice.ogg", content_type="audio/ogg")
         data.add_field("model", "whisper-large-v3-turbo")
         data.add_field("language", "ru")
+        data.add_field("prompt", "Привет, как дела? Расскажи мне, пожалуйста, что произошло. Я думаю, это важно!")
 
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
