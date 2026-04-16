@@ -2381,10 +2381,13 @@ async def admin_check_ip(message: Message):
         return
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get("https://api.ipify.org?format=json",
+            async with s.get("https://ipapi.co/json/",
                              proxy="socks5://KWSUd0:VkZhgw@193.43.249.243:8000") as resp:
                 data = await resp.json()
-                await message.answer(f"Прокси IP: {data['ip']}")
+                ip = data.get("ip", "?")
+                country = data.get("country_name", "?")
+                city = data.get("city", "?")
+                await message.answer(f"Прокси IP: {ip}\nСтрана: {country}\nГород: {city}")
     except Exception as e:
         await message.answer(f"Ошибка прокси: {e}")
 
