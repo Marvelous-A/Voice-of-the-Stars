@@ -26,7 +26,7 @@ TOKEN = getenv("BOT_TOKEN")
 OPENROUTER_KEY = getenv("OPENROUTER_KEY")
 GROQ_API_KEY = getenv("GROQ_API_KEY")
 
-# ====== Администратор и почта ======
+# ====== Администратор и почта =======
 ADMIN_ID = int(getenv("ADMIN_ID", "0"))       # Telegram ID администратора (заполни в .env)
 EMAIL_FROM = getenv("EMAIL_FROM", "")         # Почта ОТ кого шлём уведомления (заполни в .env)
 EMAIL_PASSWORD = getenv("EMAIL_PASSWORD", "") # Пароль от этой почты (заполни в .env)
