@@ -13,6 +13,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
@@ -76,7 +77,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"Deploying...")
-            deploy()
+            threading.Thread(target=deploy, daemon=True).start()
         else:
             self.send_response(200)
             self.end_headers()
