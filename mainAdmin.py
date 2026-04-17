@@ -45,6 +45,11 @@ session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=ADMIN_BOT_TOKEN, session=session)
 dp = Dispatcher()
 
+# Строгий фильтр: бот реагирует ТОЛЬКО на админа. Все остальные апдейты отбрасываются
+# на уровне диспетчера — ни один хэндлер их не увидит.
+dp.message.filter(F.from_user.id == ADMIN_ID)
+dp.callback_query.filter(F.from_user.id == ADMIN_ID)
+
 # Память: {admin_id: "user_query"} — ждём ввод ID/@username после кнопки «Найти пользователя»
 PENDING_INPUT: dict[int, str] = {}
 
@@ -68,10 +73,6 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
-
-
-def is_admin(message: Message) -> bool:
-    return message.from_user is not None and message.from_user.id == ADMIN_ID
 
 
 def build_links_markup() -> InlineKeyboardMarkup | None:
@@ -308,8 +309,6 @@ def render_user_detail(query: str) -> str:
 # ====== ХЭНДЛЕРЫ ======
 @dp.message(CommandStart())
 async def start(message: Message):
-    if not is_admin(message):
-        return
     await pin_links_message(message.chat.id)
     await message.answer(
         "🛠 *Админ-панель «Голос Звёзд»*\n\n"
@@ -322,24 +321,18 @@ async def start(message: Message):
 
 @dp.message(F.text == BTN_REFRESH)
 async def handle_refresh(message: Message):
-    if not is_admin(message):
-        return
     PENDING_INPUT.pop(message.from_user.id, None)
     await message.answer("Меню обновлено 👇", reply_markup=get_admin_keyboard())
 
 
 @dp.message(F.text == BTN_STATS)
 async def handle_stats(message: Message):
-    if not is_admin(message):
-        return
     PENDING_INPUT.pop(message.from_user.id, None)
     await message.answer(render_stats(), parse_mode="Markdown")
 
 
 @dp.message(F.text == BTN_USERS)
 async def handle_users_list(message: Message):
-    if not is_admin(message):
-        return
     PENDING_INPUT.pop(message.from_user.id, None)
     for chunk in render_users_chunks():
         await message.answer(chunk)
@@ -347,16 +340,12 @@ async def handle_users_list(message: Message):
 
 @dp.message(F.text == BTN_FIND)
 async def handle_find_prompt(message: Message):
-    if not is_admin(message):
-        return
     PENDING_INPUT[message.from_user.id] = "user_query"
     await message.answer("Введи ID или @username пользователя:")
 
 
 @dp.message(F.text == BTN_STATUS)
 async def handle_status(message: Message):
-    if not is_admin(message):
-        return
     PENDING_INPUT.pop(message.from_user.id, None)
     users = load_users()
     pending = len(load_pending_reviews())
@@ -372,8 +361,6 @@ async def handle_status(message: Message):
 # Свободный ввод — используется только когда ждём запрос для «Найти пользователя».
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_free_text(message: Message):
-    if not is_admin(message):
-        return
     pending = PENDING_INPUT.get(message.from_user.id)
     if pending == "user_query":
         PENDING_INPUT.pop(message.from_user.id, None)
