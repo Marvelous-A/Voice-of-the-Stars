@@ -2068,66 +2068,23 @@ CHANNEL_IMAGE_KEYWORDS = [
     "galaxy", "universe", "spiritual", "magic",
 ]
 
-async def fetch_pexels_image(query: str) -> str:
-    """Ищет картинку на Pexels и возвращает URL."""
-    if not PEXELS_API_KEY:
-        return ""
-    try:
-        url = "https://api.pexels.com/v1/search"
-        headers = {"Authorization": PEXELS_API_KEY}
-        params = {"query": query, "per_page": 15, "orientation": "landscape"}
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    print(f"[Pexels] HTTP {resp.status}")
-                    return ""
-                data = await resp.json(content_type=None)
-                if not data:
-                    return ""
-                photos = data.get("photos", [])
-                if photos:
-                    photo = random.choice(photos)
-                    return photo["src"]["large"]
-    except Exception as e:
-        print(f"[Pexels] Ошибка: {e}")
-    return ""
-
-async def fetch_pixabay_image(query: str) -> str:
-    """Ищет картинку на Pixabay (бесплатно) и возвращает URL."""
-    try:
-        url = "https://pixabay.com/api/"
-        params = {
-            "key": "46968901-5765889a5f6aa6b1d7e840d1b",
-            "q": query,
-            "per_page": 20,
-            "image_type": "photo",
-            "orientation": "horizontal",
-            "min_width": 800,
-        }
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.get(url, params=params) as resp:
-                if resp.status != 200:
-                    print(f"[Pixabay] HTTP {resp.status}")
-                    return ""
-                data = await resp.json(content_type=None)
-                if not data:
-                    return ""
-                hits = data.get("hits", [])
-                if hits:
-                    photo = random.choice(hits)
-                    return photo.get("webformatURL", "")
-    except Exception as e:
-        print(f"[Pixabay] Ошибка: {e}")
-    return ""
-
 async def fetch_channel_image(query: str) -> str:
-    """Пробует Pexels, потом Pixabay."""
-    url = await fetch_pexels_image(query)
-    if not url:
-        url = await fetch_pixabay_image(query)
-    return url
+    """Получает URL картинки через loremflickr (без API-ключа)."""
+    try:
+        url = f"https://loremflickr.com/800/600/{query}"
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.get(url, allow_redirects=False) as resp:
+                if resp.status in (301, 302):
+                    image_url = resp.headers.get("Location", "")
+                    if image_url:
+                        return image_url
+                    print("[Картинка] Нет Location в редиректе")
+                else:
+                    print(f"[Картинка] HTTP {resp.status} для '{query}'")
+    except Exception as e:
+        print(f"[Картинка] Ошибка: {e}")
+    return ""
 
 def clean_markdown(text: str) -> str:
     """Убирает markdown-разметку из текста."""
