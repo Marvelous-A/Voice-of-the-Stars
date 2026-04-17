@@ -18,7 +18,8 @@ from os import getenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
+                           KeyboardButton, Message, ReplyKeyboardMarkup)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,6 +27,10 @@ load_dotenv()
 ADMIN_BOT_TOKEN = getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_ID = int(getenv("ADMIN_ID", "0"))
 PROXY_URL = getenv("PROXY_URL", "")
+
+# Для закреплённого сообщения со ссылками
+MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
+CHANNEL_ID = getenv("CHANNEL_ID", "")  # напр. "@VoiceOfTheStarsInfo"
 
 if not ADMIN_BOT_TOKEN:
     raise SystemExit("ADMIN_BOT_TOKEN не задан в .env — создайте бота в @BotFather и пропишите токен.")
@@ -42,6 +47,9 @@ dp = Dispatcher()
 
 # Память: {admin_id: "user_query"} — ждём ввод ID/@username после кнопки «Найти пользователя»
 PENDING_INPUT: dict[int, str] = {}
+
+# Кэш username основного бота — получаем через getMe при старте
+MAIN_BOT_USERNAME: str = ""
 
 # ====== КНОПКИ =======
 BTN_STATS = "📊 Статистика"
@@ -64,6 +72,44 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
 
 def is_admin(message: Message) -> bool:
     return message.from_user is not None and message.from_user.id == ADMIN_ID
+
+
+def build_links_markup() -> InlineKeyboardMarkup | None:
+    """Инлайн-кнопки со ссылками на основного бота и канал."""
+    rows = []
+    if MAIN_BOT_USERNAME:
+        rows.append([InlineKeyboardButton(
+            text="🌟 Открыть основного бота",
+            url=f"https://t.me/{MAIN_BOT_USERNAME}",
+        )])
+    if CHANNEL_ID:
+        clean = CHANNEL_ID.lstrip("@")
+        rows.append([InlineKeyboardButton(
+            text="📢 Открыть канал",
+            url=f"https://t.me/{clean}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+async def pin_links_message(chat_id: int):
+    """Публикует сообщение со ссылками и закрепляет его (без уведомления)."""
+    markup = build_links_markup()
+    if not markup:
+        return
+    try:
+        sent = await bot.send_message(
+            chat_id,
+            "🔗 *Быстрые ссылки*",
+            parse_mode="Markdown",
+            reply_markup=markup,
+        )
+        try:
+            await bot.unpin_all_chat_messages(chat_id)
+        except Exception:
+            pass
+        await bot.pin_chat_message(chat_id, sent.message_id, disable_notification=True)
+    except Exception as e:
+        print(f"[pin_links] {e}")
 
 
 # ====== ЗАГРУЗКА ДАННЫХ ======
@@ -264,6 +310,7 @@ def render_user_detail(query: str) -> str:
 async def start(message: Message):
     if not is_admin(message):
         return
+    await pin_links_message(message.chat.id)
     await message.answer(
         "🛠 *Админ-панель «Голос Звёзд»*\n\n"
         "Здесь только твои служебные уведомления и команды.\n"
@@ -336,8 +383,28 @@ async def handle_free_text(message: Message):
 
 
 # ====== ЗАПУСК ======
+async def fetch_main_bot_username() -> str:
+    """Получает @username основного бота через его getMe."""
+    if not MAIN_BOT_TOKEN:
+        return ""
+    tmp_session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
+    tmp_bot = Bot(token=MAIN_BOT_TOKEN, session=tmp_session)
+    try:
+        me = await tmp_bot.get_me()
+        return me.username or ""
+    except Exception as e:
+        print(f"[fetch_main_bot_username] {e}")
+        return ""
+    finally:
+        await tmp_bot.session.close()
+
+
 async def main():
+    global MAIN_BOT_USERNAME
     print("[mainAdmin] Админ-бот запускается…")
+    MAIN_BOT_USERNAME = await fetch_main_bot_username()
+    if MAIN_BOT_USERNAME:
+        print(f"[mainAdmin] username основного бота: @{MAIN_BOT_USERNAME}")
     await dp.start_polling(bot)
 
 
