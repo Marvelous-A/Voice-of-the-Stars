@@ -35,6 +35,11 @@ def verify_signature(payload: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+BOT_DIR = "/home/bot"
+BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
+CODE_FILES = ["main.py", "requirements.txt", "descriptions.json"]
+
+
 def deploy():
     print("=== Deploying ===", flush=True)
 
@@ -47,16 +52,25 @@ def deploy():
     )
     print(result.stdout, result.stderr, flush=True)
 
+    # copy code files to bot directory
+    for fname in CODE_FILES:
+        src = os.path.join(PROJECT_DIR, fname)
+        dst = os.path.join(BOT_DIR, fname)
+        if os.path.exists(src):
+            subprocess.run(["cp", src, dst], check=False)
+            print(f"Copied {fname} -> {BOT_DIR}", flush=True)
+
     # install new dependencies (if any)
     subprocess.run(
-        [VENV_PYTHON, "-m", "pip", "install", "-r", "requirements.txt", "-q"],
-        cwd=PROJECT_DIR,
+        [BOT_VENV_PYTHON, "-m", "pip", "install", "-r",
+         os.path.join(BOT_DIR, "requirements.txt"), "-q"],
+        cwd=BOT_DIR,
         capture_output=True,
         text=True,
     )
 
     # restart bot via systemd
-    subprocess.run(["systemctl", "restart", "bot.service"], check=False)
+    subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)
     print("=== Bot restarted ===", flush=True)
 
 

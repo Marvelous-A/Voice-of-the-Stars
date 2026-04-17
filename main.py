@@ -35,7 +35,8 @@ CHANNEL_ID = getenv("CHANNEL_ID", "")        # ID или @username канала 
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 
-session = AiohttpSession(proxy="socks5://127.0.0.1:10808")
+PROXY_URL = getenv("PROXY_URL", "")  # socks5://... или пусто если прокси не нужен
+session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
