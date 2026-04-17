@@ -32,7 +32,7 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 BOT_DIR = "/home/bot"
 BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
-CODE_FILES = ["main.py", "requirements.txt", "descriptions.json"]
+CODE_FILES = ["main.py", "mainAdmin.py", "requirements.txt", "descriptions.json"]
 
 
 def verify_signature(payload: bytes, signature: str) -> bool:
@@ -73,9 +73,10 @@ def deploy():
         text=True,
     )
 
-    # restart bot via systemd
+    # restart bots via systemd
     subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)
-    print("=== Bot restarted ===", flush=True)
+    subprocess.run(["systemctl", "restart", "tarot-admin.service"], check=False)
+    print("=== Bots restarted ===", flush=True)
 
     # if deploy_webhook.py itself was updated — restart webhook service
     src_wh = os.path.join(PROJECT_DIR, "deploy_webhook.py")
