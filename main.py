@@ -2068,25 +2068,37 @@ CHANNEL_IMAGE_KEYWORDS = [
     "galaxy", "universe", "spiritual", "magic",
 ]
 
-async def fetch_channel_image(query: str) -> str:
-    """Получает URL картинки через loremflickr (без API-ключа)."""
-    try:
-        url = f"https://loremflickr.com/800/600/{query}"
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.get(url, allow_redirects=False) as resp:
-                if resp.status in (301, 302):
-                    image_url = resp.headers.get("Location", "")
-                    if image_url:
-                        if image_url.startswith("/"):
-                            image_url = "https://loremflickr.com" + image_url
-                        return image_url
-                    print("[Картинка] Нет Location в редиректе")
-                else:
-                    print(f"[Картинка] HTTP {resp.status} для '{query}'")
-    except Exception as e:
-        print(f"[Картинка] Ошибка: {e}")
-    return ""
+UNSPLASH_IMAGES = [
+    "https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800",
+    "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800",
+    "https://images.unsplash.com/photo-1507400492013-162706c8c05e?w=800",
+    "https://images.unsplash.com/photo-1444703686981-a3abbc4d4fe3?w=800",
+    "https://images.unsplash.com/photo-1462331940025-496dfbfc7564?w=800",
+    "https://images.unsplash.com/photo-1475274047050-1d0c55b7b10c?w=800",
+    "https://images.unsplash.com/photo-1532693322450-2cb5c511067d?w=800",
+    "https://images.unsplash.com/photo-1504333638930-c8787321eee0?w=800",
+    "https://images.unsplash.com/photo-1543722530-d2c3201371e7?w=800",
+    "https://images.unsplash.com/photo-1516339901601-2e1b62dc0c45?w=800",
+    "https://images.unsplash.com/photo-1505506874110-6a7a69069a08?w=800",
+    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800",
+    "https://images.unsplash.com/photo-1470813740244-df37b8c1edcb?w=800",
+    "https://images.unsplash.com/photo-1468276311594-df7cb65d8df6?w=800",
+    "https://images.unsplash.com/photo-1509773896068-7fd415d91e2e?w=800",
+    "https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?w=800",
+    "https://images.unsplash.com/photo-1507272931001-fc06c17e4f43?w=800",
+    "https://images.unsplash.com/photo-1536599018102-9f803c140fc1?w=800",
+    "https://images.unsplash.com/photo-1489549132488-d00b7eee80f1?w=800",
+    "https://images.unsplash.com/photo-1538370965046-79c0d6907d47?w=800",
+    "https://images.unsplash.com/photo-1528722828814-77b9b83aafb2?w=800",
+    "https://images.unsplash.com/photo-1518141532615-4305c9f914c9?w=800",
+    "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800",
+    "https://images.unsplash.com/photo-1595246135406-803418233494?w=800",
+    "https://images.unsplash.com/photo-1571942676516-bcab84649e44?w=800",
+]
+
+def get_channel_image() -> str:
+    """Возвращает случайную тематическую картинку из Unsplash."""
+    return random.choice(UNSPLASH_IMAGES)
 
 def clean_markdown(text: str) -> str:
     """Убирает markdown-разметку из текста."""
@@ -2136,11 +2148,8 @@ async def post_to_channel():
         if len(text) > 1024:
             text = text[:1021] + "..."
 
-        # Пытаемся найти картинку
-        keyword = random.choice(CHANNEL_IMAGE_KEYWORDS)
-        image_url = await fetch_channel_image(keyword)
-        if not image_url:
-            print(f"[Автопостинг] Не удалось найти картинку для '{keyword}'")
+        # Картинка для поста
+        image_url = get_channel_image()
 
         if image_url:
             await bot.send_photo(CHANNEL_ID, photo=image_url, caption=text)
