@@ -2078,6 +2078,8 @@ async def fetch_channel_image(query: str) -> str:
                 if resp.status in (301, 302):
                     image_url = resp.headers.get("Location", "")
                     if image_url:
+                        if image_url.startswith("/"):
+                            image_url = "https://loremflickr.com" + image_url
                         return image_url
                     print("[Картинка] Нет Location в редиректе")
                 else:
