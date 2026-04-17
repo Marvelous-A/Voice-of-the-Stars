@@ -2685,7 +2685,7 @@ async def ask_tarot(callback: CallbackQuery):
         await callback.answer("Таролог не найден")
         return
 
-    if not is_working_hours():
+    if callback.from_user.id != ADMIN_ID and not is_working_hours():
         await callback.message.answer(get_offline_message(tarologist["name"]), parse_mode="Markdown")
         await callback.answer()
         return
@@ -2792,7 +2792,7 @@ async def ask_astro(callback: CallbackQuery):
         await callback.answer("Астролог не найден")
         return
 
-    if not is_working_hours():
+    if callback.from_user.id != ADMIN_ID and not is_working_hours():
         await callback.message.answer(get_offline_message(astrologer["name"]), parse_mode="Markdown")
         await callback.answer()
         return
