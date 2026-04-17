@@ -2036,49 +2036,65 @@ async def send_morning_notifications():
             print(f"Ошибка отправки уведомления пользователю {user_id}:", e)
 
 # ====== АВТОПОСТИНГ В КАНАЛ ======
+# Темы постов с категориями (категория нужна для подбора тематической картинки)
 CHANNEL_POST_TOPICS = [
-    "Напиши короткий интересный пост о том, что означает, если тебе снится вода (река, море, дождь). Свяжи с астрологией и знаками зодиака.",
-    "Напиши пост о том, какие знаки зодиака обладают самой сильной интуицией и почему. Приведи примеры из жизни.",
-    "Напиши пост о лунных фазах и их влиянии на эмоции и решения. Дай практический совет.",
-    "Напиши пост про карту Таро дня — выбери случайную карту из Старших Арканов и расскажи её значение и послание на сегодня.",
-    "Напиши пост о том, какие кристаллы и камни подходят разным знакам зодиака и почему.",
-    "Напиши пост о ретроградном Меркурии — что это, как влияет и что делать, а чего избегать.",
-    "Напиши пост о совместимости стихий в любви: Огонь+Вода, Земля+Воздух — неожиданные пары.",
-    "Напиши пост о том, что означают повторяющиеся числа (11:11, 22:22) с точки зрения нумерологии и астрологии.",
-    "Напиши пост о том, как знак зодиака влияет на стиль общения и конфликты в отношениях.",
-    "Напиши пост о том, какие знаки зодиака самые везучие в деньгах и как другим знакам привлечь финансовую удачу.",
-    "Напиши пост о значении снов: если снятся кошки, змеи или полёты — что это значит с мистической точки зрения.",
-    "Напиши пост о Чёрной Луне (Лилит) в астрологии — что это и как влияет на характер.",
-    "Напиши пост о том, как узнать свою кармическую задачу по дате рождения.",
-    "Напиши пост о том, какие знаки зодиака чаще всего видят вещие сны.",
-    "Напиши пост о Таро и психологии — как расклад помогает разобраться в себе.",
-    "Напиши пост о том, какие ритуалы на новолуние действительно работают по мнению астрологов.",
-    "Напиши пост о домах в астрологии — что значит, если у тебя сильный 8-й или 12-й дом.",
-    "Напиши пост о том, как разные знаки зодиака переживают расставание и как им восстановиться.",
-    "Напиши пост о знаках зодиака и их теневых сторонах — о чём каждый знак предпочитает молчать.",
-    "Напиши пост о том, что такое натальная карта и почему солнечный знак — это только верхушка айсберга.",
-    "Напиши пост о мистических совпадениях и синхронностях — что они значат и как их замечать.",
-    "Напиши пост о том, какие знаки зодиака лучшие эмпаты и как это влияет на их жизнь.",
-    "Напиши пост о том, как планета-покровитель знака влияет на характер и судьбу.",
-    "Напиши пост о гадании на кофейной гуще — символы и их значения.",
-    "Напиши пост о том, почему одним знакам зодиака легко медитировать, а другим — сложно.",
+    {"category": "dreams", "topic": "Напиши короткий интересный пост о том, что означает, если тебе снится вода (река, море, дождь). Свяжи с астрологией и знаками зодиака."},
+    {"category": "zodiac", "topic": "Напиши пост о том, какие знаки зодиака обладают самой сильной интуицией и почему. Приведи примеры из жизни."},
+    {"category": "moon", "topic": "Напиши пост о лунных фазах и их влиянии на эмоции и решения. Дай практический совет."},
+    {"category": "tarot", "topic": "Напиши пост про карту Таро дня, выбери случайную карту из Старших Арканов и расскажи её значение и послание на сегодня."},
+    {"category": "crystals", "topic": "Напиши пост о том, какие кристаллы и камни подходят разным знакам зодиака и почему."},
+    {"category": "planets", "topic": "Напиши пост о ретроградном Меркурии: что это, как влияет и что делать, а чего избегать."},
+    {"category": "elements", "topic": "Напиши пост о совместимости стихий в любви: Огонь и Вода, Земля и Воздух, неожиданные пары."},
+    {"category": "numerology", "topic": "Напиши пост о том, что означают повторяющиеся числа (11:11, 22:22) с точки зрения нумерологии и астрологии."},
+    {"category": "zodiac", "topic": "Напиши пост о том, как знак зодиака влияет на стиль общения и конфликты в отношениях."},
+    {"category": "zodiac", "topic": "Напиши пост о том, какие знаки зодиака самые везучие в деньгах и как другим знакам привлечь финансовую удачу."},
+    {"category": "dreams", "topic": "Напиши пост о значении снов: если снятся кошки, змеи или полёты, что это значит с мистической точки зрения."},
+    {"category": "moon", "topic": "Напиши пост о Чёрной Луне (Лилит) в астрологии: что это и как влияет на характер."},
+    {"category": "karma", "topic": "Напиши пост о том, как узнать свою кармическую задачу по дате рождения."},
+    {"category": "dreams", "topic": "Напиши пост о том, какие знаки зодиака чаще всего видят вещие сны."},
+    {"category": "tarot", "topic": "Напиши пост о Таро и психологии: как расклад помогает разобраться в себе."},
+    {"category": "moon", "topic": "Напиши пост о том, какие ритуалы на новолуние действительно работают по мнению астрологов."},
+    {"category": "astrology", "topic": "Напиши пост о домах в астрологии: что значит, если у тебя сильный 8-й или 12-й дом."},
+    {"category": "zodiac", "topic": "Напиши пост о том, как разные знаки зодиака переживают расставание и как им восстановиться."},
+    {"category": "zodiac", "topic": "Напиши пост о знаках зодиака и их теневых сторонах: о чём каждый знак предпочитает молчать."},
+    {"category": "astrology", "topic": "Напиши пост о том, что такое натальная карта и почему солнечный знак это только верхушка айсберга."},
+    {"category": "mystic", "topic": "Напиши пост о мистических совпадениях и синхронностях: что они значат и как их замечать."},
+    {"category": "zodiac", "topic": "Напиши пост о том, какие знаки зодиака лучшие эмпаты и как это влияет на их жизнь."},
+    {"category": "planets", "topic": "Напиши пост о том, как планета-покровитель знака влияет на характер и судьбу."},
+    {"category": "divination", "topic": "Напиши пост о гадании на кофейной гуще: символы и их значения."},
+    {"category": "meditation", "topic": "Напиши пост о том, почему одним знакам зодиака легко медитировать, а другим сложно."},
 ]
 
 CHANNEL_POST_INTERVAL = 30  # интервал постинга в минутах
 CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
 PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
 
-# Ключевые слова для поиска картинок по темам
-CHANNEL_IMAGE_KEYWORDS = [
-    "astrology", "zodiac", "tarot", "moon",
-    "crystals", "night sky", "constellation",
-    "fortune telling", "horoscope", "meditation",
-    "full moon", "starry night", "candles", "cosmos",
-    "aurora", "nebula", "sunset", "stars", "mystic",
-    "galaxy", "universe", "spiritual", "magic",
+# Поисковые запросы Pexels под каждую категорию поста (подбор картинки по смыслу)
+CHANNEL_IMAGE_QUERIES = {
+    "dreams":     ["dreamy night sky", "surreal water", "ocean moonlight", "misty forest night", "foggy clouds", "sleeping stars"],
+    "zodiac":     ["zodiac constellation", "astrology signs", "horoscope night", "constellation stars", "zodiac symbols"],
+    "moon":       ["full moon", "crescent moon", "moon night", "lunar sky", "moon clouds", "moonlight sea"],
+    "tarot":      ["tarot cards", "tarot reading", "mystic cards", "occult cards", "fortune teller cards", "tarot deck candle"],
+    "crystals":   ["amethyst crystals", "healing crystals", "quartz stones", "gemstones mystic", "crystal cluster", "rose quartz"],
+    "planets":    ["planet space", "solar system", "planet orbit", "cosmic planet", "jupiter saturn", "retrograde mercury"],
+    "elements":   ["four elements", "fire and water", "candle flame", "water ripple", "earth air nature", "elemental magic"],
+    "numerology": ["mystical numbers", "sacred geometry", "numerology clock", "cosmic numbers", "ancient numbers"],
+    "karma":      ["spiritual path", "silhouette sunset", "meditation journey", "destiny road", "soul light"],
+    "astrology":  ["astrology chart", "zodiac wheel", "natal chart", "astrological map", "astrology book"],
+    "mystic":     ["mystical fog", "witchcraft altar", "esoteric symbols", "magic aura", "occult ritual"],
+    "divination": ["coffee cup reading", "tea leaves reading", "palm reading", "fortune telling", "crystal ball"],
+    "meditation": ["meditation silhouette", "yoga sunset", "mindfulness", "zen stones", "temple candle"],
+}
+
+# Универсальные запросы на случай, если категория пустая или не дала результата
+UNIVERSAL_IMAGE_QUERIES = [
+    "galaxy nebula", "starry night", "cosmic universe", "aurora borealis",
+    "mystical sky", "night sky stars", "moonlight magic", "esoteric mood",
+    "milky way", "astral dust",
 ]
 
-UNSPLASH_IMAGES = [
+# Бэкап-пул на случай если Pexels API недоступен
+UNSPLASH_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800",
     "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800",
     "https://images.unsplash.com/photo-1507400492013-162706c8c05e?w=800",
@@ -2106,50 +2122,147 @@ UNSPLASH_IMAGES = [
     "https://images.unsplash.com/photo-1571942676516-bcab84649e44?w=800",
 ]
 
-def get_channel_image() -> str:
-    """Возвращает случайную тематическую картинку из Unsplash."""
-    return random.choice(UNSPLASH_IMAGES)
+# Память недавно использованных картинок, чтобы не было двух одинаковых подряд
+RECENT_IMAGE_URLS: list[str] = []
+MAX_RECENT_IMAGES = 12
+
+
+async def pexels_search(query: str, per_page: int = 15) -> list[str]:
+    """Ищет картинки в Pexels по запросу, возвращает список URL."""
+    if not PEXELS_API_KEY:
+        return []
+    url = f"https://api.pexels.com/v1/search?query={query}&per_page={per_page}&orientation=square"
+    headers = {"Authorization": PEXELS_API_KEY}
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+        photos = data.get("photos", []) or []
+        urls: list[str] = []
+        for p in photos:
+            src = p.get("src") or {}
+            u = src.get("large") or src.get("medium") or src.get("original")
+            if u:
+                urls.append(u)
+        return urls
+    except Exception as e:
+        print(f"[Pexels] Ошибка поиска '{query}': {e}")
+        return []
+
+
+def _remember_image(url: str) -> None:
+    RECENT_IMAGE_URLS.append(url)
+    while len(RECENT_IMAGE_URLS) > MAX_RECENT_IMAGES:
+        RECENT_IMAGE_URLS.pop(0)
+
+
+async def get_channel_image(category: str = "") -> str:
+    """Подбирает тематическую картинку под категорию поста. Избегает недавно использованных."""
+    queries = list(CHANNEL_IMAGE_QUERIES.get(category, []))
+    # Добавляем пару универсальных запросов как подстраховку
+    universal_sample = random.sample(UNIVERSAL_IMAGE_QUERIES, k=min(2, len(UNIVERSAL_IMAGE_QUERIES)))
+    queries += universal_sample
+    random.shuffle(queries)
+
+    # До трёх попыток разными запросами
+    for q in queries[:3]:
+        urls = await pexels_search(q)
+        fresh = [u for u in urls if u and u not in RECENT_IMAGE_URLS]
+        if fresh:
+            img = random.choice(fresh)
+            _remember_image(img)
+            return img
+
+    # Фоллбек: статический список Unsplash (тоже без повторов)
+    fallback = [u for u in UNSPLASH_FALLBACK_IMAGES if u not in RECENT_IMAGE_URLS]
+    if not fallback:
+        fallback = UNSPLASH_FALLBACK_IMAGES
+    img = random.choice(fallback)
+    _remember_image(img)
+    return img
+
 
 def clean_markdown(text: str) -> str:
-    """Убирает markdown-разметку из текста."""
-    text = re.sub(r'#{1,6}\s*', '', text)       # ### заголовки
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text) # **жирный**
-    text = re.sub(r'__(.+?)__', r'\1', text)      # __жирный__
-    text = re.sub(r'\*(.+?)\*', r'\1', text)      # *курсив*
-    text = re.sub(r'_(.+?)_', r'\1', text)        # _курсив_
-    text = re.sub(r'`(.+?)`', r'\1', text)        # `код`
-    text = re.sub(r'~~(.+?)~~', r'\1', text)      # ~~зачёркнутый~~
+    """Убирает markdown-разметку, сохраняет HTML-теги, заменяет длинные тире на дефис."""
+    text = re.sub(r'#{1,6}\s*', '', text)            # ### заголовки
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)     # **жирный**
+    text = re.sub(r'__(.+?)__', r'\1', text)         # __жирный__
+    text = re.sub(r'\*(.+?)\*', r'\1', text)         # *курсив*
+    text = re.sub(r'_(.+?)_', r'\1', text)           # _курсив_
+    text = re.sub(r'`(.+?)`', r'\1', text)           # `код`
+    text = re.sub(r'~~(.+?)~~', r'\1', text)         # ~~зачёркнутый~~
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # [ссылка](url)
-    text = re.sub(r'^[-•]\s', '— ', text, flags=re.MULTILINE)  # маркеры списка
-    text = re.sub(r'\n{3,}', '\n\n', text)        # лишние пустые строки
+    text = re.sub(r'^[-•]\s', '- ', text, flags=re.MULTILINE)
+    # Длинные и средние тире на обычный дефис (анти-ИИ правка)
+    text = text.replace('—', '-').replace('–', '-')
+    text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-async def generate_channel_post() -> str:
-    """Генерирует пост для канала через ИИ."""
-    topic = random.choice(CHANNEL_POST_TOPICS)
+
+# Разрешённые теги Telegram HTML (которые мы хотим видеть в постах)
+_ALLOWED_HTML_TAGS = {"b", "i", "u", "s", "tg-spoiler"}
+
+
+def sanitize_html_for_telegram(text: str) -> str:
+    """Оставляет только разрешённые Telegram HTML-теги. Удаляет несбалансированные теги,
+    чтобы Telegram не отклонил сообщение."""
+    # Удаляем любые теги, кроме разрешённых
+    def _strip_disallowed(m: re.Match) -> str:
+        tag = m.group(1).lower()
+        return m.group(0) if tag in _ALLOWED_HTML_TAGS else ""
+    text = re.sub(r'</?([a-zA-Z][a-zA-Z0-9\-]*)(?:\s[^>]*)?>', _strip_disallowed, text)
+    # Балансировка: если число открытий != числу закрытий, удаляем этот тег
+    for tag in _ALLOWED_HTML_TAGS:
+        opens = len(re.findall(rf'<{tag}>', text, flags=re.IGNORECASE))
+        closes = len(re.findall(rf'</{tag}>', text, flags=re.IGNORECASE))
+        if opens != closes:
+            text = re.sub(rf'</?{tag}>', '', text, flags=re.IGNORECASE)
+    return text
+
+
+async def generate_channel_post(topic: str) -> str:
+    """Генерирует пост для канала через ИИ по заданной теме."""
     prompt = (
         f"{topic}\n\n"
         "СТРОГИЕ ТРЕБОВАНИЯ К ПОСТУ:\n"
-        "— Длина: 300-700 символов. Это КОРОТКИЙ пост для Telegram-канала, не статья.\n"
-        "— Пиши как живой человек, увлечённый темой. Без канцелярита и сухих перечислений.\n"
-        "— Начни с цепляющей фразы или интересного факта, чтобы человек захотел дочитать.\n"
-        "— Пиши на русском языке, простым разговорным стилем.\n"
-        "— Можно использовать 2-4 эмодзи для оживления текста.\n"
-        "— В конце задай один короткий вопрос читателям.\n"
-        "— ЗАПРЕЩЕНО: хештеги, ссылки, упоминания аккаунтов.\n"
-        "— ЗАПРЕЩЕНО: любая markdown-разметка (**, ##, *, _, `, ~~). Пиши ЧИСТЫМ ТЕКСТОМ без форматирования.\n"
-        "— ЗАПРЕЩЕНО: нумерованные списки (1. 2. 3.). Пиши связным текстом, а не списками.\n"
-        "— Не начинай с приветствия."
+        "1. Длина 300-700 символов. Это короткий пост для Telegram-канала, не статья.\n"
+        "2. Пиши от первого лица, как живой человек, увлечённый эзотерикой. Допустимы обороты 'я замечала', 'у меня как-то было', 'мне кажется', 'честно'.\n"
+        "3. Начни с детали, наблюдения или вопроса. ЗАПРЕЩЕНЫ начала: 'Итак', 'Давайте', 'В этом посте', 'Знаете ли вы', 'Сегодня поговорим', 'Интересный факт', 'Погрузимся'.\n"
+        "4. Язык русский, живой разговорный. Чередуй длину предложений, иногда короткое обрывочное. Лёгкая субъективность приветствуется.\n"
+        "5. Добавь 2-4 эмодзи по смыслу (не в каждой строке, а там где к месту).\n"
+        "6. В конце один короткий вопрос читателям.\n\n"
+        "ФОРМАТИРОВАНИЕ (только Telegram HTML-теги, никакого markdown):\n"
+        "- <b>...</b>: выдели 1-3 самых важных слова или термина. Это должны быть ОСМЫСЛЕННЫЕ выделения: название карты Таро, имя планеты, ключевое понятие, суть совета. НЕ выделяй случайные слова, союзы, предлоги.\n"
+        "- <i>...</i>: используй 1-2 раза для атмосферной фразы, метафоры или цитаты.\n"
+        "- <tg-spoiler>...</tg-spoiler>: один раз, для интригующего откровения или 'тайной' фразы, чтобы читатель захотел её открыть (например, неожиданное послание карты или тайный совет).\n"
+        "- Если выделение неуместно, просто не используй тег. Лучше ни одного, чем случайное.\n\n"
+        "ЗАПРЕЩЕНО:\n"
+        "- Хештеги, ссылки, упоминания аккаунтов.\n"
+        "- Markdown-разметка (**, ##, *, _, `, ~~). Только HTML-теги выше.\n"
+        "- ЛЮБЫЕ тире: ни длинное '—', ни среднее '–'. Вместо тире используй запятую, двоеточие, скобки или разбей на два предложения.\n"
+        "- Нумерованные и маркированные списки (1. 2. 3., - пункт). Пиши связным текстом.\n"
+        "- Канцеляризмы и штампы ИИ: 'важно отметить', 'стоит упомянуть', 'давайте разберёмся', 'таким образом', 'в заключение', 'помните:', 'и напоследок', 'погрузимся', 'не секрет, что', 'как известно'.\n"
+        "- Симметричные идеальные тройки ('это, это и это'). Пиши неровно, как живой человек, а не как аналитический отчёт.\n"
+        "- Приветствия в начале поста.\n"
     )
-    text = await ask_ai(prompt, max_tokens=500)
-    return clean_markdown(text) if text else ""
+    text = await ask_ai(prompt, max_tokens=600)
+    if not text:
+        return ""
+    text = clean_markdown(text)
+    text = sanitize_html_for_telegram(text)
+    return text
+
 
 async def post_to_channel():
-    """Генерирует и отправляет пост в канал с картинкой."""
+    """Генерирует и отправляет пост в канал с подобранной по теме картинкой."""
     if not CHANNEL_ID:
         return
     try:
-        text = await generate_channel_post()
+        topic_info = random.choice(CHANNEL_POST_TOPICS)
+        text = await generate_channel_post(topic_info["topic"])
         if not text:
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
             return
@@ -2158,16 +2271,25 @@ async def post_to_channel():
         if len(text) > 1024:
             text = text[:1021] + "..."
 
-        # Картинка для поста
-        image_url = get_channel_image()
+        image_url = await get_channel_image(topic_info.get("category", ""))
 
-        if image_url:
-            await bot.send_photo(CHANNEL_ID, photo=image_url, caption=text)
-        else:
-            await bot.send_message(CHANNEL_ID, text)
+        async def _send(body: str, parse_mode: str | None):
+            if image_url:
+                await bot.send_photo(CHANNEL_ID, photo=image_url, caption=body, parse_mode=parse_mode)
+            else:
+                await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
+
+        try:
+            await _send(text, "HTML")
+        except Exception as e:
+            # Если Telegram не принял HTML (битые теги), шлём чистый текст
+            print(f"[Автопостинг] HTML отклонён Telegram, шлю plain: {e}")
+            plain = re.sub(r'</?[a-zA-Z][a-zA-Z0-9\-]*>', '', text)
+            await _send(plain, None)
 
         msk = _msk_now()
-        print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} (фото: {'да' if image_url else 'нет'})")
+        print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
+              f"(категория: {topic_info.get('category', '-')}, фото: {'да' if image_url else 'нет'})")
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
 
