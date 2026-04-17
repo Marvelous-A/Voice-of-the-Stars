@@ -2087,22 +2087,39 @@ async def fetch_pexels_image(query: str) -> str:
         print(f"[Pexels] Ошибка: {e}")
     return ""
 
+def clean_markdown(text: str) -> str:
+    """Убирает markdown-разметку из текста."""
+    text = re.sub(r'#{1,6}\s*', '', text)       # ### заголовки
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text) # **жирный**
+    text = re.sub(r'__(.+?)__', r'\1', text)      # __жирный__
+    text = re.sub(r'\*(.+?)\*', r'\1', text)      # *курсив*
+    text = re.sub(r'_(.+?)_', r'\1', text)        # _курсив_
+    text = re.sub(r'`(.+?)`', r'\1', text)        # `код`
+    text = re.sub(r'~~(.+?)~~', r'\1', text)      # ~~зачёркнутый~~
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # [ссылка](url)
+    text = re.sub(r'^[-•]\s', '— ', text, flags=re.MULTILINE)  # маркеры списка
+    text = re.sub(r'\n{3,}', '\n\n', text)        # лишние пустые строки
+    return text.strip()
+
 async def generate_channel_post() -> str:
     """Генерирует пост для канала через ИИ."""
     topic = random.choice(CHANNEL_POST_TOPICS)
     prompt = (
         f"{topic}\n\n"
-        "Требования к посту:\n"
-        "— Длина: 500-1000 символов (короткий, но содержательный)\n"
-        "— Стиль: дружелюбный, увлекательный, с лёгкой интригой\n"
-        "— Пиши на русском языке\n"
-        "— Используй 1-2 эмодзи, не больше\n"
-        "— Не используй хештеги\n"
-        "— В конце можешь задать вопрос читателям, чтобы вовлечь в обсуждение\n"
-        "— Не начинай с приветствия\n"
-        "— Не упоминай никакие ссылки, аккаунты или контакты"
+        "СТРОГИЕ ТРЕБОВАНИЯ К ПОСТУ:\n"
+        "— Длина: 300-700 символов. Это КОРОТКИЙ пост для Telegram-канала, не статья.\n"
+        "— Пиши как живой человек, увлечённый темой. Без канцелярита и сухих перечислений.\n"
+        "— Начни с цепляющей фразы или интересного факта, чтобы человек захотел дочитать.\n"
+        "— Пиши на русском языке, простым разговорным стилем.\n"
+        "— Можно использовать 2-4 эмодзи для оживления текста.\n"
+        "— В конце задай один короткий вопрос читателям.\n"
+        "— ЗАПРЕЩЕНО: хештеги, ссылки, упоминания аккаунтов.\n"
+        "— ЗАПРЕЩЕНО: любая markdown-разметка (**, ##, *, _, `, ~~). Пиши ЧИСТЫМ ТЕКСТОМ без форматирования.\n"
+        "— ЗАПРЕЩЕНО: нумерованные списки (1. 2. 3.). Пиши связным текстом, а не списками.\n"
+        "— Не начинай с приветствия."
     )
-    return await ask_ai(prompt, max_tokens=600)
+    text = await ask_ai(prompt, max_tokens=500)
+    return clean_markdown(text) if text else ""
 
 async def post_to_channel():
     """Генерирует и отправляет пост в канал с картинкой."""
@@ -2114,11 +2131,17 @@ async def post_to_channel():
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
             return
 
+        # Обрезаем до лимита caption (1024 символа)
+        if len(text) > 1024:
+            text = text[:1021] + "..."
+
         # Пытаемся найти картинку
         image_url = ""
         if PEXELS_API_KEY:
             keyword = random.choice(CHANNEL_IMAGE_KEYWORDS)
             image_url = await fetch_pexels_image(keyword)
+            if not image_url:
+                print(f"[Автопостинг] Pexels не вернул картинку для '{keyword}'")
 
         if image_url:
             await bot.send_photo(CHANNEL_ID, photo=image_url, caption=text)
@@ -2126,7 +2149,7 @@ async def post_to_channel():
             await bot.send_message(CHANNEL_ID, text)
 
         msk = _msk_now()
-        print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID}")
+        print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} (фото: {'да' if image_url else 'нет'})")
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
 
