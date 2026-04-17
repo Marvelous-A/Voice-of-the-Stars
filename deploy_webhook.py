@@ -2,8 +2,14 @@
 GitHub Webhook receiver — auto-deploy on push.
 Listens on port 9000, verifies the secret, runs git pull and restarts the bot.
 
-Managed by systemd: bot.service and deploy-webhook.service
+Managed by systemd: deploy-webhook.service
 Set WEBHOOK_SECRET in .env (same value as in GitHub webhook settings).
+
+Архитектура деплоя:
+  /root/Voice-of-the-Stars/  — git-репозиторий (сюда приходит git pull)
+  /home/bot/                  — рабочая папка бота (сюда копируются файлы)
+  tarot-bot.service           — systemd-сервис бота (единственный!)
+  deploy-webhook.service      — systemd-сервис этого вебхука
 """
 
 import hashlib
@@ -23,7 +29,10 @@ load_dotenv()
 PORT = 9000
 SECRET = os.getenv("WEBHOOK_SECRET", "")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(PROJECT_DIR, "venv", "bin", "python3")
+
+BOT_DIR = "/home/bot"
+BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
+CODE_FILES = ["main.py", "requirements.txt", "descriptions.json"]
 
 
 def verify_signature(payload: bytes, signature: str) -> bool:
@@ -33,11 +42,6 @@ def verify_signature(payload: bytes, signature: str) -> bool:
         SECRET.encode(), payload, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
-
-
-BOT_DIR = "/home/bot"
-BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
-CODE_FILES = ["main.py", "requirements.txt", "descriptions.json"]
 
 
 def deploy():
@@ -72,6 +76,13 @@ def deploy():
     # restart bot via systemd
     subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)
     print("=== Bot restarted ===", flush=True)
+
+    # if deploy_webhook.py itself was updated — restart webhook service
+    src_wh = os.path.join(PROJECT_DIR, "deploy_webhook.py")
+    dst_wh = os.path.join(PROJECT_DIR, "deploy_webhook.py")
+    # always restart webhook so it picks up any changes
+    subprocess.run(["systemctl", "restart", "deploy-webhook.service"], check=False)
+    print("=== Webhook restarted ===", flush=True)
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
