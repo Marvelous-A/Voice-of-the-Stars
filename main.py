@@ -2060,11 +2060,12 @@ PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
 
 # Ключевые слова для поиска картинок по темам
 CHANNEL_IMAGE_KEYWORDS = [
-    "astrology", "zodiac signs", "tarot cards", "moon phases",
-    "crystals healing", "mystical night sky", "constellation stars",
-    "fortune telling", "horoscope", "meditation spiritual",
-    "full moon", "starry night", "candles mystic", "cosmic universe",
-    "aurora borealis", "nebula space", "sunset mystical",
+    "astrology", "zodiac", "tarot", "moon",
+    "crystals", "night sky", "constellation",
+    "fortune telling", "horoscope", "meditation",
+    "full moon", "starry night", "candles", "cosmos",
+    "aurora", "nebula", "sunset", "stars", "mystic",
+    "galaxy", "universe", "spiritual", "magic",
 ]
 
 async def fetch_pexels_image(query: str) -> str:
@@ -2078,7 +2079,12 @@ async def fetch_pexels_image(query: str) -> str:
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    print(f"[Pexels] HTTP {resp.status}")
+                    return ""
                 data = await resp.json(content_type=None)
+                if not data:
+                    return ""
                 photos = data.get("photos", [])
                 if photos:
                     photo = random.choice(photos)
@@ -2086,6 +2092,42 @@ async def fetch_pexels_image(query: str) -> str:
     except Exception as e:
         print(f"[Pexels] Ошибка: {e}")
     return ""
+
+async def fetch_pixabay_image(query: str) -> str:
+    """Ищет картинку на Pixabay (бесплатно) и возвращает URL."""
+    try:
+        url = "https://pixabay.com/api/"
+        params = {
+            "key": "46968901-5765889a5f6aa6b1d7e840d1b",
+            "q": query,
+            "per_page": 20,
+            "image_type": "photo",
+            "orientation": "horizontal",
+            "min_width": 800,
+        }
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            async with s.get(url, params=params) as resp:
+                if resp.status != 200:
+                    print(f"[Pixabay] HTTP {resp.status}")
+                    return ""
+                data = await resp.json(content_type=None)
+                if not data:
+                    return ""
+                hits = data.get("hits", [])
+                if hits:
+                    photo = random.choice(hits)
+                    return photo.get("webformatURL", "")
+    except Exception as e:
+        print(f"[Pixabay] Ошибка: {e}")
+    return ""
+
+async def fetch_channel_image(query: str) -> str:
+    """Пробует Pexels, потом Pixabay."""
+    url = await fetch_pexels_image(query)
+    if not url:
+        url = await fetch_pixabay_image(query)
+    return url
 
 def clean_markdown(text: str) -> str:
     """Убирает markdown-разметку из текста."""
@@ -2136,12 +2178,10 @@ async def post_to_channel():
             text = text[:1021] + "..."
 
         # Пытаемся найти картинку
-        image_url = ""
-        if PEXELS_API_KEY:
-            keyword = random.choice(CHANNEL_IMAGE_KEYWORDS)
-            image_url = await fetch_pexels_image(keyword)
-            if not image_url:
-                print(f"[Автопостинг] Pexels не вернул картинку для '{keyword}'")
+        keyword = random.choice(CHANNEL_IMAGE_KEYWORDS)
+        image_url = await fetch_channel_image(keyword)
+        if not image_url:
+            print(f"[Автопостинг] Не удалось найти картинку для '{keyword}'")
 
         if image_url:
             await bot.send_photo(CHANNEL_ID, photo=image_url, caption=text)
