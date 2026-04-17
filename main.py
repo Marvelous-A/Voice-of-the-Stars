@@ -40,6 +40,21 @@ session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
+# ====== Отдельный админ-бот (mainAdmin) для уведомлений ======
+ADMIN_BOT_TOKEN = getenv("ADMIN_BOT_TOKEN", "")
+admin_session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
+admin_bot = Bot(token=ADMIN_BOT_TOKEN, session=admin_session) if ADMIN_BOT_TOKEN else None
+
+
+async def notify_admin(text: str, parse_mode: str | None = None):
+    """Отправляет уведомление администратору через отдельного админ-бота."""
+    if not ADMIN_ID or admin_bot is None:
+        return
+    try:
+        await admin_bot.send_message(ADMIN_ID, text, parse_mode=parse_mode)
+    except Exception as e:
+        print(f"[notify_admin] {e}")
+
 # ====== ФАЙЛЫ ======
 USERS_FILE = "users.json"
 FORECAST_FILE = "forecast.json"
@@ -953,19 +968,14 @@ async def _notify_new_user(message):
     username = f"@{user.username}" if user.username else "нет username"
     full_name = user.full_name or "—"
 
-    if ADMIN_ID:
-        try:
-            await bot.send_message(
-                ADMIN_ID,
-                f"🆕 *Новый пользователь*\n\n"
-                f"👤 Имя: {full_name}\n"
-                f"🔗 Username: {username}\n"
-                f"🆔 ID: `{user.id}`\n"
-                f"📅 Дата: {date_str}",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            print(f"[ADMIN] Не удалось уведомить о новом пользователе: {e}")
+    await notify_admin(
+        f"🆕 *Новый пользователь*\n\n"
+        f"👤 Имя: {full_name}\n"
+        f"🔗 Username: {username}\n"
+        f"🆔 ID: `{user.id}`\n"
+        f"📅 Дата: {date_str}",
+        parse_mode="Markdown"
+    )
 
     subject = "🆕 Новый пользователь в боте «Голос Звёзд»"
     body = (
@@ -2247,190 +2257,7 @@ async def start(message: Message):
                 except Exception:
                     pass
 
-@dp.message(F.text.startswith("/user "))
-async def admin_user_detail(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    query = message.text.replace("/user ", "").strip().lstrip("@")
-    users = load_users()
-
-    # Ищем по username или по ID
-    found_uid = None
-    found_data = None
-    for uid, data in users.items():
-        if uid == query or data.get("username", "").lower() == query.lower():
-            found_uid = uid
-            found_data = data
-            break
-
-    if not found_uid:
-        await message.answer(f"Пользователь «{query}» не найден.\nИщи по ID или @username.")
-        return
-
-    activity = found_data.get("activity", {})
-    username = found_data.get("username", "")
-    full_name = found_data.get("full_name", "")
-    sign = found_data.get("sign", "не выбран")
-    joined = found_data.get("joined_at", "")
-    joined_str = datetime.fromisoformat(joined).strftime("%d.%m.%Y %H:%M") if joined else "—"
-    last_seen = activity.get("last_seen", "")
-    last_seen_str = datetime.fromisoformat(last_seen).strftime("%d.%m.%Y %H:%M") if last_seen else "—"
-
-    if username:
-        user_label = f"@{username}"
-        if full_name:
-            user_label += f" ({full_name})"
-    elif full_name:
-        user_label = full_name
-    else:
-        user_label = "—"
-
-    text = (
-        f"👤 *{user_label}*\n"
-        f"🆔 ID: `{found_uid}`\n"
-        f"♈ Знак: {sign}\n"
-        f"📅 Зарегистрирован: {joined_str}\n"
-        f"🕐 Последняя активность: {last_seen_str}\n\n"
-        f"📊 *Использование услуг:*\n"
-        f"  🔮 Прогнозы: {activity.get('forecast', 0)}\n"
-        f"  📖 Читать о себе: {activity.get('about_me', 0)}\n"
-        f"  🎴 Консультации таролога: {activity.get('tarot', 0)}\n"
-        f"  ⭐ Консультации астролога: {activity.get('astro', 0)}\n"
-        f"  ✍️ Отправил отзывов: {activity.get('review', 0)}\n"
-        f"  📈 Всего действий: {activity.get('total', 0)}\n\n"
-        f"🎁 *Реферальная система:*\n"
-        f"  Приглашено друзей: {found_data.get('referrals_total', 0)}\n"
-        f"  Бонусных сеансов осталось: {found_data.get('bonus_sessions', 0)}\n"
-        f"  Пришёл по ссылке от: {found_data.get('referred_by', '—')}"
-    )
-    await message.answer(text, parse_mode="Markdown")
-
-
-@dp.message(F.text.regexp(r"^/users(@\w+)?$"))
-async def admin_users(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    users = load_users()
-    if not users:
-        await message.answer("Пока нет зарегистрированных пользователей.")
-        return
-
-    lines = []
-    for uid, data in sorted(users.items(), key=lambda x: x[1].get("joined_at", ""), reverse=True):
-        username = data.get("username")
-        full_name = data.get("full_name", "")
-        sign = data.get("sign", "—")
-        joined = data.get("joined_at", "")
-        joined_str = datetime.fromisoformat(joined).strftime("%d.%m.%Y") if joined else "—"
-        total = data.get("activity", {}).get("total", 0)
-
-        if username:
-            user_label = f"@{username} [{uid}]"
-            if full_name:
-                user_label += f" ({full_name})"
-        elif full_name:
-            user_label = f"{full_name} [{uid}]"
-        else:
-            user_label = f"ID {uid}"
-
-        lines.append(f"• {user_label} · {sign} · с {joined_str} · {total} действий")
-
-    # Разбиваем на части по 50 пользователей чтобы не превысить лимит Telegram
-    chunk_size = 50
-    for i in range(0, len(lines), chunk_size):
-        chunk = lines[i:i + chunk_size]
-        header = f"👥 Пользователи ({i+1}–{min(i+chunk_size, len(lines))} из {len(lines)})\n\n" if i == 0 else ""
-        await message.answer(header + "\n".join(chunk))
-
-
-@dp.message(F.text.regexp(r"^/stats(@\w+)?$"))
-async def admin_stats(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    users = load_users()
-    now = datetime.now()
-    today = now.date()
-    week_ago = now - timedelta(days=7)
-
-    total_users = len(users)
-    users_with_sign = sum(1 for u in users.values() if "sign" in u)
-
-    # Новые пользователи
-    new_today = sum(
-        1 for u in users.values()
-        if u.get("joined_at") and datetime.fromisoformat(u["joined_at"]).date() == today
-    )
-    new_week = sum(
-        1 for u in users.values()
-        if u.get("joined_at") and datetime.fromisoformat(u["joined_at"]) >= week_ago
-    )
-
-    # Активные (были сегодня / за неделю)
-    active_today = sum(
-        1 for u in users.values()
-        if u.get("activity", {}).get("last_seen")
-        and datetime.fromisoformat(u["activity"]["last_seen"]).date() == today
-    )
-    active_week = sum(
-        1 for u in users.values()
-        if u.get("activity", {}).get("last_seen")
-        and datetime.fromisoformat(u["activity"]["last_seen"]) >= week_ago
-    )
-
-    # Суммарная активность по услугам
-    totals = {"forecast": 0, "about_me": 0, "tarot": 0, "astro": 0, "review": 0}
-    for u in users.values():
-        for key in totals:
-            totals[key] += u.get("activity", {}).get(key, 0)
-
-    # Топ-5 активных пользователей
-    top = sorted(
-        [(uid, u.get("activity", {}).get("total", 0)) for uid, u in users.items()],
-        key=lambda x: x[1], reverse=True
-    )[:5]
-    top_lines = "\n".join(f"  `{uid}` — {cnt} действий" for uid, cnt in top if cnt > 0) or "  нет данных"
-
-    # Отзывы
-    published_reviews = len(_load_reviews_from_file())
-    pending_reviews = len(load_pending_reviews())
-
-    # Реферальная статистика
-    total_referrals = sum(u.get("referrals_total", 0) for u in users.values())
-    users_with_referrals = sum(1 for u in users.values() if u.get("referrals_total", 0) > 0)
-    total_bonus_remaining = sum(u.get("bonus_sessions", 0) for u in users.values())
-    came_by_referral = sum(1 for u in users.values() if u.get("referred_by"))
-
-    text = (
-        f"📊 *Статистика бота «Голос Звёзд»*\n"
-        f"_{now.strftime('%d.%m.%Y %H:%M')}_\n\n"
-        f"👥 *Пользователи*\n"
-        f"  Всего зарегистрировано: *{total_users}*\n"
-        f"  Выбрали знак зодиака: *{users_with_sign}*\n"
-        f"  Новых сегодня: *{new_today}*\n"
-        f"  Новых за 7 дней: *{new_week}*\n\n"
-        f"⚡ *Активность*\n"
-        f"  Активны сегодня: *{active_today}*\n"
-        f"  Активны за 7 дней: *{active_week}*\n\n"
-        f"🔢 *Использование услуг (всего)*\n"
-        f"  🔮 Прогнозы: *{totals['forecast']}*\n"
-        f"  📖 Читать о себе: *{totals['about_me']}*\n"
-        f"  🎴 Консультации таролога: *{totals['tarot']}*\n"
-        f"  ⭐ Консультации астролога: *{totals['astro']}*\n"
-        f"  ✍️ Отправили отзыв: *{totals['review']}*\n\n"
-        f"🎁 *Реферальная система*\n"
-        f"  Всего приглашений: *{total_referrals}*\n"
-        f"  Пришли по реферальной ссылке: *{came_by_referral}*\n"
-        f"  Пользователей-рефереров: *{users_with_referrals}*\n"
-        f"  Неиспользованных бонусов: *{total_bonus_remaining}*\n\n"
-        f"⭐ *Отзывы*\n"
-        f"  Опубликовано: *{published_reviews}*\n"
-        f"  Ждут модерации: *{pending_reviews}*\n\n"
-        f"🏆 *Топ-5 активных пользователей*\n{top_lines}"
-    )
-    await message.answer(text, parse_mode="Markdown")
+# Админ-команды (/user, /users, /stats) живут в отдельном боте mainAdmin.py
 
 
 @dp.message(F.text == "🏠 Главное меню")
@@ -3393,15 +3220,14 @@ async def heartbeat():
             # Ежедневный отчёт в 12:00 МСК
             if msk.hour == 12 and last_daily_report != msk.date():
                 last_daily_report = msk.date()
-                if ADMIN_ID:
-                    users = load_users()
-                    text = (
-                        f"📊 Ежедневный отчёт:\n"
-                        f"• Аптайм: {hours}ч {minutes}м\n"
-                        f"• Пользователей: {len(users)}\n"
-                        f"• Статус: работает ✅"
-                    )
-                    await bot.send_message(ADMIN_ID, text)
+                users = load_users()
+                text = (
+                    f"📊 Ежедневный отчёт:\n"
+                    f"• Аптайм: {hours}ч {minutes}м\n"
+                    f"• Пользователей: {len(users)}\n"
+                    f"• Статус: работает ✅"
+                )
+                await notify_admin(text)
         except Exception as e:
             print(f"[heartbeat] Ошибка: {e}")
 
@@ -3409,11 +3235,7 @@ async def heartbeat():
 
 # ====== ЗАПУСК ======
 async def on_startup(bot):
-    if ADMIN_ID:
-        try:
-            await bot.send_message(ADMIN_ID, "🔄 Бот перезапущен и работает.")
-        except Exception as e:
-            print(f"[on_startup] Не удалось отправить уведомление админу: {e}")
+    await notify_admin("🔄 Бот перезапущен и работает.")
 
 async def main():
     asyncio.create_task(scheduler())
