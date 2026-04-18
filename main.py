@@ -683,6 +683,13 @@ def get_consultations_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
 
+def get_welcome_keyboard():
+    buttons = [
+        [KeyboardButton(text="🎴 Задать вопрос тарологу")],
+        [KeyboardButton(text="⭐ Астрологи"), KeyboardButton(text="🏠 Главное меню")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
+
 def get_settings_keyboard():
     buttons = [
         [KeyboardButton(text="♈ Изменить знак зодиака")],
@@ -1554,6 +1561,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
             increment_sessions_today(user_id_str)
             asyncio.create_task(check_and_grant_referral_bonus(user_id_str))
             asyncio.create_task(session_timeout(user_id))
+            asyncio.create_task(maybe_pin_channel_after_consultation(user_id))
             await bot.send_message(
                 user_id,
                 f"💬 Сеанс с {tarologist['name']} открыт — можешь задавать вопросы.\n"
@@ -1726,6 +1734,7 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
             }
             SESSION_BUSY[user_id_str] = False
             asyncio.create_task(session_timeout(user_id))
+            asyncio.create_task(maybe_pin_channel_after_consultation(user_id))
             await bot.send_message(
                 user_id,
                 f"💬 Сеанс с {astrologer['name']} открыт — можешь задавать вопросы.\n"
@@ -2503,6 +2512,20 @@ async def send_and_pin_channel_promo(chat_id: int) -> None:
         print(f"[channel_promo] {e}")
 
 
+async def maybe_pin_channel_after_consultation(user_id: int) -> None:
+    """Закрепляет промо канала один раз — после первой консультации."""
+    if not CHANNEL_URL:
+        return
+    user_id_str = str(user_id)
+    users = load_users()
+    if users.get(user_id_str, {}).get("channel_pinned"):
+        return
+    await send_and_pin_channel_promo(user_id)
+    users = load_users()
+    users.setdefault(user_id_str, {})["channel_pinned"] = True
+    save_users(users)
+
+
 @dp.message(F.text.regexp(r"^/start(\s|$)"))
 async def start(message: Message):
     users = load_users()
@@ -2518,7 +2541,6 @@ async def start(message: Message):
         ref_id = message.text.replace("/start ref_", "").strip()
         if ref_id == user_id:
             ref_id = None  # нельзя пригласить самого себя
-    need_channel_pin = not users[user_id].get("channel_pinned")
     if user_id in users and "sign" in users[user_id]:
         sign = users[user_id]["sign"]
         save_users(users)
@@ -2528,30 +2550,24 @@ async def start(message: Message):
         save_users(users)
         await message.answer(
             "Привет! Я — Голос Звёзд 🌟\n\n"
-            "С чего начнём? Выбери специалиста — таролог поможет с картами, "
-            "астролог разберёт натальную карту и прогноз.\n\n"
-            "Если хочешь сначала посмотреть прогноз по знаку зодиака — нажми «🏠 Главное меню».",
-            reply_markup=get_consultations_keyboard()
+            "Задай вопрос тарологу — он разложит карты и подскажет, что тебя ждёт.\n"
+            "Ниже — астрологи и главное меню с прогнозом по знаку.",
+            reply_markup=get_welcome_keyboard()
         )
         asyncio.create_task(_notify_new_user(message))
-    if need_channel_pin and CHANNEL_URL:
-        await send_and_pin_channel_promo(message.chat.id)
-        users = load_users()
-        users.setdefault(user_id, {})["channel_pinned"] = True
-        save_users(users)
-        # Сохраняем реферальную связь (бонус начислится после первого сеанса друга)
-        if ref_id:
-            saved = save_referral_link(ref_id, user_id)
-            if saved:
-                try:
-                    await bot.send_message(
-                        int(ref_id),
-                        "👋 Твой друг перешёл по твоей ссылке\\!\n"
-                        "Бонусный сеанс начислится, когда друг пройдёт свою первую консультацию\\. 🌟",
-                        parse_mode="MarkdownV2"
-                    )
-                except Exception:
-                    pass
+    # Сохраняем реферальную связь (бонус начислится после первого сеанса друга)
+    if ref_id:
+        saved = save_referral_link(ref_id, user_id)
+        if saved:
+            try:
+                await bot.send_message(
+                    int(ref_id),
+                    "👋 Твой друг перешёл по твоей ссылке\\!\n"
+                    "Бонусный сеанс начислится, когда друг пройдёт свою первую консультацию\\. 🌟",
+                    parse_mode="MarkdownV2"
+                )
+            except Exception:
+                pass
 
 # Админ-команды (/user, /users, /stats) живут в отдельном боте mainAdmin.py
 
@@ -2788,7 +2804,7 @@ async def consultations_menu(message: Message):
         reply_markup=get_consultations_keyboard()
     )
 
-@dp.message(F.text == "🎴 Тарологи")
+@dp.message(F.text.in_({"🎴 Тарологи", "🎴 Задать вопрос тарологу"}))
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
     used = get_sessions_today(user_id)
