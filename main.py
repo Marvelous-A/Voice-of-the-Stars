@@ -1256,6 +1256,26 @@ async def transcribe_voice(ogg_file_path: str) -> str:
         print(f"Ошибка распознавания голоса: {e}")
         return ""
 
+# ====== РЕАЛИСТИЧНАЯ ЗАДЕРЖКА НАБОРА ======
+def calc_typing_delay(text: str, age: int) -> float:
+    """Задержка между частями сообщения, пропорциональная длине и возрасту.
+    Короткое сообщение печатается быстрее, длинное — дольше. Плюс пауза на обдумывание."""
+    chars = len(text or "")
+    if age >= 55:
+        cps = random.uniform(1.0, 1.5)
+    elif age >= 45:
+        cps = random.uniform(1.4, 2.0)
+    elif age >= 35:
+        cps = random.uniform(1.8, 2.6)
+    elif age >= 25:
+        cps = random.uniform(2.2, 3.2)
+    else:
+        cps = random.uniform(2.6, 3.8)
+    thinking = random.uniform(3, 7)
+    delay = chars / cps + thinking
+    return max(5.0, min(150.0, delay))
+
+
 # ====== СТИЛЬ НАБОРА ПО ВОЗРАСТУ ======
 def get_age_typing_style(age: int) -> str:
     if age >= 57:
@@ -1494,11 +1514,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
                 parts = [p.strip() for p in answer.split("|||") if p.strip()]
                 await bot.send_message(user_id, f"🔯 {tarologist['name']}:\n\n{parts[0]}")
                 for part in parts[1:]:
-                    if age >= 40:
-                        await asyncio.sleep(random.randint(25, 35))
-                    else:
-                        length_bonus = 10 + min(5, len(part) // 30)
-                        await asyncio.sleep(random.randint(8, 10) + length_bonus)
+                    await asyncio.sleep(calc_typing_delay(part, age))
                     await bot.send_message(user_id, part)
             else:
                 full_text = f"🔯 {tarologist['name']}:\n\n{answer}"
@@ -1670,11 +1686,7 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
                 parts = [p.strip() for p in answer.split("|||") if p.strip()]
                 await bot.send_message(user_id, f"🌟 {astrologer['name']}:\n\n{parts[0]}")
                 for part in parts[1:]:
-                    if age >= 40:
-                        await asyncio.sleep(random.randint(25, 35))
-                    else:
-                        length_bonus = 10 + min(5, len(part) // 30)
-                        await asyncio.sleep(random.randint(8, 10) + length_bonus)
+                    await asyncio.sleep(calc_typing_delay(part, age))
                     await bot.send_message(user_id, part)
             else:
                 full_text = f"🌟 {astrologer['name']}:\n\n{answer}"
@@ -1981,11 +1993,7 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         for part in parts[1:]:
             if user_id_str not in ACTIVE_SESSIONS:
                 break
-            if age >= 40:
-                await asyncio.sleep(random.randint(20, 35))
-            else:
-                length_bonus = 10 + min(5, len(part) // 30)
-                await asyncio.sleep(random.randint(8, 10) + length_bonus)
+            await asyncio.sleep(calc_typing_delay(part, age))
             # Проверяем повторно — таймаут мог сработать пока ждали
             if user_id_str not in ACTIVE_SESSIONS:
                 break
