@@ -166,6 +166,74 @@ def save_pending_reviews(pending: dict) -> None:
         json.dump(pending, f, ensure_ascii=False, indent=2)
 
 
+def save_users(users: dict) -> None:
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+
+def save_consultation_requests(requests: list) -> None:
+    with open(CONSULTATION_REQUESTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(requests, f, ensure_ascii=False, indent=2)
+
+
+def _author_username(author: str) -> str:
+    """Из строки `@username (Имя)` / `@username` достаёт голый username в нижнем регистре."""
+    author = (author or "").strip()
+    if not author.startswith("@"):
+        return ""
+    return author[1:].split(" ", 1)[0].lower()
+
+
+def purge_user(uid: str) -> dict:
+    """Удаляет пользователя и связанные с ним записи. Возвращает сводку по удалённому."""
+    stats = {"users": 0, "requests": 0, "pending_reviews": 0, "reviews": 0, "username": ""}
+    users = load_users()
+    user_data = users.pop(uid, None)
+    if user_data is None:
+        return stats
+    save_users(users)
+    stats["users"] = 1
+    username = (user_data.get("username") or "").lstrip("@").lower()
+    stats["username"] = username
+
+    try:
+        requests = load_consultation_requests()
+        filtered = [r for r in requests if str(r.get("user_id", "")) != uid]
+        removed = len(requests) - len(filtered)
+        if removed:
+            save_consultation_requests(filtered)
+            stats["requests"] = removed
+    except Exception as e:
+        print(f"[purge_user] consultation_requests: {e}")
+
+    if username:
+        try:
+            pending = load_pending_reviews()
+            to_remove = [rid for rid, r in pending.items()
+                         if _author_username(r.get("author", "")) == username]
+            for rid in to_remove:
+                pending.pop(rid, None)
+            if to_remove:
+                save_pending_reviews(pending)
+                stats["pending_reviews"] = len(to_remove)
+        except Exception as e:
+            print(f"[purge_user] pending_reviews: {e}")
+
+        try:
+            reviews = load_reviews()
+            before = len(reviews)
+            reviews = [r for r in reviews
+                       if _author_username(r.get("author", "")) != username]
+            removed = before - len(reviews)
+            if removed:
+                save_reviews(reviews)
+                stats["reviews"] = removed
+        except Exception as e:
+            print(f"[purge_user] reviews: {e}")
+
+    return stats
+
+
 def publish_review(review_id: str) -> bool:
     """Переносит отзыв из pending в reviews.json. Возвращает True если успешно."""
     pending = load_pending_reviews()
@@ -319,26 +387,23 @@ def render_users_chunks() -> list[str]:
     return messages
 
 
-def render_user_detail(query: str) -> str:
+def find_user(query: str) -> tuple[str | None, dict | None]:
     query = query.strip().lstrip("@")
+    if not query:
+        return None, None
     users = load_users()
-
-    found_uid = None
-    found_data = None
     for uid, data in users.items():
-        if uid == query or data.get("username", "").lower() == query.lower():
-            found_uid = uid
-            found_data = data
-            break
+        if uid == query or (data.get("username") or "").lower() == query.lower():
+            return uid, data
+    return None, None
 
-    if not found_uid:
-        return f"Пользователь «{query}» не найден.\nИщи по ID или @username."
 
-    activity = found_data.get("activity", {})
-    username = found_data.get("username", "")
-    full_name = found_data.get("full_name", "")
-    sign = found_data.get("sign", "не выбран")
-    joined = found_data.get("joined_at", "")
+def render_user_detail(uid: str, data: dict) -> str:
+    activity = data.get("activity", {})
+    username = data.get("username", "")
+    full_name = data.get("full_name", "")
+    sign = data.get("sign", "не выбран")
+    joined = data.get("joined_at", "")
     joined_str = datetime.fromisoformat(joined).strftime("%d.%m.%Y %H:%M") if joined else "—"
     last_seen = activity.get("last_seen", "")
     last_seen_str = datetime.fromisoformat(last_seen).strftime("%d.%m.%Y %H:%M") if last_seen else "—"
@@ -354,7 +419,7 @@ def render_user_detail(query: str) -> str:
 
     return (
         f"👤 *{user_label}*\n"
-        f"🆔 ID: `{found_uid}`\n"
+        f"🆔 ID: `{uid}`\n"
         f"♈ Знак: {sign}\n"
         f"📅 Зарегистрирован: {joined_str}\n"
         f"🕐 Последняя активность: {last_seen_str}\n\n"
@@ -366,10 +431,23 @@ def render_user_detail(query: str) -> str:
         f"  ✍️ Отправил отзывов: {activity.get('review', 0)}\n"
         f"  📈 Всего действий: {activity.get('total', 0)}\n\n"
         f"🎁 *Реферальная система:*\n"
-        f"  Приглашено друзей: {found_data.get('referrals_total', 0)}\n"
-        f"  Бонусных сеансов осталось: {found_data.get('bonus_sessions', 0)}\n"
-        f"  Пришёл по ссылке от: {found_data.get('referred_by', '—')}"
+        f"  Приглашено друзей: {data.get('referrals_total', 0)}\n"
+        f"  Бонусных сеансов осталось: {data.get('bonus_sessions', 0)}\n"
+        f"  Пришёл по ссылке от: {data.get('referred_by', '—')}"
     )
+
+
+def delete_user_keyboard(uid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🗑 Удалить из базы", callback_data=f"deluser_ask_{uid}"),
+    ]])
+
+
+def delete_confirm_keyboard(uid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, удалить",    callback_data=f"deluser_ok_{uid}"),
+        InlineKeyboardButton(text="❌ Отмена",          callback_data=f"deluser_no_{uid}"),
+    ]])
 
 
 # ====== ХЭНДЛЕРЫ ======
@@ -563,6 +641,69 @@ async def cb_edit_review(callback: CallbackQuery):
     await callback.answer()
 
 
+# ====== УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ ======
+@dp.callback_query(F.data.startswith("deluser_ask_"))
+async def cb_delete_user_ask(callback: CallbackQuery):
+    uid = callback.data.replace("deluser_ask_", "")
+    data = load_users().get(uid)
+    if not data:
+        await callback.answer("Пользователь не найден (уже удалён?).", show_alert=True)
+        return
+    username = data.get("username") or ""
+    full_name = data.get("full_name") or ""
+    if username:
+        label = f"@{username}"
+        if full_name:
+            label += f" ({full_name})"
+        label += f" [ID {uid}]"
+    elif full_name:
+        label = f"{full_name} [ID {uid}]"
+    else:
+        label = f"ID {uid}"
+    await callback.message.answer(
+        f"⚠️ *Удалить пользователя {label}?*\n\n"
+        f"Будут стёрты безвозвратно:\n"
+        f"  • запись в `users.json`\n"
+        f"  • его запросы к специалистам\n"
+        f"  • его отзывы на модерации и опубликованные",
+        parse_mode="Markdown",
+        reply_markup=delete_confirm_keyboard(uid),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("deluser_no_"))
+async def cb_delete_user_cancel(callback: CallbackQuery):
+    await callback.message.edit_text(
+        (callback.message.text or "") + "\n\n❌ Отменено",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("deluser_ok_"))
+async def cb_delete_user_confirm(callback: CallbackQuery):
+    uid = callback.data.replace("deluser_ok_", "")
+    stats = purge_user(uid)
+    if stats["users"] == 0:
+        await callback.message.edit_text(
+            (callback.message.text or "") + "\n\n⚠️ Пользователь не найден (уже удалён?).",
+        )
+        await callback.answer()
+        return
+    summary = (
+        "\n\n✅ *Удалено:*\n"
+        f"  • записей пользователей: {stats['users']}\n"
+        f"  • запросов специалистам: {stats['requests']}\n"
+        f"  • отзывов на модерации: {stats['pending_reviews']}\n"
+        f"  • опубликованных отзывов: {stats['reviews']}"
+    )
+    await callback.message.edit_text(
+        (callback.message.text or "") + summary,
+        parse_mode="Markdown",
+    )
+    await callback.answer("Готово")
+
+
 # Свободный ввод: ожидание запроса «Найти пользователя» или нового текста отзыва.
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_free_text(message: Message):
@@ -592,7 +733,18 @@ async def handle_free_text(message: Message):
     pending = PENDING_INPUT.get(admin_id)
     if pending == "user_query":
         PENDING_INPUT.pop(admin_id, None)
-        await message.answer(render_user_detail(message.text or ""), parse_mode="Markdown")
+        query = (message.text or "").strip()
+        uid, data = find_user(query)
+        if not uid:
+            await message.answer(
+                f"Пользователь «{query}» не найден.\nИщи по ID или @username."
+            )
+            return
+        await message.answer(
+            render_user_detail(uid, data),
+            parse_mode="Markdown",
+            reply_markup=delete_user_keyboard(uid),
+        )
         return
     await message.answer("Выбери действие кнопкой 👇", reply_markup=get_admin_keyboard())
 
