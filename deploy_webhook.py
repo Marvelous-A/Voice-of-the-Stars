@@ -14,13 +14,10 @@ Set WEBHOOK_SECRET in .env (same value as in GitHub webhook settings).
 
 import hashlib
 import hmac
-import json
 import os
-import socket
 import subprocess
-import sys
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
 
@@ -33,6 +30,11 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = "/home/bot"
 BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
 CODE_FILES = ["main.py", "mainAdmin.py", "requirements.txt", "descriptions.json"]
+
+# Чтобы мусорные сканеры не могли подвесить однопоточный сервер:
+SOCKET_TIMEOUT_SEC = 10               # молчуны и медленные клиенты отваливаются
+MAX_BODY_BYTES = 5 * 1024 * 1024      # GitHub-пейлоады сильно меньше 5 МБ
+LISTEN_BACKLOG = 64                   # default 5 переполнялся при атаках сканерами
 
 
 def verify_signature(payload: bytes, signature: str) -> bool:
@@ -87,41 +89,57 @@ def deploy():
 
 
 class WebhookHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        payload = self.rfile.read(length)
-        signature = self.headers.get("X-Hub-Signature-256", "")
+    # Применяется автоматически в StreamRequestHandler.setup() к каждому соединению
+    timeout = SOCKET_TIMEOUT_SEC
 
-        if not verify_signature(payload, signature):
-            self.send_response(403)
+    def _reply(self, code: int, body: bytes = b""):
+        try:
+            self.send_response(code)
             self.end_headers()
-            self.wfile.write(b"Invalid signature")
+            if body:
+                self.wfile.write(body)
+        except OSError:
+            pass  # клиент уже отвалился
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            self._reply(400, b"Bad Content-Length")
+            return
+        if length <= 0 or length > MAX_BODY_BYTES:
+            self._reply(413, b"Payload too large or empty")
+            return
+
+        try:
+            payload = self.rfile.read(length)
+        except OSError:
+            return  # таймаут/обрыв соединения
+
+        if not verify_signature(payload, self.headers.get("X-Hub-Signature-256", "")):
+            self._reply(403, b"Invalid signature")
             return
 
         event = self.headers.get("X-GitHub-Event", "")
         if event == "push":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Deploying...")
+            self._reply(200, b"Deploying...")
             threading.Thread(target=deploy, daemon=True).start()
         else:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(f"Ignored event: {event}".encode())
+            self._reply(200, f"Ignored event: {event}".encode())
 
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Webhook listener is running")
+        self._reply(200, b"Webhook listener is running")
 
 
-class ReusableHTTPServer(HTTPServer):
+class ReusableThreadingServer(ThreadingHTTPServer):
     allow_reuse_address = True
     allow_reuse_port = True
+    daemon_threads = True              # не ждать висящие треды при shutdown
+    request_queue_size = LISTEN_BACKLOG
 
 
 if __name__ == "__main__":
-    server = ReusableHTTPServer(("0.0.0.0", PORT), WebhookHandler)
+    server = ReusableThreadingServer(("0.0.0.0", PORT), WebhookHandler)
     print(f"Webhook server listening on port {PORT}", flush=True)
     try:
         server.serve_forever()
