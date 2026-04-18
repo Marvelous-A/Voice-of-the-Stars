@@ -18,8 +18,9 @@ from os import getenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
-from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
-                           KeyboardButton, Message, ReplyKeyboardMarkup)
+from aiogram.types import (CallbackQuery, InlineKeyboardButton,
+                           InlineKeyboardMarkup, KeyboardButton, Message,
+                           ReplyKeyboardMarkup)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -53,6 +54,9 @@ dp.callback_query.filter(F.from_user.id == ADMIN_ID)
 # Память: {admin_id: "user_query"} — ждём ввод ID/@username после кнопки «Найти пользователя»
 PENDING_INPUT: dict[int, str] = {}
 
+# {admin_id: review_id} — администратор редактирует текст отзыва
+WAITING_REVIEW_EDIT: dict[int, str] = {}
+
 # Кэш username основного бота — получаем через getMe при старте
 MAIN_BOT_USERNAME: str = ""
 
@@ -60,6 +64,7 @@ MAIN_BOT_USERNAME: str = ""
 BTN_STATS = "📊 Статистика"
 BTN_USERS = "👥 Все пользователи"
 BTN_FIND = "🔍 Найти пользователя"
+BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
 
@@ -69,6 +74,7 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_STATS)],
             [KeyboardButton(text=BTN_USERS), KeyboardButton(text=BTN_FIND)],
+            [KeyboardButton(text=BTN_PENDING)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_REFRESH)],
         ],
         resize_keyboard=True,
@@ -136,6 +142,54 @@ def load_pending_reviews() -> dict:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def save_reviews(reviews: list) -> None:
+    with open(REVIEWS_FILE, "w", encoding="utf-8") as f:
+        json.dump(reviews, f, ensure_ascii=False, indent=2)
+
+
+def save_pending_reviews(pending: dict) -> None:
+    with open(PENDING_REVIEWS_FILE, "w", encoding="utf-8") as f:
+        json.dump(pending, f, ensure_ascii=False, indent=2)
+
+
+def publish_review(review_id: str) -> bool:
+    """Переносит отзыв из pending в reviews.json. Возвращает True если успешно."""
+    pending = load_pending_reviews()
+    if review_id not in pending:
+        return False
+    review = pending.pop(review_id)
+    save_pending_reviews(pending)
+    reviews = load_reviews()
+    reviews.append({
+        "author": review["author"],
+        "tag": review["tag"],
+        "text": review["text"],
+        "published_at": datetime.now().isoformat(),
+    })
+    save_reviews(reviews)
+    return True
+
+
+def moderation_keyboard(review_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"radmin_ok_{review_id}"),
+            InlineKeyboardButton(text="❌ Отклонить",   callback_data=f"radmin_no_{review_id}"),
+        ],
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"radmin_edit_{review_id}")],
+    ])
+
+
+def render_pending_review(review_id: str, review: dict) -> str:
+    return (
+        f"⭐ *Отзыв на модерацию*\n\n"
+        f"🆔 `{review_id}`\n"
+        f"👤 *Автор:* {review['author']}\n"
+        f"🏷 *Тема:* {review['tag']}\n\n"
+        f"💬 *Текст:*\n{review['text']}"
+    )
 
 
 # ====== РЕНДЕРЫ ======
@@ -319,34 +373,40 @@ async def start(message: Message):
     )
 
 
+def _reset_input_state(admin_id: int) -> None:
+    PENDING_INPUT.pop(admin_id, None)
+    WAITING_REVIEW_EDIT.pop(admin_id, None)
+
+
 @dp.message(F.text == BTN_REFRESH)
 async def handle_refresh(message: Message):
-    PENDING_INPUT.pop(message.from_user.id, None)
+    _reset_input_state(message.from_user.id)
     await message.answer("Меню обновлено 👇", reply_markup=get_admin_keyboard())
 
 
 @dp.message(F.text == BTN_STATS)
 async def handle_stats(message: Message):
-    PENDING_INPUT.pop(message.from_user.id, None)
+    _reset_input_state(message.from_user.id)
     await message.answer(render_stats(), parse_mode="Markdown")
 
 
 @dp.message(F.text == BTN_USERS)
 async def handle_users_list(message: Message):
-    PENDING_INPUT.pop(message.from_user.id, None)
+    _reset_input_state(message.from_user.id)
     for chunk in render_users_chunks():
         await message.answer(chunk)
 
 
 @dp.message(F.text == BTN_FIND)
 async def handle_find_prompt(message: Message):
+    WAITING_REVIEW_EDIT.pop(message.from_user.id, None)
     PENDING_INPUT[message.from_user.id] = "user_query"
     await message.answer("Введи ID или @username пользователя:")
 
 
 @dp.message(F.text == BTN_STATUS)
 async def handle_status(message: Message):
-    PENDING_INPUT.pop(message.from_user.id, None)
+    _reset_input_state(message.from_user.id)
     users = load_users()
     pending = len(load_pending_reviews())
     await message.answer(
@@ -358,12 +418,111 @@ async def handle_status(message: Message):
     )
 
 
-# Свободный ввод — используется только когда ждём запрос для «Найти пользователя».
+@dp.message(F.text == BTN_PENDING)
+async def handle_pending_reviews(message: Message):
+    _reset_input_state(message.from_user.id)
+    pending = load_pending_reviews()
+    if not pending:
+        await message.answer("🎉 Нет отзывов на модерации — всё разобрано.")
+        return
+    await message.answer(f"⭐ Отзывов ожидают модерации: *{len(pending)}*", parse_mode="Markdown")
+    for rid, review in pending.items():
+        await message.answer(
+            render_pending_review(rid, review),
+            parse_mode="Markdown",
+            reply_markup=moderation_keyboard(rid),
+        )
+
+
+# ====== МОДЕРАЦИЯ ОТЗЫВОВ ======
+@dp.callback_query(F.data.startswith("radmin_ok_"))
+async def cb_approve_review(callback: CallbackQuery):
+    review_id = callback.data.replace("radmin_ok_", "")
+    if publish_review(review_id):
+        await callback.message.edit_text(
+            (callback.message.text or "") + "\n\n✅ Опубликован",
+        )
+    else:
+        await callback.message.edit_text(
+            (callback.message.text or "") + "\n\n⚠️ Отзыв не найден (уже обработан?)",
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("radmin_no_"))
+async def cb_reject_review(callback: CallbackQuery):
+    review_id = callback.data.replace("radmin_no_", "")
+    pending = load_pending_reviews()
+    if review_id in pending:
+        pending.pop(review_id)
+        save_pending_reviews(pending)
+        await callback.message.edit_text(
+            (callback.message.text or "") + "\n\n❌ Отклонён",
+        )
+    else:
+        await callback.message.edit_text(
+            (callback.message.text or "") + "\n\n⚠️ Отзыв не найден (уже обработан?)",
+        )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("radmin_edit_cancel_"))
+async def cb_edit_cancel(callback: CallbackQuery):
+    WAITING_REVIEW_EDIT.pop(callback.from_user.id, None)
+    await callback.message.answer("Редактирование отменено.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("radmin_edit_"))
+async def cb_edit_review(callback: CallbackQuery):
+    review_id = callback.data.replace("radmin_edit_", "")
+    pending = load_pending_reviews()
+    if review_id not in pending:
+        await callback.answer("Отзыв не найден (уже обработан?).", show_alert=True)
+        return
+    WAITING_REVIEW_EDIT[callback.from_user.id] = review_id
+    current_text = pending[review_id]["text"]
+    await callback.message.answer(
+        f"✏️ *Редактирование отзыва*\n\n"
+        f"Текущий текст:\n_{current_text}_\n\n"
+        f"Отправь новый текст отзыва. Автор и тема останутся без изменений.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"radmin_edit_cancel_{review_id}"),
+        ]]),
+    )
+    await callback.answer()
+
+
+# Свободный ввод: ожидание запроса «Найти пользователя» или нового текста отзыва.
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_free_text(message: Message):
-    pending = PENDING_INPUT.get(message.from_user.id)
+    admin_id = message.from_user.id
+
+    review_id = WAITING_REVIEW_EDIT.get(admin_id)
+    if review_id:
+        new_text = (message.text or "").strip()
+        if len(new_text) < 10:
+            await message.answer("Слишком короткий текст. Попробуй ещё раз.")
+            return
+        pending = load_pending_reviews()
+        if review_id not in pending:
+            WAITING_REVIEW_EDIT.pop(admin_id, None)
+            await message.answer("Отзыв не найден — возможно, уже обработан.")
+            return
+        pending[review_id]["text"] = new_text
+        save_pending_reviews(pending)
+        WAITING_REVIEW_EDIT.pop(admin_id, None)
+        await message.answer(
+            f"✅ Текст обновлён. Новый вариант:\n\n_{new_text}_\n\nЧто делаем с отзывом?",
+            parse_mode="Markdown",
+            reply_markup=moderation_keyboard(review_id),
+        )
+        return
+
+    pending = PENDING_INPUT.get(admin_id)
     if pending == "user_query":
-        PENDING_INPUT.pop(message.from_user.id, None)
+        PENDING_INPUT.pop(admin_id, None)
         await message.answer(render_user_detail(message.text or ""), parse_mode="Markdown")
         return
     await message.answer("Выбери действие кнопкой 👇", reply_markup=get_admin_keyboard())
