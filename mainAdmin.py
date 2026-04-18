@@ -12,13 +12,14 @@
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta
 from os import getenv
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
-from aiogram.types import (CallbackQuery, InlineKeyboardButton,
+from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton,
                            InlineKeyboardMarkup, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 from dotenv import load_dotenv
@@ -41,6 +42,7 @@ if not ADMIN_ID:
 USERS_FILE = "users.json"
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
+CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
 
 session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=ADMIN_BOT_TOKEN, session=session)
@@ -64,6 +66,7 @@ MAIN_BOT_USERNAME: str = ""
 BTN_STATS = "📊 Статистика"
 BTN_USERS = "👥 Все пользователи"
 BTN_FIND = "🔍 Найти пользователя"
+BTN_REQUESTS = "📩 Запросы к специалистам"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
@@ -73,6 +76,7 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_REQUESTS)],
             [KeyboardButton(text=BTN_USERS), KeyboardButton(text=BTN_FIND)],
             [KeyboardButton(text=BTN_PENDING)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_REFRESH)],
@@ -142,6 +146,14 @@ def load_pending_reviews() -> dict:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def load_consultation_requests() -> list:
+    try:
+        with open(CONSULTATION_REQUESTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
 
 def save_reviews(reviews: list) -> None:
@@ -409,13 +421,70 @@ async def handle_status(message: Message):
     _reset_input_state(message.from_user.id)
     users = load_users()
     pending = len(load_pending_reviews())
+    requests_total = len(load_consultation_requests())
     await message.answer(
         f"✅ Админ-бот работает.\n"
         f"Пользователей в базе: *{len(users)}*\n"
+        f"Запросов к специалистам: *{requests_total}*\n"
         f"Отзывов на модерации: *{pending}*\n"
         f"Время: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
         parse_mode="Markdown",
     )
+
+
+def render_request_card(req: dict) -> str:
+    type_label = "🎴 Таролог" if req.get("type") == "tarot" else "⭐ Астролог"
+    username = req.get("username") or ""
+    full_name = req.get("full_name") or ""
+    if username:
+        user_label = f"@{username}"
+        if full_name:
+            user_label += f" ({full_name})"
+    elif full_name:
+        user_label = full_name
+    else:
+        user_label = f"ID {req.get('user_id', '—')}"
+    voice_marker = " 🎤" if req.get("is_voice") else ""
+    flagged_marker = " ⚠️" if req.get("is_flagged") else ""
+    created = req.get("created_at", "")
+    try:
+        created_str = datetime.fromisoformat(created).strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        created_str = created or "—"
+    return (
+        f"📩 Запрос {req.get('id', '')}{voice_marker}{flagged_marker}\n"
+        f"👤 {user_label} [ID {req.get('user_id', '—')}]\n"
+        f"{type_label}: {req.get('specialist_name', '—')}\n"
+        f"🕐 {created_str}\n\n"
+        f"💬 Текст:\n{req.get('text', '')}"
+    )
+
+
+@dp.message(F.text == BTN_REQUESTS)
+async def handle_requests(message: Message):
+    _reset_input_state(message.from_user.id)
+    requests = load_consultation_requests()
+    if not requests:
+        await message.answer("📭 Запросов от пользователей пока нет.")
+        return
+
+    last = requests[-20:]
+    await message.answer(
+        f"📩 Последние запросы к специалистам ({len(last)} из {len(requests)}, новые — внизу):"
+    )
+    for req in last:
+        await message.answer(render_request_card(req))
+        voice_path = req.get("voice_path")
+        if req.get("is_voice") and voice_path and os.path.exists(voice_path):
+            try:
+                await bot.send_voice(
+                    chat_id=message.chat.id,
+                    voice=FSInputFile(voice_path),
+                    caption=f"🎤 Голосовое к запросу {req.get('id', '')}",
+                )
+            except Exception as e:
+                print(f"[handle_requests] voice {req.get('id')}: {e}")
+                await message.answer("⚠️ Не удалось проиграть голосовое сообщение.")
 
 
 @dp.message(F.text == BTN_PENDING)

@@ -14,7 +14,7 @@ import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
-                            CallbackQuery, Voice)
+                            CallbackQuery, Voice, FSInputFile)
 from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 from os import getenv
@@ -55,6 +55,73 @@ async def notify_admin(text: str, parse_mode: str | None = None):
     except Exception as e:
         print(f"[notify_admin] {e}")
 
+
+def load_consultation_requests() -> list:
+    try:
+        with open(CONSULTATION_REQUESTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_consultation_requests(requests: list) -> None:
+    with open(CONSULTATION_REQUESTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(requests, f, ensure_ascii=False, indent=2)
+
+
+async def record_consultation_request(
+    user, specialist_type: str, specialist: dict, text: str,
+    voice_path: str | None = None, is_flagged: bool = False,
+):
+    """Сохраняет запрос пользователя к тарологу/астрологу и шлёт уведомление в админ-бот."""
+    request_id = uuid.uuid4().hex[:8]
+    record = {
+        "id": request_id,
+        "user_id": user.id,
+        "username": user.username or "",
+        "full_name": user.full_name or "",
+        "type": specialist_type,
+        "specialist_id": specialist["id"],
+        "specialist_name": specialist["name"],
+        "text": text,
+        "is_voice": voice_path is not None,
+        "voice_path": voice_path,
+        "is_flagged": is_flagged,
+        "created_at": datetime.now().isoformat(),
+    }
+    requests = load_consultation_requests()
+    requests.append(record)
+    requests = requests[-500:]
+    save_consultation_requests(requests)
+
+    if not ADMIN_ID or admin_bot is None:
+        return
+
+    type_label = "🎴 Таролог" if specialist_type == "tarot" else "⭐ Астролог"
+    user_label = f"@{user.username}" if user.username else (user.full_name or f"ID {user.id}")
+    voice_marker = " 🎤" if voice_path else ""
+    flagged_marker = " ⚠️" if is_flagged else ""
+
+    body = (
+        f"📩 Новый запрос специалисту{voice_marker}{flagged_marker}\n\n"
+        f"🆔 {request_id}\n"
+        f"👤 {user_label} [ID {user.id}]\n"
+        f"{type_label}: {specialist['name']}\n"
+        f"🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"💬 Текст запроса:\n{text}"
+    )
+
+    try:
+        await admin_bot.send_message(ADMIN_ID, body)
+        if voice_path and os.path.exists(voice_path):
+            await admin_bot.send_voice(
+                chat_id=ADMIN_ID,
+                voice=FSInputFile(voice_path),
+                caption=f"🎤 Голосовое к запросу {request_id}",
+            )
+    except Exception as e:
+        print(f"[record_consultation_request] {e}")
+
 # ====== ФАЙЛЫ ======
 USERS_FILE = "users.json"
 FORECAST_FILE = "forecast.json"
@@ -62,6 +129,9 @@ DESCRIPTIONS_FILE = "descriptions.json"
 TAROT_HISTORY_FILE = "tarot_history.json"
 ASTRO_HISTORY_FILE = "astro_history.json"
 COMPAT_FILE = "compatibility.json"
+CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
+VOICE_REQUESTS_DIR = "voice_requests"
+os.makedirs(VOICE_REQUESTS_DIR, exist_ok=True)
 
 # ====== ЗНАКИ ЗОДИАКА ======
 SIGNS = ["Овен", "Телец", "Близнецы", "Рак",
@@ -2986,12 +3056,11 @@ async def handle_voice(message: Message):
 
     text = await transcribe_voice(file_path)
 
-    try:
-        os.remove(file_path)
-    except:
-        pass
-
     if not text:
+        try:
+            os.remove(file_path)
+        except:
+            pass
         await message.answer(
             "😔 К сожалению, не удалось доставить голосовое сообщение до специалиста. "
             "Пожалуйста, напишите ваш вопрос текстом. Извините за неполадки!",
@@ -3002,8 +3071,24 @@ async def handle_voice(message: Message):
     await message.answer(f"📝 Распознал твоё сообщение:\n\n_{text}_", parse_mode="Markdown")
 
     if user_id in ACTIVE_SESSIONS:
+        try:
+            os.remove(file_path)
+        except:
+            pass
         asyncio.create_task(send_session_reply(message.from_user.id, text))
         return
+
+    # Сохраняем голосовое навсегда — админ сможет прослушать его в админ-боте
+    saved_voice_path = os.path.join(VOICE_REQUESTS_DIR, f"req_{uuid.uuid4().hex[:8]}.ogg")
+    try:
+        os.replace(file_path, saved_voice_path)
+    except Exception as e:
+        print(f"[handle_voice] save voice: {e}")
+        saved_voice_path = None
+        try:
+            os.remove(file_path)
+        except:
+            pass
 
     if user_id in WAITING_ASTRO_STORY:
         astro_id = WAITING_ASTRO_STORY.pop(user_id)
@@ -3023,6 +3108,10 @@ async def handle_voice(message: Message):
                 "от их использования. Тем не менее мы вас ценим как клиента, "
                 f"и {astrologer['name']} всё равно ответит на ваш вопрос."
             )
+        asyncio.create_task(record_consultation_request(
+            message.from_user, "astro", astrologer, text,
+            voice_path=saved_voice_path, is_flagged=is_flagged,
+        ))
         asyncio.create_task(send_astro_answer_delayed(message.from_user.id, astrologer, text, is_flagged=is_flagged))
         return
 
@@ -3048,6 +3137,10 @@ async def handle_voice(message: Message):
             f"и {tarologist['name']} всё равно ответит на ваш вопрос."
         )
 
+    asyncio.create_task(record_consultation_request(
+        message.from_user, "tarot", tarologist, text,
+        voice_path=saved_voice_path, is_flagged=is_flagged,
+    ))
     asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, text, is_flagged=is_flagged))
 
 # ====== ЗАВЕРШЕНИЕ СЕАНСА ПОЛЬЗОВАТЕЛЕМ ======
@@ -3167,6 +3260,9 @@ async def handle_story(message: Message):
                 "от их использования. Тем не менее мы вас ценим как клиента, "
                 f"и {astrologer['name']} всё равно ответит на ваш вопрос."
             )
+        asyncio.create_task(record_consultation_request(
+            message.from_user, "astro", astrologer, message.text, is_flagged=is_flagged,
+        ))
         asyncio.create_task(send_astro_answer_delayed(message.from_user.id, astrologer, message.text, is_flagged=is_flagged))
         return
 
@@ -3195,6 +3291,9 @@ async def handle_story(message: Message):
             f"и {tarologist['name']} всё равно ответит на ваш вопрос."
         )
 
+    asyncio.create_task(record_consultation_request(
+        message.from_user, "tarot", tarologist, message.text, is_flagged=is_flagged,
+    ))
     asyncio.create_task(send_tarot_answer_delayed(message.from_user.id, tarologist, message.text, is_flagged=is_flagged))
 
 # ====== HEARTBEAT ======
