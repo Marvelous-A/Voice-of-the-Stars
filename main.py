@@ -3120,7 +3120,7 @@ async def referral_menu(message: Message):
     bonus = user_data.get("bonus_sessions", 0)
     # Считаем друзей, которые пришли но ещё не прошли сеанс
     pending_refs = 0
-    for uid, udata in users.items():
+    for udata in users.values():
         if udata.get("referred_by") == user_id and not udata.get("referral_bonus_granted"):
             pending_refs += 1
     pending_line = f"\n⏳ Ждут первого сеанса: *{pending_refs}*" if pending_refs > 0 else ""
