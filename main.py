@@ -664,7 +664,7 @@ def get_sign_keyboard():
         if i + 1 < len(SIGNS):
             row.append(KeyboardButton(text=SIGNS[i + 1]))
         rows.append(row)
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 def get_main_keyboard():
     buttons = [
@@ -674,14 +674,14 @@ def get_main_keyboard():
         [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="🎁 Друзьям")],
         [KeyboardButton(text="ℹ️ О нас"), KeyboardButton(text="⚙️ Настройки")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
 
 def get_consultations_keyboard():
     buttons = [
         [KeyboardButton(text="🎴 Тарологи"), KeyboardButton(text="⭐ Астрологи")],
         [KeyboardButton(text="🏠 Главное меню")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
 
 def get_settings_keyboard():
     buttons = [
@@ -689,7 +689,7 @@ def get_settings_keyboard():
         [KeyboardButton(text="📄 Оферта"), KeyboardButton(text="📞 Контакты")],
         [KeyboardButton(text="🏠 Главное меню")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
 
 def get_cancel_keyboard():
     return ReplyKeyboardMarkup(
@@ -697,7 +697,8 @@ def get_cancel_keyboard():
             [KeyboardButton(text="❌ Отменить")],
             [KeyboardButton(text="🏠 Главное меню")]
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
+        is_persistent=True
     )
 
 def get_session_keyboard():
@@ -706,13 +707,15 @@ def get_session_keyboard():
             [KeyboardButton(text="🚪 Завершить сеанс")],
             [KeyboardButton(text="🏠 Главное меню")]
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
+        is_persistent=True
     )
 
 def get_back_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="🏠 Главное меню")]],
-        resize_keyboard=True
+        resize_keyboard=True,
+        is_persistent=True
     )
 
 def get_compat_sign_keyboard(step: str, sign1_idx: int = -1):
@@ -3385,6 +3388,16 @@ async def handle_story(message: Message):
         return
 
     if user_id not in WAITING_TAROT_STORY:
+        # Любое нераспознанное сообщение — просто показываем главное меню,
+        # чтобы панель с кнопками всегда была на виду и не требовала /start.
+        users = load_users()
+        if users.get(user_id, {}).get("sign"):
+            await message.answer("Главное меню:", reply_markup=get_main_keyboard())
+        else:
+            await message.answer(
+                "Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:",
+                reply_markup=get_sign_keyboard()
+            )
         return
 
     tarot_id = WAITING_TAROT_STORY.pop(user_id)
