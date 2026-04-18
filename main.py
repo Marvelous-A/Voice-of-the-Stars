@@ -130,6 +130,7 @@ TAROT_HISTORY_FILE = "tarot_history.json"
 ASTRO_HISTORY_FILE = "astro_history.json"
 COMPAT_FILE = "compatibility.json"
 CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
+CHANNEL_STATE_FILE = "channel_state.json"
 VOICE_REQUESTS_DIR = "voice_requests"
 os.makedirs(VOICE_REQUESTS_DIR, exist_ok=True)
 
@@ -2160,9 +2161,34 @@ UNSPLASH_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1571942676516-bcab84649e44?w=800",
 ]
 
-# Память недавно использованных картинок, чтобы не было двух одинаковых подряд
+# Память недавно использованных картинок, чтобы не было двух одинаковых подряд.
+# Персистится в CHANNEL_STATE_FILE, чтобы переживать перезапуски.
 RECENT_IMAGE_URLS: list[str] = []
 MAX_RECENT_IMAGES = 12
+
+
+def _normalize_image_url(url: str) -> str:
+    """Убирает query-параметры из URL: у Pexels одна и та же фотка может приходить
+    с разными ?auto=compress&w=... — без нормализации дедуп их не поймает."""
+    if not url:
+        return ""
+    return url.split("?", 1)[0]
+
+
+def load_channel_state() -> dict:
+    try:
+        with open(CHANNEL_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_channel_state(state: dict) -> None:
+    try:
+        with open(CHANNEL_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[channel_state] save error: {e}")
 
 
 async def pexels_search(query: str, per_page: int = 15) -> list[str]:
@@ -2192,9 +2218,17 @@ async def pexels_search(query: str, per_page: int = 15) -> list[str]:
 
 
 def _remember_image(url: str) -> None:
-    RECENT_IMAGE_URLS.append(url)
+    key = _normalize_image_url(url)
+    RECENT_IMAGE_URLS.append(key)
     while len(RECENT_IMAGE_URLS) > MAX_RECENT_IMAGES:
         RECENT_IMAGE_URLS.pop(0)
+    state = load_channel_state()
+    state["recent_images"] = RECENT_IMAGE_URLS
+    save_channel_state(state)
+
+
+def _is_fresh_image(url: str) -> bool:
+    return bool(url) and _normalize_image_url(url) not in RECENT_IMAGE_URLS
 
 
 async def get_channel_image(category: str = "") -> str:
@@ -2208,14 +2242,14 @@ async def get_channel_image(category: str = "") -> str:
     # До трёх попыток разными запросами
     for q in queries[:3]:
         urls = await pexels_search(q)
-        fresh = [u for u in urls if u and u not in RECENT_IMAGE_URLS]
+        fresh = [u for u in urls if _is_fresh_image(u)]
         if fresh:
             img = random.choice(fresh)
             _remember_image(img)
             return img
 
     # Фоллбек: статический список Unsplash (тоже без повторов)
-    fallback = [u for u in UNSPLASH_FALLBACK_IMAGES if u not in RECENT_IMAGE_URLS]
+    fallback = [u for u in UNSPLASH_FALLBACK_IMAGES if _is_fresh_image(u)]
     if not fallback:
         fallback = UNSPLASH_FALLBACK_IMAGES
     img = random.choice(fallback)
@@ -2294,6 +2328,14 @@ async def generate_channel_post(topic: str) -> str:
     return text
 
 
+def _mark_channel_post_time(msk) -> None:
+    """Фиксирует время последнего поста в персистентном state, чтобы после
+    перезапуска бот не постил сразу."""
+    state = load_channel_state()
+    state["last_post"] = msk.isoformat()
+    save_channel_state(state)
+
+
 async def post_to_channel():
     """Генерирует и отправляет пост в канал с подобранной по теме картинкой."""
     if not CHANNEL_ID:
@@ -2343,7 +2385,21 @@ async def scheduler():
 
     forecast_updated_date = today
     morning_sent_date = None
-    last_channel_post = None  # время последнего поста в канал
+
+    # Восстанавливаем состояние автопостинга после возможного рестарта:
+    # recent_images — чтобы не повторить недавнюю картинку,
+    # last_post — чтобы не слать пост сразу после перезапуска.
+    channel_state = load_channel_state()
+    RECENT_IMAGE_URLS.clear()
+    for u in channel_state.get("recent_images", []) or []:
+        RECENT_IMAGE_URLS.append(u)
+    last_channel_post = None
+    last_post_iso = channel_state.get("last_post")
+    if last_post_iso:
+        try:
+            last_channel_post = datetime.fromisoformat(last_post_iso)
+        except Exception:
+            last_channel_post = None
 
     # Если при старте уже прошло 8 утра — отмечаем как отправленное, чтобы не слать повторно
     if msk.hour >= 8:
@@ -2373,6 +2429,7 @@ async def scheduler():
                 should_post = True
             if should_post:
                 last_channel_post = msk
+                _mark_channel_post_time(msk)
                 await post_to_channel()
 
         next_minute = (msk + timedelta(minutes=1)).replace(second=0, microsecond=0)
