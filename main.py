@@ -2526,7 +2526,13 @@ async def start(message: Message):
     else:
         users[user_id]["joined_at"] = datetime.now().isoformat()
         save_users(users)
-        await message.answer("Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:", reply_markup=get_sign_keyboard())
+        await message.answer(
+            "Привет! Я — Голос Звёзд 🌟\n\n"
+            "С чего начнём? Выбери специалиста — таролог поможет с картами, "
+            "астролог разберёт натальную карту и прогноз.\n\n"
+            "Если хочешь сначала посмотреть прогноз по знаку зодиака — нажми «🏠 Главное меню».",
+            reply_markup=get_consultations_keyboard()
+        )
         asyncio.create_task(_notify_new_user(message))
     if need_channel_pin and CHANNEL_URL:
         await send_and_pin_channel_promo(message.chat.id)
@@ -3404,8 +3410,10 @@ async def handle_story(message: Message):
             await message.answer("Главное меню:", reply_markup=get_main_keyboard())
         else:
             await message.answer(
-                "Привет! Я — Голос Звёзд 🌟\nВыбери свой знак зодиака чтобы начать:",
-                reply_markup=get_sign_keyboard()
+                "Привет! Я — Голос Звёзд 🌟\n\n"
+                "Выбери специалиста — таролог или астролог. "
+                "Или нажми «🏠 Главное меню», чтобы посмотреть прогноз по знаку зодиака.",
+                reply_markup=get_consultations_keyboard()
             )
         return
 
