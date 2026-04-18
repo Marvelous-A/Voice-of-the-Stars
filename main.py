@@ -892,7 +892,8 @@ async def check_and_grant_referral_bonus(user_id: str):
                 int(referrer_id),
                 f"🎉 Твой друг *{friend_name}* прошёл первую консультацию\\!\n"
                 f"Тебе начислен *\\+{BONUS_SESSIONS_PER_REFERRAL} бонусный сеанс*\\. 🌟",
-                parse_mode="MarkdownV2"
+                parse_mode="MarkdownV2",
+                reply_markup=get_main_keyboard()
             )
         except Exception:
             pass
@@ -2008,22 +2009,30 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
 
     session["history"].append({"role": "tarot", "text": answer})
 
-    # Отправляем ответ по частям с задержками
+    # Отправляем ответ по частям с задержками.
+    # Клавиатуру get_session_keyboard() привязываем к последнему сообщению,
+    # чтобы панель всегда оставалась на самом свежем сообщении в чате.
     if "|||" in answer:
         parts = [p.strip() for p in answer.split("|||") if p.strip()]
         if user_id_str in ACTIVE_SESSIONS:
-            await bot.send_message(user_id, parts[0])
-        for part in parts[1:]:
+            if len(parts) == 1:
+                await bot.send_message(user_id, parts[0], reply_markup=get_session_keyboard())
+            else:
+                await bot.send_message(user_id, parts[0])
+        for idx, part in enumerate(parts[1:], start=1):
             if user_id_str not in ACTIVE_SESSIONS:
                 break
             await asyncio.sleep(calc_typing_delay(part, age))
-            # Проверяем повторно — таймаут мог сработать пока ждали
             if user_id_str not in ACTIVE_SESSIONS:
                 break
-            await bot.send_message(user_id, part)
+            is_last = idx == len(parts) - 1
+            await bot.send_message(
+                user_id, part,
+                reply_markup=get_session_keyboard() if is_last else None,
+            )
     else:
         if user_id_str in ACTIVE_SESSIONS:
-            await bot.send_message(user_id, answer)
+            await bot.send_message(user_id, answer, reply_markup=get_session_keyboard())
 
     # Разблокируем
     SESSION_BUSY[user_id_str] = False
@@ -2101,7 +2110,7 @@ async def send_morning_notifications():
         sign = user_data["sign"]
         try:
             msg = random.choice(MORNING_TEMPLATES).format(sign=sign)
-            await bot.send_message(int(user_id), msg)
+            await bot.send_message(int(user_id), msg, reply_markup=get_main_keyboard())
         except Exception as e:
             print(f"Ошибка отправки уведомления пользователю {user_id}:", e)
 
