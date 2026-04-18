@@ -1483,6 +1483,21 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 """
         return await ask_ai(prompt, max_tokens=1000)
 
+def strip_dashes_ellipsis(text: str) -> str:
+    """Убирает из ответов специалистов многоточия и тире (длинные/короткие).
+    Пользователи просили не использовать их совсем."""
+    if not text:
+        return text
+    text = text.replace('…', '.')
+    text = re.sub(r'\.{2,}', '.', text)
+    text = re.sub(r'(?m)^[ \t]*[—–][ \t]*', '', text)
+    text = re.sub(r'([.!?])[ \t]*[—–][ \t]*', r'\1 ', text)
+    text = re.sub(r'[ \t]*[—–][ \t]*', ', ', text)
+    text = re.sub(r',\s*,', ',', text)
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    return text.strip()
+
+
 # ====== ОТЛОЖЕННАЯ ОТПРАВКА (первый ответ) ======
 async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: str, is_flagged: bool = False):
     age = tarologist.get("age", 35)
@@ -1501,6 +1516,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
     try:
         answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged)
         if answer:
+            answer = strip_dashes_ellipsis(answer)
             save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
             save_user_tarot_message(str(user_id), tarologist["id"], "tarot", answer)
 
@@ -1671,6 +1687,7 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
     try:
         answer = await get_astro_answer(astrologer, user_story, str(user_id), is_flagged=is_flagged)
         if answer:
+            answer = strip_dashes_ellipsis(answer)
             save_user_astro_message(str(user_id), astrologer["id"], "user", user_story)
             save_user_astro_message(str(user_id), astrologer["id"], "astro", answer)
             track_activity(str(user_id), "astro")
@@ -1979,6 +1996,8 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
     if not answer:
         SESSION_BUSY[user_id_str] = False
         return
+
+    answer = strip_dashes_ellipsis(answer)
 
     if session.get("type") == "astro" and _has_anecdote(answer):
         session["anecdote_used"] = True
