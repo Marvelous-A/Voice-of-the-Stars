@@ -79,7 +79,7 @@ MAIN_BOT_USERNAME: str = ""
 BTN_STATS = "📊 Статистика"
 BTN_USERS = "👥 Все пользователи"
 BTN_FIND = "🔍 Найти пользователя"
-BTN_REQUESTS = "📩 Запросы к специалистам"
+BTN_REQUESTS = "📩 Консультации"
 BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_STATUS = "ℹ️ Статус"
@@ -720,6 +720,17 @@ def dialogs_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _split_message_segments(text: str) -> list[str]:
+    """Разбивает сохранённый текст на фактические сообщения (ответы бота шлются через `|||`)."""
+    text = (text or "").strip()
+    if not text:
+        return [""]
+    if "|||" not in text:
+        return [text]
+    segments = [p.strip() for p in text.split("|||") if p.strip()]
+    return segments or [text]
+
+
 def render_dialog_page(dtype: str, user_id: str, spec_id: str, page: int) -> tuple[str, int, int]:
     messages = get_dialog_messages(dtype, user_id, spec_id)
     total = len(messages)
@@ -745,18 +756,15 @@ def render_dialog_page(dtype: str, user_id: str, spec_id: str, page: int) -> tup
     parts = [header]
     for m in chunk:
         role = m.get("role", "")
-        text = (m.get("text") or "").strip()
-        if len(text) > MSG_PREVIEW_MAX:
-            text = text[:MSG_PREVIEW_MAX] + "…"
         try:
             when = datetime.fromisoformat(m.get("time", "")).strftime("%d.%m %H:%M")
         except Exception:
             when = ""
-        if role == "user":
-            who = f"👤 {ulabel}"
-        else:
-            who = spec_label
-        parts.append(f"———\n{who} · {when}\n{text}")
+        who = f"👤 {ulabel}" if role == "user" else spec_label
+        for seg in _split_message_segments(m.get("text") or ""):
+            if len(seg) > MSG_PREVIEW_MAX:
+                seg = seg[:MSG_PREVIEW_MAX] + "…"
+            parts.append(f"———\n{who} · {when}\n{seg}")
 
     return "\n\n".join(parts), total_pages, total
 
@@ -828,9 +836,10 @@ def build_dialog_txt(dtype: str, user_id: str, spec_id: str) -> tuple[bytes, str
             when = datetime.fromisoformat(m.get("time", "")).strftime("%d.%m.%Y %H:%M")
         except Exception:
             when = m.get("time", "")
-        lines.append(f"[{when}] {who}:")
-        lines.append((m.get("text") or "").rstrip())
-        lines.append("")
+        for seg in _split_message_segments(m.get("text") or ""):
+            lines.append(f"[{when}] {who}:")
+            lines.append(seg.rstrip())
+            lines.append("")
     content = "\n".join(lines).encode("utf-8")
     safe = re.sub(r"[^\w.-]", "_", f"{ulabel.lstrip('@')}_{sname}_{dtype}")
     return content, f"dialog_{safe}.txt"

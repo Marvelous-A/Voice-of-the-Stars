@@ -626,7 +626,8 @@ SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообще
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 5  # максимум сообщений от пользователя в одном сеансе
 MAX_SESSION_PROFANITY = 2  # после стольких грубостей в сеансе — завершаем
-FREE_SESSIONS_LIMIT = 2   # бесплатных сеансов на пользователя (таро + астро вместе)
+FREE_SESSIONS_FIRST_DAY = 2  # сеансов в первый день после регистрации
+FREE_SESSIONS_DAILY = 1      # сеансов в каждые следующие сутки (не накапливаются)
 
 # ====== ЗАПРЕТ ВНЕШНИХ КОНТАКТОВ (вставляется во все промпты) ======
 NO_CONTACTS_RULE = (
@@ -652,6 +653,21 @@ ANECDOTE_RULE = (
     "используй максимум 1 раз на весь ответ, и только если это прямо к месту. "
     "В большинстве ответов (примерно 9 из 10) таких историй НЕТ ВООБЩЕ. "
     "Не вставляй их как шаблонный приём — только если само просится."
+)
+
+FOLLOW_UP_QUESTION_RULE = (
+    "\n\nМЯГКИЙ НАВОДЯЩИЙ ВОПРОС (редко и ненавязчиво):"
+    " иногда — примерно в одном ответе из трёх — можешь завершить короткой, мягкой репликой-вопросом,"
+    " чтобы у человека был повод продолжить разговор."
+    " В большинстве ответов (примерно 2 из 3) вопроса НЕТ ВООБЩЕ — не превращай это в шаблон."
+    " Максимум ОДИН вопрос на весь ответ, в самом конце, отдельным коротким сообщением."
+    " Вопрос должен быть в твоём характере и конкретно про его ситуацию,"
+    " а не дежурное 'расскажи подробнее о своих чувствах'."
+    " Хорошие примеры тона: 'а он сам-то хочет вернуться?', 'ты сама готова ещё бороться или устала?',"
+    " 'давно это началось?'."
+    " Если сообщение человека было очень коротким или эмоционально тяжёлым —"
+    " вопроса лучше не задавать совсем, либо он должен быть максимально бережным."
+    " Не допрашивай, не дави, не выпытывай. Цель — дать зацепку для продолжения, а не интервью."
 )
 
 # ====== VOSK МОДЕЛЬ ======
@@ -808,6 +824,24 @@ def get_sessions_today(user_id: str) -> int:
         return 0
     return daily.get("count", 0)
 
+def _get_first_day_msk(user: dict) -> str | None:
+    """Возвращает дату первого захода пользователя (MSK, ISO YYYY-MM-DD)."""
+    first_day = user.get("first_day_msk")
+    if first_day:
+        return first_day
+    joined = user.get("joined_at")
+    if isinstance(joined, str):
+        return joined.split("T")[0]
+    return None
+
+def get_daily_free_limit(user_id: str) -> int:
+    """Базовый лимит бесплатных сеансов на сегодня: 2 в первый день, 1 в последующие."""
+    users = load_users()
+    user = users.get(user_id, {})
+    today = _msk_now().date().isoformat()
+    first_day = _get_first_day_msk(user) or today
+    return FREE_SESSIONS_FIRST_DAY if first_day == today else FREE_SESSIONS_DAILY
+
 def increment_sessions_today(user_id: str):
     """Увеличивает счётчик дневных сеансов. Списывает бонусный сеанс если базовый лимит исчерпан."""
     users = load_users()
@@ -819,7 +853,8 @@ def increment_sessions_today(user_id: str):
     daily["count"] += 1
     users[user_id]["sessions_daily"] = daily
     # Если превысили базовый лимит — списываем бонусный сеанс
-    if daily["count"] > FREE_SESSIONS_LIMIT:
+    base_limit = get_daily_free_limit(user_id)
+    if daily["count"] > base_limit:
         bonus = users[user_id].get("bonus_sessions", 0)
         if bonus > 0:
             users[user_id]["bonus_sessions"] = bonus - 1
@@ -844,8 +879,8 @@ def get_bonus_sessions(user_id: str) -> int:
     return users.get(user_id, {}).get("bonus_sessions", 0)
 
 def get_effective_session_limit(user_id: str) -> int:
-    """Общий лимит сеансов на сегодня = базовый + бонусные."""
-    return FREE_SESSIONS_LIMIT + get_bonus_sessions(user_id)
+    """Общий лимит сеансов на сегодня = базовый (2 в первый день, 1 дальше) + бонусные."""
+    return get_daily_free_limit(user_id) + get_bonus_sessions(user_id)
 
 def save_referral_link(referrer_id: str, new_user_id: str) -> bool:
     """Сохраняет связь реферер→друг. Бонус начислится когда друг пройдёт первый сеанс."""
@@ -1464,6 +1499,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 {typing_style}
 {NO_CONTACTS_RULE}
 {ANECDOTE_RULE}
+{FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=500)
     else:
@@ -1490,6 +1526,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 {typing_style}
 {NO_CONTACTS_RULE}
 {ANECDOTE_RULE}
+{FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=1000)
 
@@ -1651,6 +1688,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 {typing_style}
 {NO_CONTACTS_RULE}
 {ANECDOTE_RULE}
+{FOLLOW_UP_QUESTION_RULE}
 """
     else:
         prompt = f"""
@@ -1677,6 +1715,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 {typing_style}
 {NO_CONTACTS_RULE}
 {ANECDOTE_RULE}
+{FOLLOW_UP_QUESTION_RULE}
 """
     return await ask_ai(prompt, max_tokens=1100)
 
@@ -1796,6 +1835,7 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 Знаки препинания почти не ставишь. Мысли рваные.
 {typing_style}
 {NO_CONTACTS_RULE}
+{FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=300)
     else:
@@ -1817,6 +1857,7 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 Не строй как мини-эссе. Пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
 {typing_style}
 {NO_CONTACTS_RULE}
+{FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=400)
 
@@ -1876,6 +1917,7 @@ async def get_astro_session_reply(astrologer: dict, user_message: str, session_h
 {typing_style}
 {NO_CONTACTS_RULE}
 {anecdote_block}
+{FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=350)
     else:
@@ -1899,6 +1941,7 @@ async def get_astro_session_reply(astrologer: dict, user_message: str, session_h
 {typing_style}
 {NO_CONTACTS_RULE}
 {anecdote_block}
+{FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=450)
 
@@ -2545,6 +2588,7 @@ async def start(message: Message):
         await message.answer(f"С возвращением! Твой знак: {sign}. 🌟", reply_markup=get_main_keyboard())
     else:
         users[user_id]["joined_at"] = datetime.now().isoformat()
+        users[user_id]["first_day_msk"] = _msk_now().date().isoformat()
         save_users(users)
         await message.answer(
             "Привет! Я — Голос Звёзд 🌟\n\n"
@@ -2813,9 +2857,10 @@ async def tarot_list(message: Message):
     if not is_admin and remaining == 0:
         bonus = get_bonus_sessions(user_id)
         hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
+        base_limit = get_daily_free_limit(user_id)
         await message.answer(
             "🔒 *Лимит сеансов исчерпан*\n\n"
-            f"Базовый лимит: {FREE_SESSIONS_LIMIT} сеанса в день. "
+            f"Базовый лимит: {base_limit} сеанс(а) в день. "
             f"Бонусных сеансов: {bonus}.{hint}\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
@@ -2920,9 +2965,10 @@ async def astro_list(message: Message):
     if not is_admin and remaining == 0:
         bonus = get_bonus_sessions(user_id)
         hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
+        base_limit = get_daily_free_limit(user_id)
         await message.answer(
             "🔒 *Лимит сеансов исчерпан*\n\n"
-            f"Базовый лимит: {FREE_SESSIONS_LIMIT} сеанса в день. "
+            f"Базовый лимит: {base_limit} сеанс(а) в день. "
             f"Бонусных сеансов: {bonus}.{hint}\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
