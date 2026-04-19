@@ -961,7 +961,6 @@ def save_user_tarot_message(user_id: str, tarot_id: str, role: str, text: str):
         "text": text,
         "time": datetime.now().isoformat()
     })
-    history[user_id][tarot_id] = history[user_id][tarot_id][-10:]
     save_tarot_history(history)
 
 def load_astro_history():
@@ -987,7 +986,6 @@ def save_user_astro_message(user_id: str, astro_id: str, role: str, text: str):
         "text": text,
         "time": datetime.now().isoformat()
     })
-    history[user_id][astro_id] = history[user_id][astro_id][-10:]
     save_astro_history(history)
 
 # ====== ОТЗЫВЫ: ОЖИДАЮЩИЕ МОДЕРАЦИИ ======
@@ -1362,7 +1360,7 @@ async def check_profanity(text: str) -> bool:
 
 # ====== ОТВЕТ ТАРОЛОГА (первичный расклад) ======
 async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_flagged: bool = False) -> str:
-    history = get_user_tarot_history(user_id, tarologist["id"])
+    history = get_user_tarot_history(user_id, tarologist["id"])[-10:]
     history_text = ""
     if history:
         now = datetime.now()
@@ -1579,7 +1577,7 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
 
 # ====== АСТРОЛОГИЯ: ПЕРВИЧНЫЙ ОТВЕТ ======
 async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_flagged: bool = False) -> str:
-    history = get_user_astro_history(user_id, astrologer["id"])
+    history = get_user_astro_history(user_id, astrologer["id"])[-10:]
     history_text = ""
     if history:
         now = datetime.now()

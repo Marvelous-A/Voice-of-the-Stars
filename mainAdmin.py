@@ -13,15 +13,16 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from os import getenv
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
-from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton,
-                           InlineKeyboardMarkup, KeyboardButton, Message,
-                           ReplyKeyboardMarkup)
+from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile,
+                           InlineKeyboardButton, InlineKeyboardMarkup,
+                           KeyboardButton, Message, ReplyKeyboardMarkup)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,6 +44,12 @@ USERS_FILE = "users.json"
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
+TAROT_HISTORY_FILE = "tarot_history.json"
+ASTRO_HISTORY_FILE = "astro_history.json"
+
+DIALOGS_PER_PAGE = 8
+MESSAGES_PER_PAGE = 6
+MSG_PREVIEW_MAX = 600
 
 session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=ADMIN_BOT_TOKEN, session=session)
@@ -59,6 +66,12 @@ PENDING_INPUT: dict[int, str] = {}
 # {admin_id: review_id} — администратор редактирует текст отзыва
 WAITING_REVIEW_EDIT: dict[int, str] = {}
 
+# Состояние просмотра переписок: фильтр по пользователю и поисковый запрос
+DIALOG_USER_SCOPE: dict[int, str] = {}
+DIALOG_SEARCH_STATE: dict[int, str] = {}
+# Кэш id специалиста -> имя (строится из consultation_requests.json)
+_SPECIALIST_NAME_CACHE: dict[tuple[str, str], str] = {}
+
 # Кэш username основного бота — получаем через getMe при старте
 MAIN_BOT_USERNAME: str = ""
 
@@ -67,6 +80,7 @@ BTN_STATS = "📊 Статистика"
 BTN_USERS = "👥 Все пользователи"
 BTN_FIND = "🔍 Найти пользователя"
 BTN_REQUESTS = "📩 Запросы к специалистам"
+BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
@@ -76,7 +90,7 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_STATS)],
-            [KeyboardButton(text=BTN_REQUESTS)],
+            [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
             [KeyboardButton(text=BTN_USERS), KeyboardButton(text=BTN_FIND)],
             [KeyboardButton(text=BTN_PENDING)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_REFRESH)],
@@ -186,7 +200,8 @@ def _author_username(author: str) -> str:
 
 def purge_user(uid: str) -> dict:
     """Удаляет пользователя и связанные с ним записи. Возвращает сводку по удалённому."""
-    stats = {"users": 0, "requests": 0, "pending_reviews": 0, "reviews": 0, "username": ""}
+    stats = {"users": 0, "requests": 0, "pending_reviews": 0, "reviews": 0,
+             "tarot_dialogs": 0, "astro_dialogs": 0, "username": ""}
     users = load_users()
     user_data = users.pop(uid, None)
     if user_data is None:
@@ -205,6 +220,24 @@ def purge_user(uid: str) -> dict:
             stats["requests"] = removed
     except Exception as e:
         print(f"[purge_user] consultation_requests: {e}")
+
+    try:
+        tarot_h = load_tarot_history()
+        if uid in tarot_h:
+            stats["tarot_dialogs"] = len(tarot_h[uid])
+            tarot_h.pop(uid, None)
+            save_tarot_history(tarot_h)
+    except Exception as e:
+        print(f"[purge_user] tarot_history: {e}")
+
+    try:
+        astro_h = load_astro_history()
+        if uid in astro_h:
+            stats["astro_dialogs"] = len(astro_h[uid])
+            astro_h.pop(uid, None)
+            save_astro_history(astro_h)
+    except Exception as e:
+        print(f"[purge_user] astro_history: {e}")
 
     if username:
         try:
@@ -438,9 +471,10 @@ def render_user_detail(uid: str, data: dict) -> str:
 
 
 def delete_user_keyboard(uid: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🗑 Удалить из базы", callback_data=f"deluser_ask_{uid}"),
-    ]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Переписки пользователя", callback_data=f"dlg_usr:{uid}")],
+        [InlineKeyboardButton(text="🗑 Удалить из базы",        callback_data=f"deluser_ask_{uid}")],
+    ])
 
 
 def delete_confirm_keyboard(uid: str) -> InlineKeyboardMarkup:
@@ -448,6 +482,358 @@ def delete_confirm_keyboard(uid: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="✅ Да, удалить",    callback_data=f"deluser_ok_{uid}"),
         InlineKeyboardButton(text="❌ Отмена",          callback_data=f"deluser_no_{uid}"),
     ]])
+
+
+# ====== ПЕРЕПИСКИ: ЗАГРУЗКА И РЕНДЕРЫ ======
+def load_tarot_history() -> dict:
+    try:
+        with open(TAROT_HISTORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def load_astro_history() -> dict:
+    try:
+        with open(ASTRO_HISTORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_tarot_history(data: dict) -> None:
+    with open(TAROT_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def save_astro_history(data: dict) -> None:
+    with open(ASTRO_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def specialist_display_name(spec_type: str, spec_id: str) -> str:
+    global _SPECIALIST_NAME_CACHE
+    if not _SPECIALIST_NAME_CACHE:
+        m: dict[tuple[str, str], str] = {}
+        for req in load_consultation_requests():
+            t = req.get("type")
+            sid = req.get("specialist_id")
+            name = req.get("specialist_name")
+            if t and sid and name:
+                m[(t, sid)] = name
+        _SPECIALIST_NAME_CACHE = m
+    return _SPECIALIST_NAME_CACHE.get((spec_type, spec_id), spec_id)
+
+
+def user_display_label(uid: str, users: dict | None = None) -> str:
+    data = (users if users is not None else load_users()).get(uid) or {}
+    username = data.get("username") or ""
+    full_name = data.get("full_name") or ""
+    if username:
+        return f"@{username}"
+    if full_name:
+        return full_name
+    return f"ID {uid}"
+
+
+def build_flagged_set() -> set[tuple[str, str, str]]:
+    """(type, user_id, specialist_id) пар, где хотя бы один запрос был помечен."""
+    result: set[tuple[str, str, str]] = set()
+    for req in load_consultation_requests():
+        if req.get("is_flagged"):
+            result.add((
+                req.get("type", ""),
+                str(req.get("user_id", "")),
+                req.get("specialist_id", ""),
+            ))
+    return result
+
+
+def collect_dialogs(
+    filter_type: str = "all",
+    user_id: str | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    """Собирает сводки по всем диалогам, отсортированные по последней активности."""
+    tarot_h = load_tarot_history() if filter_type != "astro" else {}
+    astro_h = load_astro_history() if filter_type != "tarot" else {}
+    flagged = build_flagged_set()
+    flag_only = filter_type == "flag"
+    search_lower = (search or "").lower().strip()
+
+    dialogs: list[dict] = []
+    for source_type, source in (("tarot", tarot_h), ("astro", astro_h)):
+        for uid, per_spec in source.items():
+            if user_id is not None and uid != user_id:
+                continue
+            for spec_id, messages in per_spec.items():
+                if not messages:
+                    continue
+                is_flag = (source_type, uid, spec_id) in flagged
+                if flag_only and not is_flag:
+                    continue
+                if search_lower and not any(
+                    search_lower in (m.get("text") or "").lower() for m in messages
+                ):
+                    continue
+                last = messages[-1]
+                dialogs.append({
+                    "type": source_type,
+                    "user_id": uid,
+                    "spec_id": spec_id,
+                    "count": len(messages),
+                    "last_time": last.get("time", ""),
+                    "last_text": last.get("text", ""),
+                    "last_role": last.get("role", ""),
+                    "is_flagged": is_flag,
+                })
+    dialogs.sort(key=lambda d: d["last_time"], reverse=True)
+    return dialogs
+
+
+def get_dialog_messages(dtype: str, user_id: str, spec_id: str) -> list[dict]:
+    source = load_tarot_history() if dtype == "tarot" else load_astro_history()
+    return source.get(user_id, {}).get(spec_id, [])
+
+
+def delete_dialog(dtype: str, user_id: str, spec_id: str) -> bool:
+    if dtype == "tarot":
+        history = load_tarot_history()
+        saver = save_tarot_history
+    else:
+        history = load_astro_history()
+        saver = save_astro_history
+    if user_id not in history or spec_id not in history.get(user_id, {}):
+        return False
+    history[user_id].pop(spec_id, None)
+    if not history[user_id]:
+        history.pop(user_id, None)
+    saver(history)
+    return True
+
+
+FILTER_LABELS = {"all": "Все", "tarot": "🎴 Таро", "astro": "⭐ Астро", "flag": "⚠️ С флагом"}
+
+
+def render_dialogs_list(
+    dialogs: list[dict],
+    page: int,
+    filter_type: str,
+    search: str | None,
+    user_scope: str | None,
+) -> str:
+    per_page = DIALOGS_PER_PAGE
+    total_pages = max(1, (len(dialogs) + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    chunk = dialogs[start:start + per_page]
+
+    if user_scope:
+        title = f"💬 Переписки пользователя {user_display_label(user_scope)}"
+    else:
+        title = "💬 Переписки"
+    header_lines = [title]
+    meta = [f"фильтр: {FILTER_LABELS.get(filter_type, 'Все')}"]
+    if search:
+        meta.append(f"поиск: «{search}»")
+    meta.append(f"всего: {len(dialogs)}")
+    meta.append(f"стр. {page + 1}/{total_pages}")
+    header_lines.append(" · ".join(meta))
+
+    if not dialogs:
+        return "\n".join(header_lines) + "\n\nПусто."
+
+    users_cache = load_users()
+    blocks = []
+    for i, d in enumerate(chunk, start=start + 1):
+        ulabel = user_display_label(d["user_id"], users_cache)
+        sname = specialist_display_name(d["type"], d["spec_id"])
+        type_icon = "🎴" if d["type"] == "tarot" else "⭐"
+        try:
+            when = datetime.fromisoformat(d["last_time"]).strftime("%d.%m %H:%M")
+        except Exception:
+            when = "—"
+        preview = (d["last_text"] or "").replace("\n", " ").strip()
+        if len(preview) > 80:
+            preview = preview[:77] + "…"
+        who_mark = "👤" if d["last_role"] == "user" else type_icon
+        flag_mark = " ⚠️" if d.get("is_flagged") else ""
+        blocks.append(
+            f"{i}. {type_icon} {ulabel} → {sname}{flag_mark}\n"
+            f"   {d['count']} сообщ. · {when}\n"
+            f"   {who_mark} {preview}"
+        )
+
+    return "\n".join(header_lines) + "\n\n" + "\n\n".join(blocks)
+
+
+def _cb_dialog_open(d: dict, page: int = 0) -> str:
+    return f"dlg_open:{d['type']}:{d['user_id']}:{d['spec_id']}:{page}"
+
+
+def dialogs_list_keyboard(
+    dialogs: list[dict],
+    page: int,
+    filter_type: str,
+    search: str | None,
+    user_scope: str | None,
+) -> InlineKeyboardMarkup:
+    per_page = DIALOGS_PER_PAGE
+    total_pages = max(1, (len(dialogs) + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    chunk = dialogs[start:start + per_page]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, d in enumerate(chunk, start=start + 1):
+        sname = specialist_display_name(d["type"], d["spec_id"])
+        ulabel = user_display_label(d["user_id"])
+        type_icon = "🎴" if d["type"] == "tarot" else "⭐"
+        label = f"{i}. {type_icon} {ulabel[:14]} → {sname[:12]}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=_cb_dialog_open(d))])
+
+    pag: list[InlineKeyboardButton] = []
+    if page > 0:
+        pag.append(InlineKeyboardButton(text="⬅ Назад", callback_data=f"dlg_list:{filter_type}:{page - 1}"))
+    if page < total_pages - 1:
+        pag.append(InlineKeyboardButton(text="Вперёд ➡", callback_data=f"dlg_list:{filter_type}:{page + 1}"))
+    if pag:
+        rows.append(pag)
+
+    filter_row: list[InlineKeyboardButton] = []
+    for ft, label in FILTER_LABELS.items():
+        if ft == filter_type:
+            continue
+        filter_row.append(InlineKeyboardButton(text=label, callback_data=f"dlg_list:{ft}:0"))
+    if filter_row:
+        rows.append(filter_row)
+
+    tail: list[InlineKeyboardButton] = []
+    if search:
+        tail.append(InlineKeyboardButton(text="✖ Сброс поиска", callback_data="dlg_search_reset"))
+    else:
+        tail.append(InlineKeyboardButton(text="🔍 Поиск", callback_data="dlg_search"))
+    if user_scope:
+        tail.append(InlineKeyboardButton(text="🔁 Все пользователи", callback_data="dlg_scope_reset"))
+    rows.append(tail)
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def render_dialog_page(dtype: str, user_id: str, spec_id: str, page: int) -> tuple[str, int, int]:
+    messages = get_dialog_messages(dtype, user_id, spec_id)
+    total = len(messages)
+    per_page = MESSAGES_PER_PAGE
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    chunk = messages[start:start + per_page]
+
+    ulabel = user_display_label(user_id)
+    sname = specialist_display_name(dtype, spec_id)
+    type_icon = "🎴" if dtype == "tarot" else "⭐"
+    spec_label = f"{type_icon} {sname}"
+
+    header = (
+        f"💬 {ulabel} ↔ {spec_label}\n"
+        f"ID {user_id} · Сообщений: {total} · Стр. {page + 1}/{total_pages}"
+    )
+
+    if not messages:
+        return header + "\n\nДиалог пуст.", total_pages, total
+
+    parts = [header]
+    for m in chunk:
+        role = m.get("role", "")
+        text = (m.get("text") or "").strip()
+        if len(text) > MSG_PREVIEW_MAX:
+            text = text[:MSG_PREVIEW_MAX] + "…"
+        try:
+            when = datetime.fromisoformat(m.get("time", "")).strftime("%d.%m %H:%M")
+        except Exception:
+            when = ""
+        if role == "user":
+            who = f"👤 {ulabel}"
+        else:
+            who = spec_label
+        parts.append(f"———\n{who} · {when}\n{text}")
+
+    return "\n\n".join(parts), total_pages, total
+
+
+def dialog_detail_keyboard(
+    dtype: str, user_id: str, spec_id: str, page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    pag: list[InlineKeyboardButton] = []
+    if page > 0:
+        pag.append(InlineKeyboardButton(
+            text="⬅ Старее",
+            callback_data=f"dlg_open:{dtype}:{user_id}:{spec_id}:{page - 1}",
+        ))
+    if page < total_pages - 1:
+        pag.append(InlineKeyboardButton(
+            text="Новее ➡",
+            callback_data=f"dlg_open:{dtype}:{user_id}:{spec_id}:{page + 1}",
+        ))
+    if pag:
+        rows.append(pag)
+    rows.append([InlineKeyboardButton(
+        text="📎 Выгрузить .txt",
+        callback_data=f"dlg_exp:{dtype}:{user_id}:{spec_id}",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🗑 Удалить диалог",
+        callback_data=f"dlg_delask:{dtype}:{user_id}:{spec_id}",
+    )])
+    rows.append([InlineKeyboardButton(text="⬅ К списку", callback_data="dlg_list:all:0")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def show_dialogs_list(
+    target: Message, admin_id: int, filter_type: str, page: int, edit: bool = False,
+) -> None:
+    user_scope = DIALOG_USER_SCOPE.get(admin_id)
+    search = DIALOG_SEARCH_STATE.get(admin_id)
+    dialogs = collect_dialogs(filter_type=filter_type, user_id=user_scope, search=search)
+    text = render_dialogs_list(dialogs, page, filter_type, search, user_scope)
+    kb = dialogs_list_keyboard(dialogs, page, filter_type, search, user_scope)
+    if edit:
+        try:
+            await target.edit_text(text, reply_markup=kb)
+            return
+        except Exception:
+            pass
+    await target.answer(text, reply_markup=kb)
+
+
+def build_dialog_txt(dtype: str, user_id: str, spec_id: str) -> tuple[bytes, str] | None:
+    messages = get_dialog_messages(dtype, user_id, spec_id)
+    if not messages:
+        return None
+    ulabel = user_display_label(user_id)
+    sname = specialist_display_name(dtype, spec_id)
+    type_word = "Таролог" if dtype == "tarot" else "Астролог"
+    lines = [
+        f"Переписка: {ulabel} (ID {user_id}) <-> {sname} ({type_word})",
+        f"Сообщений: {len(messages)}",
+        f"Выгружено: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+        "=" * 60,
+        "",
+    ]
+    for m in messages:
+        role = m.get("role", "")
+        who = ulabel if role == "user" else sname
+        try:
+            when = datetime.fromisoformat(m.get("time", "")).strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            when = m.get("time", "")
+        lines.append(f"[{when}] {who}:")
+        lines.append((m.get("text") or "").rstrip())
+        lines.append("")
+    content = "\n".join(lines).encode("utf-8")
+    safe = re.sub(r"[^\w.-]", "_", f"{ulabel.lstrip('@')}_{sname}_{dtype}")
+    return content, f"dialog_{safe}.txt"
 
 
 # ====== ХЭНДЛЕРЫ ======
@@ -536,6 +922,14 @@ def render_request_card(req: dict) -> str:
         f"🕐 {created_str}\n\n"
         f"💬 Текст:\n{req.get('text', '')}"
     )
+
+
+@dp.message(F.text == BTN_DIALOGS)
+async def handle_dialogs(message: Message):
+    _reset_input_state(message.from_user.id)
+    DIALOG_USER_SCOPE.pop(message.from_user.id, None)
+    DIALOG_SEARCH_STATE.pop(message.from_user.id, None)
+    await show_dialogs_list(message, message.from_user.id, filter_type="all", page=0)
 
 
 @dp.message(F.text == BTN_REQUESTS)
@@ -641,6 +1035,144 @@ async def cb_edit_review(callback: CallbackQuery):
     await callback.answer()
 
 
+# ====== ПЕРЕПИСКИ: ХЭНДЛЕРЫ ======
+@dp.callback_query(F.data.startswith("dlg_list:"))
+async def cb_dialogs_list(callback: CallbackQuery):
+    try:
+        _, ft, page_s = callback.data.split(":", 2)
+        page = int(page_s)
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+    await show_dialogs_list(callback.message, callback.from_user.id, ft, page, edit=True)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("dlg_usr:"))
+async def cb_dialogs_user_scope(callback: CallbackQuery):
+    try:
+        _, uid = callback.data.split(":", 1)
+    except ValueError:
+        await callback.answer()
+        return
+    DIALOG_USER_SCOPE[callback.from_user.id] = uid
+    DIALOG_SEARCH_STATE.pop(callback.from_user.id, None)
+    await show_dialogs_list(callback.message, callback.from_user.id, "all", 0)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "dlg_scope_reset")
+async def cb_dialogs_scope_reset(callback: CallbackQuery):
+    DIALOG_USER_SCOPE.pop(callback.from_user.id, None)
+    await show_dialogs_list(callback.message, callback.from_user.id, "all", 0, edit=True)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "dlg_search")
+async def cb_dialogs_search_start(callback: CallbackQuery):
+    PENDING_INPUT[callback.from_user.id] = "dialog_search"
+    WAITING_REVIEW_EDIT.pop(callback.from_user.id, None)
+    await callback.message.answer(
+        "🔍 Пришли фразу или слово, которое нужно найти в текстах сообщений.\n"
+        "Поиск нечувствителен к регистру. Пустое сообщение — отмена."
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "dlg_search_reset")
+async def cb_dialogs_search_reset(callback: CallbackQuery):
+    DIALOG_SEARCH_STATE.pop(callback.from_user.id, None)
+    await show_dialogs_list(callback.message, callback.from_user.id, "all", 0, edit=True)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("dlg_open:"))
+async def cb_dialog_open(callback: CallbackQuery):
+    try:
+        _, dtype, uid, sid, page_s = callback.data.split(":", 4)
+        page = int(page_s)
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+    text, total_pages, total = render_dialog_page(dtype, uid, sid, page)
+    if total == 0:
+        await callback.answer("Диалог пуст или удалён.", show_alert=True)
+        return
+    kb = dialog_detail_keyboard(dtype, uid, sid, page, total_pages)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        await callback.message.answer(text, reply_markup=kb)
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("dlg_exp:"))
+async def cb_dialog_export(callback: CallbackQuery):
+    try:
+        _, dtype, uid, sid = callback.data.split(":", 3)
+    except ValueError:
+        await callback.answer()
+        return
+    built = build_dialog_txt(dtype, uid, sid)
+    if built is None:
+        await callback.answer("Диалог пуст.", show_alert=True)
+        return
+    content, filename = built
+    ulabel = user_display_label(uid)
+    sname = specialist_display_name(dtype, sid)
+    type_icon = "🎴" if dtype == "tarot" else "⭐"
+    try:
+        await callback.message.answer_document(
+            BufferedInputFile(content, filename=filename),
+            caption=f"📎 {ulabel} ↔ {type_icon} {sname}",
+        )
+        await callback.answer("Готово")
+    except Exception as e:
+        print(f"[cb_dialog_export] {e}")
+        await callback.answer("Не удалось выгрузить.", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("dlg_delask:"))
+async def cb_dialog_del_ask(callback: CallbackQuery):
+    try:
+        _, dtype, uid, sid = callback.data.split(":", 3)
+    except ValueError:
+        await callback.answer()
+        return
+    ulabel = user_display_label(uid)
+    sname = specialist_display_name(dtype, sid)
+    type_icon = "🎴" if dtype == "tarot" else "⭐"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"dlg_delok:{dtype}:{uid}:{sid}"),
+        InlineKeyboardButton(text="❌ Отмена",      callback_data=f"dlg_delno:{dtype}:{uid}:{sid}"),
+    ]])
+    await callback.message.answer(
+        f"⚠️ Удалить переписку {ulabel} ↔ {type_icon} {sname} безвозвратно?",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("dlg_delno:"))
+async def cb_dialog_del_cancel(callback: CallbackQuery):
+    await callback.message.edit_text((callback.message.text or "") + "\n\n❌ Отменено")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("dlg_delok:"))
+async def cb_dialog_del_confirm(callback: CallbackQuery):
+    try:
+        _, dtype, uid, sid = callback.data.split(":", 3)
+    except ValueError:
+        await callback.answer()
+        return
+    if delete_dialog(dtype, uid, sid):
+        await callback.message.edit_text((callback.message.text or "") + "\n\n🗑 Удалено")
+    else:
+        await callback.message.edit_text((callback.message.text or "") + "\n\n⚠️ Не найдено (уже удалено?)")
+    await callback.answer()
+
+
 # ====== УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ ======
 @dp.callback_query(F.data.startswith("deluser_ask_"))
 async def cb_delete_user_ask(callback: CallbackQuery):
@@ -695,7 +1227,9 @@ async def cb_delete_user_confirm(callback: CallbackQuery):
         f"  • записей пользователей: {stats['users']}\n"
         f"  • запросов специалистам: {stats['requests']}\n"
         f"  • отзывов на модерации: {stats['pending_reviews']}\n"
-        f"  • опубликованных отзывов: {stats['reviews']}"
+        f"  • опубликованных отзывов: {stats['reviews']}\n"
+        f"  • переписок с тарологами: {stats.get('tarot_dialogs', 0)}\n"
+        f"  • переписок с астрологами: {stats.get('astro_dialogs', 0)}"
     )
     await callback.message.edit_text(
         (callback.message.text or "") + summary,
@@ -745,6 +1279,15 @@ async def handle_free_text(message: Message):
             parse_mode="Markdown",
             reply_markup=delete_user_keyboard(uid),
         )
+        return
+    if pending == "dialog_search":
+        PENDING_INPUT.pop(admin_id, None)
+        query = (message.text or "").strip()
+        if not query:
+            await message.answer("Поиск отменён.")
+            return
+        DIALOG_SEARCH_STATE[admin_id] = query
+        await show_dialogs_list(message, admin_id, "all", 0)
         return
     await message.answer("Выбери действие кнопкой 👇", reply_markup=get_admin_keyboard())
 
