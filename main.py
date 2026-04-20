@@ -719,6 +719,7 @@ def get_settings_keyboard():
     buttons = [
         [KeyboardButton(text="♈ Изменить знак зодиака")],
         [KeyboardButton(text="📄 Оферта"), KeyboardButton(text="📞 Контакты")],
+        [KeyboardButton(text="🔐 Политика обработки ПДн")],
         [KeyboardButton(text="🏠 Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
@@ -2913,7 +2914,7 @@ async def view_tarot_card(callback: CallbackQuery):
         await callback.answer("Таролог не найден")
         return
     await callback.message.edit_text(
-        tarologist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты (раздел «⚙️ Настройки» → «📄 Оферта»)._",
+        tarologist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
         parse_mode="Markdown",
         reply_markup=get_tarot_card_keyboard(tarot_id)
     )
@@ -3021,7 +3022,7 @@ async def view_astro_card(callback: CallbackQuery):
         await callback.answer("Астролог не найден")
         return
     await callback.message.edit_text(
-        astrologer["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты (раздел «⚙️ Настройки» → «📄 Оферта»)._",
+        astrologer["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
         parse_mode="Markdown",
         reply_markup=get_astro_card_keyboard(astro_id)
     )
@@ -3217,6 +3218,16 @@ async def show_offer(message: Message):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Открыть оферту", url="https://docs.google.com/document/d/1ZTZsjsR7GGW6F6p8Cdfh7cWMjSF8fHy1s5mHsh4xgF8/edit?usp=sharing")
+        ]])
+    )
+
+@dp.message(F.text == "🔐 Политика обработки ПДн")
+async def show_privacy_policy(message: Message):
+    await message.answer(
+        "🔐 *Политика обработки персональных данных*\n\nПорядок сбора, хранения и передачи персональных данных:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Открыть политику", url="https://docs.google.com/document/d/1XAVyPmqUQunoD--PJwP24Sxlwt6NxJW069Dxrollzak/edit?usp=sharing")
         ]])
     )
 
