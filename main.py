@@ -5,6 +5,7 @@ import random
 import os
 import subprocess
 import smtplib
+import time
 import uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -132,8 +133,73 @@ ASTRO_HISTORY_FILE = "astro_history.json"
 COMPAT_FILE = "compatibility.json"
 CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
 CHANNEL_STATE_FILE = "channel_state.json"
+PENDING_ANSWERS_FILE = "pending_answers.json"
+ACTIVE_SESSIONS_FILE = "active_sessions.json"
 VOICE_REQUESTS_DIR = "voice_requests"
 os.makedirs(VOICE_REQUESTS_DIR, exist_ok=True)
+
+# ====== ПЕРСИСТЕНТНОСТЬ ОТЛОЖЕННЫХ ОТВЕТОВ И СЕАНСОВ ======
+# Хранит запросы к тарологу/астрологу, для которых ещё не отправлен первичный ответ
+# (они спят в send_*_answer_delayed). Формат элемента:
+#   {"id", "user_id", "type", "specialist_id", "user_story", "is_flagged", "deadline_ts"}
+def _load_pending_answers() -> list:
+    try:
+        with open(PENDING_ANSWERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def _save_pending_answers(items: list) -> None:
+    try:
+        with open(PENDING_ANSWERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[_save_pending_answers] {e}")
+
+def _add_pending_answer(entry: dict) -> None:
+    items = _load_pending_answers()
+    items.append(entry)
+    _save_pending_answers(items)
+
+def _remove_pending_answer(pending_id: str) -> None:
+    items = _load_pending_answers()
+    items = [x for x in items if x.get("id") != pending_id]
+    _save_pending_answers(items)
+
+# Длительность сеанса — 3 минуты, в session_timeout и при персисте ACTIVE_SESSIONS
+SESSION_DURATION_SEC = 3 * 60
+
+def _serialize_active_sessions() -> dict:
+    out = {}
+    for uid, s in ACTIVE_SESSIONS.items():
+        specialist = s.get("tarologist") or {}
+        sid = specialist.get("id")
+        if not sid:
+            continue
+        out[uid] = {
+            "type": s.get("type", "tarot"),
+            "specialist_id": sid,
+            "history": s.get("history", []),
+            "msg_count": s.get("msg_count", 0),
+            "profanity_count": s.get("profanity_count", 0),
+            "anecdote_used": s.get("anecdote_used", False),
+            "expires_at": s.get("expires_at", 0),
+        }
+    return out
+
+def _save_active_sessions() -> None:
+    try:
+        with open(ACTIVE_SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_serialize_active_sessions(), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[_save_active_sessions] {e}")
+
+def _load_active_sessions_from_disk() -> dict:
+    try:
+        with open(ACTIVE_SESSIONS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 # ====== ЗНАКИ ЗОДИАКА ======
 SIGNS = ["Овен", "Телец", "Близнецы", "Рак",
@@ -1556,19 +1622,41 @@ def strip_dashes_ellipsis(text: str) -> str:
 
 
 # ====== ОТЛОЖЕННАЯ ОТПРАВКА (первый ответ) ======
-async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: str, is_flagged: bool = False):
-    age = tarologist.get("age", 35)
-    if age >= 57:
-        delay = random.randint(4 * 60, 6 * 60)
-    elif age >= 50:
-        delay = random.randint(3 * 60 + 30, 5 * 60)
-    elif age >= 43:
-        delay = random.randint(3 * 60, 4 * 60 + 30)
-    elif age >= 35:
-        delay = random.randint(2 * 60 + 30, 3 * 60 + 30)
+async def send_tarot_answer_delayed(
+    user_id: int, tarologist: dict, user_story: str, is_flagged: bool = False,
+    pending_id: str | None = None, deadline_ts: float | None = None,
+):
+    # Новый запрос — считаем задержку и сохраняем на диск, чтобы пережить рестарт.
+    # Если передан pending_id — восстановление после рестарта, используем сохранённый deadline.
+    if pending_id is None:
+        age = tarologist.get("age", 35)
+        if age >= 57:
+            delay = random.randint(4 * 60, 6 * 60)
+        elif age >= 50:
+            delay = random.randint(3 * 60 + 30, 5 * 60)
+        elif age >= 43:
+            delay = random.randint(3 * 60, 4 * 60 + 30)
+        elif age >= 35:
+            delay = random.randint(2 * 60 + 30, 3 * 60 + 30)
+        else:
+            delay = random.randint(2 * 60, 3 * 60)
+        deadline_ts = time.time() + delay
+        pending_id = uuid.uuid4().hex[:10]
+        _add_pending_answer({
+            "id": pending_id,
+            "user_id": user_id,
+            "type": "tarot",
+            "specialist_id": tarologist["id"],
+            "user_story": user_story,
+            "is_flagged": is_flagged,
+            "deadline_ts": deadline_ts,
+        })
     else:
-        delay = random.randint(2 * 60, 3 * 60)
-    await asyncio.sleep(delay)
+        age = tarologist.get("age", 35)
+
+    remaining = (deadline_ts or 0) - time.time()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
 
     try:
         answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged)
@@ -1596,12 +1684,15 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
 
             user_id_str = str(user_id)
             ACTIVE_SESSIONS[user_id_str] = {
+                "type": "tarot",
                 "tarologist": tarologist,
                 "history": session_history,
                 "msg_count": 0,
-                "profanity_count": 0
+                "profanity_count": 0,
+                "expires_at": time.time() + SESSION_DURATION_SEC,
             }
             SESSION_BUSY[user_id_str] = False
+            _save_active_sessions()
             track_activity(user_id_str, "tarot")
             increment_sessions_today(user_id_str)
             asyncio.create_task(check_and_grant_referral_bonus(user_id_str))
@@ -1615,12 +1706,18 @@ async def send_tarot_answer_delayed(user_id: int, tarologist: dict, user_story: 
             )
         else:
             await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
+        # Доставлено (ответ или уведомление о сбое) — снимаем pending
+        _remove_pending_answer(pending_id)
+    except asyncio.CancelledError:
+        # Рестарт/остановка бота — pending остаётся на диске и продолжит жить на следующем старте
+        raise
     except Exception as e:
         print(f"[ОШИБКА] send_tarot_answer_delayed для user_id={user_id}: {e}")
         try:
             await bot.send_message(user_id, "Произошла техническая ошибка. Попробуй снова чуть позже.")
         except Exception:
             pass
+        _remove_pending_answer(pending_id)
 
 # ====== АСТРОЛОГИЯ: ПЕРВИЧНЫЙ ОТВЕТ ======
 async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_flagged: bool = False) -> str:
@@ -1730,19 +1827,41 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
     return await ask_ai(prompt, max_tokens=1100)
 
 
-async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: str, is_flagged: bool = False):
-    age = astrologer.get("age", 40)
-    if age >= 57:
-        delay = random.randint(5 * 60, 8 * 60)
-    elif age >= 50:
-        delay = random.randint(4 * 60, 6 * 60)
-    elif age >= 43:
-        delay = random.randint(3 * 60, 5 * 60)
-    elif age >= 35:
-        delay = random.randint(2 * 60 + 30, 4 * 60)
+async def send_astro_answer_delayed(
+    user_id: int, astrologer: dict, user_story: str, is_flagged: bool = False,
+    pending_id: str | None = None, deadline_ts: float | None = None,
+):
+    # Новый запрос — считаем задержку и сохраняем на диск, чтобы пережить рестарт.
+    # Если передан pending_id — восстановление после рестарта, используем сохранённый deadline.
+    if pending_id is None:
+        age = astrologer.get("age", 40)
+        if age >= 57:
+            delay = random.randint(5 * 60, 8 * 60)
+        elif age >= 50:
+            delay = random.randint(4 * 60, 6 * 60)
+        elif age >= 43:
+            delay = random.randint(3 * 60, 5 * 60)
+        elif age >= 35:
+            delay = random.randint(2 * 60 + 30, 4 * 60)
+        else:
+            delay = random.randint(2 * 60, 3 * 60)
+        deadline_ts = time.time() + delay
+        pending_id = uuid.uuid4().hex[:10]
+        _add_pending_answer({
+            "id": pending_id,
+            "user_id": user_id,
+            "type": "astro",
+            "specialist_id": astrologer["id"],
+            "user_story": user_story,
+            "is_flagged": is_flagged,
+            "deadline_ts": deadline_ts,
+        })
     else:
-        delay = random.randint(2 * 60, 3 * 60)
-    await asyncio.sleep(delay)
+        age = astrologer.get("age", 40)
+
+    remaining = (deadline_ts or 0) - time.time()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
 
     try:
         answer = await get_astro_answer(astrologer, user_story, str(user_id), is_flagged=is_flagged)
@@ -1777,9 +1896,11 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
                 "history": session_history,
                 "msg_count": 0,
                 "profanity_count": 0,
-                "anecdote_used": _has_anecdote(answer)
+                "anecdote_used": _has_anecdote(answer),
+                "expires_at": time.time() + SESSION_DURATION_SEC,
             }
             SESSION_BUSY[user_id_str] = False
+            _save_active_sessions()
             asyncio.create_task(session_timeout(user_id))
             asyncio.create_task(maybe_pin_channel_after_consultation(user_id))
             await bot.send_message(
@@ -1790,12 +1911,18 @@ async def send_astro_answer_delayed(user_id: int, astrologer: dict, user_story: 
             )
         else:
             await bot.send_message(user_id, "Что-то пошло не так, попробуй обратиться позже.")
+        # Доставлено (ответ или уведомление о сбое) — снимаем pending
+        _remove_pending_answer(pending_id)
+    except asyncio.CancelledError:
+        # Рестарт/остановка бота — pending остаётся на диске и продолжит жить на следующем старте
+        raise
     except Exception as e:
         print(f"[ОШИБКА] send_astro_answer_delayed для user_id={user_id}: {e}")
         try:
             await bot.send_message(user_id, "Произошла техническая ошибка. Попробуй снова чуть позже.")
         except Exception:
             pass
+        _remove_pending_answer(pending_id)
 
 
 # ====== СЕАНС: ОТВЕТ НА ДОПВОПРОС ======
@@ -1991,6 +2118,7 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
     if session["msg_count"] > MAX_SESSION_MESSAGES:
         if user_id_str in ACTIVE_SESSIONS:
             del ACTIVE_SESSIONS[user_id_str]
+            _save_active_sessions()
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         if session.get("type") == "astro":
@@ -2014,6 +2142,7 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
             reply = f"{tarologist['name']} не понимает о чём речь и завершает сеанс."
         if user_id_str in ACTIVE_SESSIONS:
             del ACTIVE_SESSIONS[user_id_str]
+            _save_active_sessions()
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         await bot.send_message(user_id, reply, reply_markup=get_main_keyboard())
@@ -2023,6 +2152,7 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
     if session.get("profanity_count", 0) > MAX_SESSION_PROFANITY:
         if user_id_str in ACTIVE_SESSIONS:
             del ACTIVE_SESSIONS[user_id_str]
+            _save_active_sessions()
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         await bot.send_message(
@@ -2068,6 +2198,7 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         session["anecdote_used"] = True
 
     session["history"].append({"role": "tarot", "text": answer})
+    _save_active_sessions()
 
     # Отправляем ответ по частям с задержками.
     # Клавиатуру get_session_keyboard() привязываем к последнему сообщению,
@@ -2102,6 +2233,7 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         await asyncio.sleep(2)
         if user_id_str in ACTIVE_SESSIONS:
             del ACTIVE_SESSIONS[user_id_str]
+            _save_active_sessions()
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         tarologist_name = tarologist["name"]
@@ -2119,14 +2251,19 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
     if queued and user_id_str in ACTIVE_SESSIONS:
         asyncio.create_task(send_session_reply(user_id, queued))
 
-async def session_timeout(user_id: int):
-    await asyncio.sleep(3 * 60)
+async def session_timeout(user_id: int, delay: float | None = None):
+    if delay is None:
+        delay = SESSION_DURATION_SEC
+    # Защита от отрицательной задержки после восстановления сеанса
+    if delay > 0:
+        await asyncio.sleep(delay)
     user_id_str = str(user_id)
     if user_id_str in ACTIVE_SESSIONS:
         session = ACTIVE_SESSIONS[user_id_str]
         specialist_name = session["tarologist"]["name"]
         session_type = session.get("type", "tarot")
         del ACTIVE_SESSIONS[user_id_str]
+        _save_active_sessions()
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         if session_type == "astro":
@@ -2636,6 +2773,7 @@ async def go_home(message: Message):
     WAITING_REVIEW.pop(user_id, None)
     if user_id in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[user_id]
+        _save_active_sessions()
     SESSION_BUSY.pop(user_id, None)
     SESSION_MSG_QUEUE.pop(user_id, None)
     msg = await message.answer("Главное меню:", reply_markup=get_main_keyboard())
@@ -3389,6 +3527,7 @@ async def end_session_manually(message: Message):
     if user_id_str in ACTIVE_SESSIONS:
         tarologist_name = ACTIVE_SESSIONS[user_id_str]["tarologist"]["name"]
         del ACTIVE_SESSIONS[user_id_str]
+        _save_active_sessions()
         SESSION_BUSY.pop(user_id_str, None)
         SESSION_MSG_QUEUE.pop(user_id_str, None)
         await message.answer(
@@ -3600,10 +3739,100 @@ async def heartbeat():
 async def on_startup(bot):
     await notify_admin("🔄 Бот перезапущен и работает.")
 
+
+async def _restore_pending_answers() -> None:
+    """При старте — пересоздаём таски send_*_answer_delayed для не отправленных запросов.
+    Если дедлайн уже прошёл — таск отправит ответ сразу."""
+    items = _load_pending_answers()
+    restored = 0
+    for entry in items:
+        try:
+            stype = entry.get("type")
+            specialist_id = entry.get("specialist_id")
+            if stype == "astro":
+                specialist = ASTROLOGERS_BY_ID.get(specialist_id)
+                fn = send_astro_answer_delayed
+            elif stype == "tarot":
+                specialist = TAROLOGISTS_BY_ID.get(specialist_id)
+                fn = send_tarot_answer_delayed
+            else:
+                continue
+            if not specialist:
+                continue
+            asyncio.create_task(fn(
+                entry["user_id"], specialist, entry["user_story"],
+                is_flagged=entry.get("is_flagged", False),
+                pending_id=entry["id"],
+                deadline_ts=entry.get("deadline_ts", 0),
+            ))
+            restored += 1
+        except Exception as e:
+            print(f"[_restore_pending_answers] skip entry: {e}")
+    if restored:
+        print(f"[_restore_pending_answers] возобновлено отложенных ответов: {restored}")
+
+
+async def _restore_active_sessions() -> None:
+    """При старте — восстанавливаем ACTIVE_SESSIONS из файла.
+    Просроченные сеансы — уведомляем пользователя один раз и не восстанавливаем."""
+    saved = _load_active_sessions_from_disk()
+    if not saved:
+        return
+    now = time.time()
+    expired = []
+    restored = 0
+    for uid, s in saved.items():
+        try:
+            stype = s.get("type", "tarot")
+            sid = s.get("specialist_id")
+            if stype == "astro":
+                specialist = ASTROLOGERS_BY_ID.get(sid)
+            else:
+                specialist = TAROLOGISTS_BY_ID.get(sid)
+            if not specialist:
+                continue
+            expires_at = s.get("expires_at", 0)
+            if expires_at <= now:
+                expired.append((uid, specialist, stype))
+                continue
+            ACTIVE_SESSIONS[uid] = {
+                "type": stype,
+                "tarologist": specialist,
+                "history": s.get("history", []),
+                "msg_count": s.get("msg_count", 0),
+                "profanity_count": s.get("profanity_count", 0),
+                "anecdote_used": s.get("anecdote_used", False),
+                "expires_at": expires_at,
+            }
+            SESSION_BUSY[uid] = False
+            asyncio.create_task(session_timeout(int(uid), delay=expires_at - now))
+            restored += 1
+        except Exception as e:
+            print(f"[_restore_active_sessions] skip {uid}: {e}")
+    # Перезаписываем файл, удаляя просроченные и несовместимые записи
+    _save_active_sessions()
+    # Уведомляем пользователей, чей сеанс истёк во время простоя бота
+    for uid, specialist, stype in expired:
+        try:
+            if stype == "astro":
+                text = (f"⏰ Пока бот был недоступен, время сеанса с {specialist['name']} истекло.\n"
+                        "Если хочешь продолжить — выбери астролога в меню 🌟")
+            else:
+                text = (f"⏰ Пока бот был недоступен, время сеанса с {specialist['name']} истекло.\n"
+                        "Если хочешь продолжить — выбери таролога в меню 🎴")
+            await bot.send_message(int(uid), text, reply_markup=get_main_keyboard())
+        except Exception as e:
+            print(f"[_restore_active_sessions] notify {uid}: {e}")
+    if restored:
+        print(f"[_restore_active_sessions] восстановлено сеансов: {restored}")
+
+
 async def main():
     asyncio.create_task(scheduler())
     asyncio.create_task(heartbeat())
     await on_startup(bot)
+    await _restore_active_sessions()
+    await _restore_pending_answers()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
