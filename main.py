@@ -3296,11 +3296,21 @@ async def handle_voice(message: Message):
             pass
 
     if user_id in WAITING_ASTRO_STORY:
-        astro_id = WAITING_ASTRO_STORY.pop(user_id)
+        astro_id = WAITING_ASTRO_STORY.get(user_id)
         astrologer = ASTROLOGERS_BY_ID.get(astro_id)
         if not astrologer:
+            WAITING_ASTRO_STORY.pop(user_id, None)
             await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
             return
+        if await check_incomprehensible(text):
+            await message.answer(
+                "⚠️ Мы не смогли понять твой запрос — сообщение похоже на бессвязный набор слов "
+                "или написано на другом языке.\n\n"
+                "Запиши голосовое ещё раз или напиши текстом, понятно и по-русски 👇",
+                reply_markup=get_cancel_keyboard()
+            )
+            return
+        WAITING_ASTRO_STORY.pop(user_id, None)
         is_flagged = await check_profanity(text)
         await message.answer(
             f"✅ Запрос принят! {astrologer['name']} изучит вашу натальную карту и ответит в течение 20-25 минут.",
@@ -3320,13 +3330,24 @@ async def handle_voice(message: Message):
         asyncio.create_task(send_astro_answer_delayed(message.from_user.id, astrologer, text, is_flagged=is_flagged))
         return
 
-    tarot_id = WAITING_TAROT_STORY.pop(user_id)
+    tarot_id = WAITING_TAROT_STORY.get(user_id)
     tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
 
     if not tarologist:
+        WAITING_TAROT_STORY.pop(user_id, None)
         await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
         return
 
+    if await check_incomprehensible(text):
+        await message.answer(
+            "⚠️ Мы не смогли понять твой запрос — сообщение похоже на бессвязный набор слов "
+            "или написано на другом языке.\n\n"
+            "Запиши голосовое ещё раз или напиши текстом, понятно и по-русски 👇",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
+
+    WAITING_TAROT_STORY.pop(user_id, None)
     is_flagged = await check_profanity(text)
 
     await message.answer(
@@ -3448,11 +3469,21 @@ async def handle_story(message: Message):
         return
 
     if user_id in WAITING_ASTRO_STORY:
-        astro_id = WAITING_ASTRO_STORY.pop(user_id)
+        astro_id = WAITING_ASTRO_STORY.get(user_id)
         astrologer = ASTROLOGERS_BY_ID.get(astro_id)
         if not astrologer:
+            WAITING_ASTRO_STORY.pop(user_id, None)
             await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
             return
+        if await check_incomprehensible(message.text):
+            await message.answer(
+                "⚠️ Мы не смогли понять твой запрос — сообщение похоже на бессвязный набор слов "
+                "или написано на другом языке.\n\n"
+                "Опиши свою ситуацию по-русски, одним понятным сообщением 👇",
+                reply_markup=get_cancel_keyboard()
+            )
+            return
+        WAITING_ASTRO_STORY.pop(user_id, None)
         is_flagged = await check_profanity(message.text)
         await message.answer(
             f"✅ Запрос принят! {astrologer['name']} изучит вашу натальную карту и ответит в течение 20-25 минут.",
@@ -3486,13 +3517,24 @@ async def handle_story(message: Message):
             )
         return
 
-    tarot_id = WAITING_TAROT_STORY.pop(user_id)
+    tarot_id = WAITING_TAROT_STORY.get(user_id)
     tarologist = TAROLOGISTS_BY_ID.get(tarot_id)
 
     if not tarologist:
+        WAITING_TAROT_STORY.pop(user_id, None)
         await message.answer("Что-то пошло не так, попробуй снова.", reply_markup=get_main_keyboard())
         return
 
+    if await check_incomprehensible(message.text):
+        await message.answer(
+            "⚠️ Мы не смогли понять твой запрос — сообщение похоже на бессвязный набор слов "
+            "или написано на другом языке.\n\n"
+            "Опиши свою ситуацию по-русски, одним понятным сообщением 👇",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
+
+    WAITING_TAROT_STORY.pop(user_id, None)
     is_flagged = await check_profanity(message.text)
 
     await message.answer(
