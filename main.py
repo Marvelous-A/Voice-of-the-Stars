@@ -3226,6 +3226,7 @@ async def show_contacts(message: Message):
         "📞 *Контактные данные*\n\n"
         "Исполнитель: Яковенко Андрей Алексеевич\n"
         "ИНН: 503114316367\n"
+        "Адрес: г. Москва, ул. Марксистская, д. 5\n"
         "Телефон: +7 966 141-63-65\n"
         "E-mail: andreyyakovenko05@mail.ru",
         parse_mode="Markdown"
