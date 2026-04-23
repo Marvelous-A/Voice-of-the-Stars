@@ -1250,9 +1250,28 @@ def extract_json_from_text(text: str):
 
 # ====== API ЗАПРОС ======
 AI_MODEL_PRIMARY = getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
-# Список :free-моделей OpenRouter регулярно меняется — старые id возвращают 404.
-# Переключать можно через env OPENROUTER_FREE_MODEL без рестарта кода.
-AI_MODEL_FREE_FALLBACK = getenv("OPENROUTER_FREE_MODEL", "deepseek/deepseek-r1:free")
+# Список :free-моделей OpenRouter регулярно меняется — старые id возвращают 404,
+# а популярные модели рейт-лимитятся апстрим-провайдерами. Перебираем пачку моделей
+# у разных провайдеров — первая ответившая выигрывает.
+# Переопределить можно через env OPENROUTER_FREE_MODELS (через запятую) без правок кода.
+_free_models_default = (
+    "qwen/qwen3-next-80b-a3b-instruct:free,"
+    "openai/gpt-oss-120b:free,"
+    "z-ai/glm-4.5-air:free,"
+    "nvidia/nemotron-3-super-120b-a12b:free,"
+    "minimax/minimax-m2.5:free,"
+    "nousresearch/hermes-3-llama-3.1-405b:free,"
+    "meta-llama/llama-3.3-70b-instruct:free"
+)
+AI_MODELS_FREE_FALLBACK = [
+    m.strip() for m in getenv("OPENROUTER_FREE_MODELS", _free_models_default).split(",") if m.strip()
+]
+# Обратная совместимость со старой одиночной переменной — если задана, ставим её первой.
+_legacy_free_model = (getenv("OPENROUTER_FREE_MODEL") or "").strip()
+if _legacy_free_model:
+    AI_MODELS_FREE_FALLBACK = [_legacy_free_model] + [
+        m for m in AI_MODELS_FREE_FALLBACK if m != _legacy_free_model
+    ]
 # Free-модели OpenRouter ограничены ~2540 входных токенов. Держим запас с учётом того, что
 # русский текст примерно 3 символа = 1 токен — 6000 символов укладывается в лимит.
 FREE_FALLBACK_CHAR_BUDGET = 6000
@@ -1318,12 +1337,13 @@ async def ask_ai(prompt: str, max_tokens: int = 1000) -> str:
     if _is_quota_error(err):
         short_prompt = _shrink_prompt_for_free(prompt)
         fallback_tokens = min(max_tokens, FREE_FALLBACK_MAX_TOKENS)
-        answer2, err2 = await _call_openrouter(AI_MODEL_FREE_FALLBACK, short_prompt, fallback_tokens)
-        if answer2:
-            print(f"[ask_ai] fallback на {AI_MODEL_FREE_FALLBACK} отработал, длина промпта {len(short_prompt)}")
-            return answer2
-        if err2:
-            print("Ошибка API OpenRouter (free fallback):", err2)
+        for model in AI_MODELS_FREE_FALLBACK:
+            answer2, err2 = await _call_openrouter(model, short_prompt, fallback_tokens)
+            if answer2:
+                print(f"[ask_ai] fallback на {model} отработал, длина промпта {len(short_prompt)}")
+                return answer2
+            if err2:
+                print(f"Ошибка API OpenRouter (fallback {model}):", err2)
     return ""
 
 # ====== ПОЛУЧЕНИЕ ГОРОСКОПА ======
