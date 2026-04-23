@@ -723,6 +723,16 @@ NO_CONTACTS_RULE = (
     "'мало или много', 'между надо и хочу' — естественнее."
 )
 
+# Укороченная версия правила — используется только как запасной вариант,
+# когда полный промпт не пролезает в контекст бесплатной модели OpenRouter.
+NO_CONTACTS_RULE_SHORT = (
+    "\n\nПРАВИЛА: пишешь текстом в мессенджере, не описывай физические действия. "
+    "Запрещено: внешние контакты (@, телефоны, ссылки, Instagram, VK, WhatsApp), "
+    "многоточия, тире, кавычки любые, скобочные ремарки (вздыхает, пауза), "
+    "протяжные междометия (э-э-э, м-м-м), английские слова, слэши между словами. "
+    "Только русский. Никаких 'стоп подожди', 'слушай' как начала сообщения."
+)
+
 ANECDOTE_RULE = (
     "\n\nИСТОРИИ ИЗ ПРАКТИКИ ('была клиентка...', 'один парень у меня...' и т.п.) — "
     "используй максимум 1 раз на весь ответ, и только если это прямо к месту. "
@@ -1239,16 +1249,47 @@ def extract_json_from_text(text: str):
     return {}
 
 # ====== API ЗАПРОС ======
-async def ask_ai(prompt: str, max_tokens: int = 1000) -> str:
+AI_MODEL_PRIMARY = "deepseek/deepseek-chat"
+AI_MODEL_FREE_FALLBACK = "deepseek/deepseek-chat-v3-0324:free"
+# Free-модели OpenRouter ограничены ~2540 входных токенов. Держим запас с учётом того, что
+# русский текст примерно 3 символа = 1 токен — 6000 символов укладывается в лимит.
+FREE_FALLBACK_CHAR_BUDGET = 6000
+FREE_FALLBACK_MAX_TOKENS = 800
+
+
+def _shrink_prompt_for_free(prompt: str) -> str:
+    """Сжимает prompt для повторной попытки на бесплатной модели с узким контекстом."""
+    prompt = prompt.replace(NO_CONTACTS_RULE, NO_CONTACTS_RULE_SHORT)
+    if len(prompt) > FREE_FALLBACK_CHAR_BUDGET:
+        prompt = re.sub(
+            r"\n\nПредыдущие обращения этого человека.*?(?=\n\n[А-ЯA-Z])",
+            "",
+            prompt,
+            count=1,
+            flags=re.DOTALL,
+        )
+    return prompt
+
+
+def _is_quota_error(err: dict | None) -> bool:
+    if not err:
+        return False
+    if err.get("code") == 402:
+        return True
+    msg = (err.get("message") or "").lower()
+    return "credit" in msg or "afford" in msg or "tokens limit" in msg
+
+
+async def _call_openrouter(model: str, prompt: str, max_tokens: int) -> tuple[str, dict | None]:
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     data = {
-        "model": "deepseek/deepseek-chat",
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens
+        "max_tokens": max_tokens,
     }
     try:
         timeout = aiohttp.ClientTimeout(total=120)
@@ -1256,16 +1297,32 @@ async def ask_ai(prompt: str, max_tokens: int = 1000) -> str:
             async with session.post(url, headers=headers, json=data) as resp:
                 response_json = await resp.json(content_type=None)
                 if "choices" in response_json:
-                    return response_json["choices"][0]["message"]["content"].strip()
-                elif "error" in response_json:
-                    print("Ошибка API OpenRouter:", response_json["error"])
-                    return ""
-                else:
-                    print("Неожиданный ответ API:", response_json)
-                    return ""
+                    content = response_json["choices"][0]["message"].get("content") or ""
+                    return content.strip(), None
+                if "error" in response_json:
+                    return "", response_json["error"]
+                return "", {"message": "unexpected response", "raw": response_json}
     except Exception as e:
-        print("Ошибка запроса к AI:", e)
-        return ""
+        return "", {"message": f"exception: {e}"}
+
+
+async def ask_ai(prompt: str, max_tokens: int = 1000) -> str:
+    answer, err = await _call_openrouter(AI_MODEL_PRIMARY, prompt, max_tokens)
+    if answer:
+        return answer
+    if err:
+        print("Ошибка API OpenRouter:", err)
+
+    if _is_quota_error(err):
+        short_prompt = _shrink_prompt_for_free(prompt)
+        fallback_tokens = min(max_tokens, FREE_FALLBACK_MAX_TOKENS)
+        answer2, err2 = await _call_openrouter(AI_MODEL_FREE_FALLBACK, short_prompt, fallback_tokens)
+        if answer2:
+            print(f"[ask_ai] fallback на {AI_MODEL_FREE_FALLBACK} отработал, длина промпта {len(short_prompt)}")
+            return answer2
+        if err2:
+            print("Ошибка API OpenRouter (free fallback):", err2)
+    return ""
 
 # ====== ПОЛУЧЕНИЕ ГОРОСКОПА ======
 async def get_horoscope():
