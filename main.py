@@ -1249,8 +1249,10 @@ def extract_json_from_text(text: str):
     return {}
 
 # ====== API ЗАПРОС ======
-AI_MODEL_PRIMARY = "deepseek/deepseek-chat"
-AI_MODEL_FREE_FALLBACK = "deepseek/deepseek-chat-v3-0324:free"
+AI_MODEL_PRIMARY = getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
+# Список :free-моделей OpenRouter регулярно меняется — старые id возвращают 404.
+# Переключать можно через env OPENROUTER_FREE_MODEL без рестарта кода.
+AI_MODEL_FREE_FALLBACK = getenv("OPENROUTER_FREE_MODEL", "deepseek/deepseek-r1:free")
 # Free-модели OpenRouter ограничены ~2540 входных токенов. Держим запас с учётом того, что
 # русский текст примерно 3 символа = 1 токен — 6000 символов укладывается в лимит.
 FREE_FALLBACK_CHAR_BUDGET = 6000
