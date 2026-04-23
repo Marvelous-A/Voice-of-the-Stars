@@ -1317,6 +1317,8 @@ async def _call_openrouter(model: str, prompt: str, max_tokens: int) -> tuple[st
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
+        "provider": {"sort": "price"},
+        "usage": {"include": True},
     }
     try:
         timeout = aiohttp.ClientTimeout(total=120)
@@ -1325,6 +1327,13 @@ async def _call_openrouter(model: str, prompt: str, max_tokens: int) -> tuple[st
                 response_json = await resp.json(content_type=None)
                 if "choices" in response_json:
                     content = response_json["choices"][0]["message"].get("content") or ""
+                    usage = response_json.get("usage") or {}
+                    cost = usage.get("cost")
+                    if cost is not None:
+                        print(
+                            f"[openrouter] {model} cost=${cost:.6f} "
+                            f"in={usage.get('prompt_tokens')} out={usage.get('completion_tokens')}"
+                        )
                     return content.strip(), None
                 if "error" in response_json:
                     return "", response_json["error"]
