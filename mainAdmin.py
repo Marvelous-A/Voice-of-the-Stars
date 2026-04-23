@@ -46,14 +46,20 @@ PENDING_REVIEWS_FILE = "pending_reviews.json"
 CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
 TAROT_HISTORY_FILE = "tarot_history.json"
 ASTRO_HISTORY_FILE = "astro_history.json"
+WAITING_FEEDBACK_FILE = "waiting_feedback.json"
 
 DIALOGS_PER_PAGE = 8
 MESSAGES_PER_PAGE = 6
 MSG_PREVIEW_MAX = 600
+FEEDBACK_PER_PAGE = 6
 
 session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=ADMIN_BOT_TOKEN, session=session)
 dp = Dispatcher()
+
+# Отдельный клиент к основному боту — им шлём сообщения пользователям от имени платформы
+_main_bot_session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
+main_bot = Bot(token=MAIN_BOT_TOKEN, session=_main_bot_session) if MAIN_BOT_TOKEN else None
 
 # Строгий фильтр: бот реагирует ТОЛЬКО на админа. Все остальные апдейты отбрасываются
 # на уровне диспетчера — ни один хэндлер их не увидит.
@@ -82,6 +88,7 @@ BTN_FIND = "🔍 Найти пользователя"
 BTN_REQUESTS = "📩 Консультации"
 BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
+BTN_FEEDBACK = "💌 Запросить отзыв"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
 
@@ -92,7 +99,7 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_STATS)],
             [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
             [KeyboardButton(text=BTN_USERS), KeyboardButton(text=BTN_FIND)],
-            [KeyboardButton(text=BTN_PENDING)],
+            [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_REFRESH)],
         ],
         resize_keyboard=True,
@@ -966,6 +973,250 @@ async def handle_requests(message: Message):
             except Exception as e:
                 print(f"[handle_requests] voice {req.get('id')}: {e}")
                 await message.answer("⚠️ Не удалось проиграть голосовое сообщение.")
+
+
+# ====== ЗАПРОС ОТЗЫВА У ПОЛЬЗОВАТЕЛЯ ======
+def load_waiting_feedback() -> dict:
+    try:
+        with open(WAITING_FEEDBACK_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_waiting_feedback(data: dict) -> None:
+    with open(WAITING_FEEDBACK_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def collect_feedback_targets() -> list[dict]:
+    """Уникальные пары (пользователь, специалист) из consultation_requests.json,
+    отсортированные от самой свежей консультации к старой."""
+    seen: dict[tuple[str, str, str], dict] = {}
+    for req in load_consultation_requests():
+        uid = str(req.get("user_id", ""))
+        stype = req.get("type", "")
+        sid = req.get("specialist_id", "")
+        if not uid or not stype or not sid:
+            continue
+        key = (uid, stype, sid)
+        entry = seen.get(key)
+        if entry is None or (req.get("created_at", "") > entry.get("created_at", "")):
+            seen[key] = {
+                "user_id": uid,
+                "username": req.get("username") or "",
+                "full_name": req.get("full_name") or "",
+                "type": stype,
+                "specialist_id": sid,
+                "specialist_name": req.get("specialist_name") or sid,
+                "created_at": req.get("created_at", ""),
+            }
+    targets = sorted(seen.values(), key=lambda e: e["created_at"], reverse=True)
+    return targets
+
+
+def _feedback_target_label(t: dict) -> str:
+    username = t.get("username") or ""
+    full_name = t.get("full_name") or ""
+    if username:
+        user = f"@{username}"
+    elif full_name:
+        user = full_name
+    else:
+        user = f"ID {t['user_id']}"
+    icon = "🎴" if t["type"] == "tarot" else "⭐"
+    return f"{user} · {icon} {t['specialist_name']}"
+
+
+def build_feedback_message(specialist_type: str, specialist_name: str) -> str:
+    if specialist_type == "tarot":
+        role_word = "тарологом"
+        question_role = "таролога"
+    else:
+        role_word = "астрологом"
+        question_role = "астролога"
+    return (
+        "✨ Здравствуйте!\n\n"
+        "С вами связывается администрация платформы «Голос Звёзд».\n\n"
+        f"Некоторое время назад вы консультировались с нашим {role_word} — "
+        f"{specialist_name}. Нам очень важно знать, как вы оцениваете этот опыт.\n\n"
+        "Поделитесь, пожалуйста, впечатлениями прямо здесь, в этом чате:\n"
+        f"• помог ли ответ {question_role} разобраться с вашим вопросом;\n"
+        "• насколько комфортно вам было в сеансе;\n"
+        "• что понравилось и что, возможно, хотелось бы улучшить.\n\n"
+        "Пишите свободно — ваш ответ уйдёт напрямую администрации и поможет нам "
+        "делать консультации ещё лучше. 💛"
+    )
+
+
+def render_feedback_list(targets: list[dict], page: int) -> str:
+    total_pages = max(1, (len(targets) + FEEDBACK_PER_PAGE - 1) // FEEDBACK_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * FEEDBACK_PER_PAGE
+    chunk = targets[start:start + FEEDBACK_PER_PAGE]
+    if not targets:
+        return "💌 Запросить отзыв\n\nПока нет пользователей, проходивших консультации."
+    lines = [
+        "💌 Запросить отзыв о консультации",
+        f"всего: {len(targets)} · стр. {page + 1}/{total_pages}",
+        "",
+        "Выбери пользователя и специалиста ниже — основной бот отправит ему сообщение с просьбой поделиться впечатлениями.",
+    ]
+    for i, t in enumerate(chunk, start=start + 1):
+        try:
+            when = datetime.fromisoformat(t["created_at"]).strftime("%d.%m %H:%M")
+        except Exception:
+            when = "—"
+        lines.append(f"{i}. {_feedback_target_label(t)} · {when}")
+    return "\n".join(lines)
+
+
+def feedback_list_keyboard(targets: list[dict], page: int) -> InlineKeyboardMarkup:
+    total_pages = max(1, (len(targets) + FEEDBACK_PER_PAGE - 1) // FEEDBACK_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * FEEDBACK_PER_PAGE
+    chunk = targets[start:start + FEEDBACK_PER_PAGE]
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, t in enumerate(chunk, start=start + 1):
+        label = f"{i}. {_feedback_target_label(t)}"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        rows.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"fb_pick:{t['user_id']}:{t['type']}:{t['specialist_id']}",
+        )])
+    pag: list[InlineKeyboardButton] = []
+    if page > 0:
+        pag.append(InlineKeyboardButton(text="⬅ Назад", callback_data=f"fb_list:{page - 1}"))
+    if page < total_pages - 1:
+        pag.append(InlineKeyboardButton(text="Вперёд ➡", callback_data=f"fb_list:{page + 1}"))
+    if pag:
+        rows.append(pag)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _find_feedback_target(user_id: str, spec_type: str, spec_id: str) -> dict | None:
+    for t in collect_feedback_targets():
+        if (str(t["user_id"]) == str(user_id)
+                and t["type"] == spec_type
+                and t["specialist_id"] == spec_id):
+            return t
+    return None
+
+
+@dp.message(F.text == BTN_FEEDBACK)
+async def handle_feedback_list(message: Message):
+    _reset_input_state(message.from_user.id)
+    if main_bot is None:
+        await message.answer(
+            "⚠️ Не удалось инициализировать клиент основного бота — проверь BOT_TOKEN в .env."
+        )
+        return
+    targets = collect_feedback_targets()
+    await message.answer(
+        render_feedback_list(targets, page=0),
+        reply_markup=feedback_list_keyboard(targets, page=0),
+    )
+
+
+@dp.callback_query(F.data.startswith("fb_list:"))
+async def cb_feedback_page(callback: CallbackQuery):
+    try:
+        page = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer()
+        return
+    targets = collect_feedback_targets()
+    try:
+        await callback.message.edit_text(
+            render_feedback_list(targets, page),
+            reply_markup=feedback_list_keyboard(targets, page),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("fb_pick:"))
+async def cb_feedback_pick(callback: CallbackQuery):
+    try:
+        _, uid, stype, sid = callback.data.split(":", 3)
+    except ValueError:
+        await callback.answer()
+        return
+    target = _find_feedback_target(uid, stype, sid)
+    if not target:
+        await callback.answer("Консультация не найдена (возможно, была удалена).", show_alert=True)
+        return
+    preview = build_feedback_message(stype, target["specialist_name"])
+    existing = load_waiting_feedback().get(uid)
+    warn = ""
+    if existing:
+        try:
+            sent = datetime.fromisoformat(existing.get("sent_at", "")).strftime("%d.%m %H:%M")
+        except Exception:
+            sent = existing.get("sent_at", "—")
+        warn = (
+            f"\n\n⚠️ Этому пользователю уже отправлен запрос {sent} "
+            f"({existing.get('specialist_name', '—')}). "
+            f"Новое сообщение перезапишет ожидание ответа."
+        )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="✅ Отправить",
+            callback_data=f"fb_send:{uid}:{stype}:{sid}",
+        ),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="fb_cancel"),
+    ]])
+    await callback.message.answer(
+        f"✉️ Будет отправлено пользователю {_feedback_target_label(target)}:\n\n"
+        f"— — —\n{preview}\n— — —{warn}",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "fb_cancel")
+async def cb_feedback_cancel(callback: CallbackQuery):
+    await callback.message.edit_text((callback.message.text or "") + "\n\n❌ Отправка отменена.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("fb_send:"))
+async def cb_feedback_send(callback: CallbackQuery):
+    try:
+        _, uid, stype, sid = callback.data.split(":", 3)
+    except ValueError:
+        await callback.answer()
+        return
+    target = _find_feedback_target(uid, stype, sid)
+    if not target:
+        await callback.answer("Консультация не найдена.", show_alert=True)
+        return
+    if main_bot is None:
+        await callback.answer("BOT_TOKEN не задан — нечем отправлять.", show_alert=True)
+        return
+    text = build_feedback_message(stype, target["specialist_name"])
+    try:
+        await main_bot.send_message(int(uid), text)
+    except Exception as e:
+        await callback.message.edit_text(
+            (callback.message.text or "") + f"\n\n⚠️ Не удалось отправить: {e}"
+        )
+        await callback.answer("Ошибка при отправке", show_alert=True)
+        return
+    data = load_waiting_feedback()
+    data[str(uid)] = {
+        "type": stype,
+        "specialist_id": sid,
+        "specialist_name": target["specialist_name"],
+        "sent_at": datetime.now().isoformat(),
+    }
+    save_waiting_feedback(data)
+    await callback.message.edit_text(
+        (callback.message.text or "") + "\n\n✅ Сообщение отправлено. Ответ пользователя придёт отдельным уведомлением в этот админ-бот."
+    )
+    await callback.answer("Отправлено")
 
 
 @dp.message(F.text == BTN_PENDING)

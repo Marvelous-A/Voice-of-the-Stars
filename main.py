@@ -135,8 +135,37 @@ CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
 CHANNEL_STATE_FILE = "channel_state.json"
 PENDING_ANSWERS_FILE = "pending_answers.json"
 ACTIVE_SESSIONS_FILE = "active_sessions.json"
+WAITING_FEEDBACK_FILE = "waiting_feedback.json"
 VOICE_REQUESTS_DIR = "voice_requests"
 os.makedirs(VOICE_REQUESTS_DIR, exist_ok=True)
+
+
+# ====== ОПРОС О КОНСУЛЬТАЦИИ (инициируется из админ-бота) ======
+# Формат записи в waiting_feedback.json:
+#   {"user_id_str": {"type": "tarot|astro", "specialist_id", "specialist_name", "sent_at"}}
+def _load_waiting_feedback() -> dict:
+    try:
+        with open(WAITING_FEEDBACK_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_waiting_feedback(data: dict) -> None:
+    try:
+        with open(WAITING_FEEDBACK_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[_save_waiting_feedback] {e}")
+
+
+def _pop_waiting_feedback(user_id: str) -> dict | None:
+    data = _load_waiting_feedback()
+    entry = data.pop(user_id, None)
+    if entry is not None:
+        _save_waiting_feedback(data)
+    return entry
+
 
 # ====== ПЕРСИСТЕНТНОСТЬ ОТЛОЖЕННЫХ ОТВЕТОВ И СЕАНСОВ ======
 # Хранит запросы к тарологу/астрологу, для которых ещё не отправлен первичный ответ
@@ -3674,6 +3703,35 @@ async def handle_story(message: Message):
             u["full_name"] = message.from_user.full_name or ""
             users[user_id] = u
             save_users(users)
+
+    # ====== ОТВЕТ НА ЗАПРОС ОБ ОПЫТЕ КОНСУЛЬТАЦИИ (инициирован админом) ======
+    feedback_entry = _load_waiting_feedback().get(user_id)
+    if feedback_entry:
+        feedback_text = (message.text or "").strip()
+        if len(feedback_text) < 2:
+            await message.answer("Напиши, пожалуйста, чуть подробнее — пара слов или больше. 💛")
+            return
+        _pop_waiting_feedback(user_id)
+        stype = feedback_entry.get("type", "")
+        sname = feedback_entry.get("specialist_name", "—")
+        type_label = "🎴 Таролог" if stype == "tarot" else "⭐ Астролог"
+        user_label = (
+            f"@{message.from_user.username}" if message.from_user.username
+            else (message.from_user.full_name or f"ID {user_id}")
+        )
+        await message.answer(
+            "💛 Спасибо! Мы передали ваш отзыв администратору. "
+            "Если появятся новые вопросы — возвращайтесь.",
+            reply_markup=get_main_keyboard(),
+        )
+        asyncio.create_task(notify_admin(
+            f"💌 Отзыв о консультации\n\n"
+            f"👤 {user_label} [ID {user_id}]\n"
+            f"{type_label}: {sname}\n"
+            f"🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"💬 Ответ пользователя:\n{feedback_text}"
+        ))
+        return
 
     # ====== ПОТОК ОТЗЫВА ======
     if user_id in WAITING_REVIEW:
