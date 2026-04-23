@@ -182,6 +182,7 @@ def _serialize_active_sessions() -> dict:
             "history": s.get("history", []),
             "msg_count": s.get("msg_count", 0),
             "profanity_count": s.get("profanity_count", 0),
+            "anecdote_allowed": s.get("anecdote_allowed", False),
             "anecdote_used": s.get("anecdote_used", False),
             "expires_at": s.get("expires_at", 0),
         }
@@ -256,7 +257,6 @@ TAROLOGISTS = [
             "Пишешь тепло, но не слащаво, иногда скажешь что-то прямо и немного неудобно для человека. "
             "Используешь 'знаешь', 'понимаешь', 'чувствую вот что', 'хотя нет подожди'. "
             "Пишешь одним потоком без абзацев . Мысли иногда перескакивают, возвращаешься к ним позже. "
-            "Иногда скажи что-то конкретное из своей практики: 'у меня была клиентка с похожим', 'я такое часто вижу когда'. "
             "Иногда не договаривай, обрывай мысль: 'ну ты понимаешь к чему я'. "
             "Иногда повтори слово дважды для акцента. Иногда выскажись скептично или прямо без лишней теплоты. "
             "Знаки препинания ставь, иногда пропускай запятую перед 'что', пиши 'вообщем', 'тожа'. "
@@ -283,7 +283,6 @@ TAROLOGISTS = [
             "Иногда откровенно скептичен к ситуации клиента, пишешь как есть без смягчений. "
             "Пишешь одним жёстким потоком без абзацев, мысли рубленые. "
             "Иногда обрывай предложение и сразу следующее с другого угла: 'хотя нет. смотри сюда'. "
-            "Иногда упомяни что видел сотни таких случаев и это тебя не удивляет. "
             "Не финализируй красиво, последняя фраза может быть просто констатацией факта. "
             "Знаки препинания ставь, точки, запятые. Пиши 'нету', 'вообщем'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -309,7 +308,6 @@ TAROLOGISTS = [
             "Используешь 'ой', 'слушай', 'это интересно', 'хотя стоп', 'ну или вот ещё'. "
             "Можешь уйти в сторону и потом вернуться: 'ладно это другое, так вот'. "
             "Иногда скажи что-то неожиданно прямое, без оберегания чувств человека. "
-            "Иногда упомяни конкретный случай: 'я однажды видела такую комбинацию карт'. "
             "Не заканчивай выводом-резюме, просто оборви на живой мысли. "
             "Знаки препинания ставь, но иногда пропускай запятую перед 'что'. Пиши 'вообщем', 'тожа'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -336,7 +334,7 @@ TAROLOGISTS = [
             "Иногда зависнешь на какой-то детали которая тебя зацепила и долго её разворачиваешь. "
             "Не всегда заканчиваешь мысль до конца: 'ну в общем там много слоёв'. "
             "Иногда скажешь что-то неудобное прямо, без украшений: 'вообщем ситуация не очень'. "
-            "Иногда ссылайся на конкретный случай из практики. Не делай финального красивого вывода. "
+            "Не делай финального красивого вывода. "
             "Знаки препинания ставь, запятые, точки. Пиши 'вообщем', 'придти'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
         ),
@@ -359,7 +357,6 @@ TAROLOGISTS = [
             "Ты — Светлана, женщина 58 лет, таролог Марсельской традиции, 25 лет практики. "
             "Пишешь весомо и неторопливо, иногда 'дитя моё', 'жизнь такова', 'я это видела уже'. "
             "Не утешаешь без нужды, пишешь правду с достоинством. Иногда слегка ворчлива. "
-            "Иногда упомяни что за 25 лет видела всякое и этот случай тебе что-то напоминает. "
             "Иногда начни новую мысль немного не с того места и вырули по ходу. "
             "Не заканчивай речью о том что всё будет хорошо, это не в твоём стиле. "
             "Знаки препинания очень важны, ставь правильно. Иногда пиши 'вообщем', 'в виду'. "
@@ -387,7 +384,6 @@ TAROLOGISTS = [
             "Используешь 'блин', 'ого', 'это прям интересно', 'стоп стоп', 'а нет погоди'. "
             "Иногда скажешь что-то неудобно прямо без фильтра: ты ещё не научилась всегда смягчать. "
             "Иногда отвлечёшься на деталь карты которая тебя реально удивила. "
-            "Иногда скажи что видела такое в чужой раскладке однажды. "
             "Не заканчивай красивым выводом, просто обрывай на живой мысли. "
             "Знаки препинания ставь хотя бы точки и часть запятых. Пиши 'вообщем', 'тожа', допускай опечатки. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -412,7 +408,6 @@ TAROLOGISTS = [
             "Пишешь с огнём и образно, иногда притча вырывается прямо в середине мысли. "
             "Используешь 'как говорили мудрецы', 'это как пустыня', 'сердце знает'. "
             "Иногда оборвёшь образ на полуслове и скажешь что-то сухо и конкретно: контраст. "
-            "Иногда упомяни что-то из своего опыта в Средней Азии или с восточными клиентами. "
             "Не заканчивай красивым афоризмом каждый раз, иногда просто обрывай. "
             "Знаки препинания ставь, точки и запятые. Пиши 'вообщем', 'в принципи'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -435,9 +430,8 @@ TAROLOGISTS = [
         "personality": (
             "Ты — Вера, женщина 61 года, таролог с духовным уклоном, 30 лет практики. "
             "Пишешь неторопливо, старомодно, иногда отвлекаешься на что-то бытовое и возвращаешься. "
-            "Используешь 'голубчик', 'Господь управит', 'душа чует', 'вот я помню был случай'. "
+            "Используешь 'голубчик', 'Господь управит', 'душа чует'. "
             "Иногда скажешь что-то прямо и неудобно, как только пожилой человек и может: без злобы, просто честно. "
-            "Иногда уйдёшь в воспоминание: 'у меня однажды была женщина с похожим'. "
             "Не заканчивай всегда оптимистично, иногда просто тихо констатируй. "
             "Знаки препинания ставь правильно. Пиши 'вообщем', 'ихний', старомодные обороты. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -470,7 +464,6 @@ ASTROLOGERS = [
             "Используешь 'смотри', 'тут важно', 'обрати внимание', 'карта говорит следующее'. "
             "Иногда скажешь прямо неудобную вещь без смягчений: ты аналитик, не психолог. "
             "Иногда упомяни конкретный транзит или планету которая тебя зацепила. "
-            "Иногда добавь из своей практики: 'у меня была клиентка с похожей конфигурацией'. "
             "Не заворачивай красиво, просто пиши что видишь. "
             "Знаки препинания ставь правильно. Пиши 'вообщем', 'в виду'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -494,7 +487,6 @@ ASTROLOGERS = [
             "Пишешь неторопливо и глубоко. Используешь 'карма показывает', 'даша говорит', 'накшатра здесь такая', 'это не случайно'. "
             "Иногда уходишь в философское отступление и потом возвращаешься к конкретике. "
             "Иногда скажешь что-то тёмное или неудобное спокойно, без смягчений: просто констатация. "
-            "Иногда упомяни что за 28 лет видел похожую конфигурацию и что из этого вышло. "
             "Не торопишься, не заканчиваешь обнадёживающим выводом если карта не даёт оснований. "
             "Знаки препинания ставь, точки и запятые. Пиши 'вообщем', 'придти'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -519,7 +511,7 @@ ASTROLOGERS = [
             "Иногда зависаешь на аспекте который тебя реально зацепил. "
             "Иногда скажешь что-то неожиданно прямое: психологическая астрология не щадит. "
             "Иногда упомяни архетип планеты: 'Сатурн в 7 доме это про страх близости, понимаешь'. "
-            "Иногда расскажи деталь из практики. Не заканчивай красивым финалом, обрывай на живой мысли. "
+            "Не заканчивай красивым финалом, обрывай на живой мысли. "
             "Знаки препинания ставь, иногда пропускай запятую. Пиши 'вообщем', 'тожа'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
         ),
@@ -542,7 +534,6 @@ ASTROLOGERS = [
             "Пишешь сухо, конкретно, без эмоций. Используешь 'по карте выходит', 'транзит указывает', 'цикл завершается', 'здесь важно учесть'. "
             "Иногда даёшь конкретные временные рамки: 'ближайшие три месяца', 'когда Юпитер войдёт в'. "
             "Иногда скажешь жёсткую констатацию без оберток: привычка из аналитики. "
-            "Иногда упомяни что видел такую же планетарную конфигурацию в деловых случаях. "
             "Не заворачивай красиво. Просто факты и цифры. "
             "Знаки препинания ставь правильно. Пиши 'нету', 'вообщем'. "
             "Не используй тире ни длинные ни короткие, не используй абзацы."
@@ -733,12 +724,38 @@ NO_CONTACTS_RULE_SHORT = (
     "Только русский. Никаких 'стоп подожди', 'слушай' как начала сообщения."
 )
 
-ANECDOTE_RULE = (
-    "\n\nИСТОРИИ ИЗ ПРАКТИКИ ('была клиентка...', 'один парень у меня...' и т.п.) — "
-    "используй максимум 1 раз на весь ответ, и только если это прямо к месту. "
-    "В большинстве ответов (примерно 9 из 10) таких историй НЕТ ВООБЩЕ. "
-    "Не вставляй их как шаблонный приём — только если само просится."
-)
+# Вероятность того, что в конкретном сеансе специалисту будет РАЗРЕШЕНО
+# вставить одну историю из практики/жизни. Бросается один раз при старте сеанса.
+ANECDOTE_SESSION_PROBABILITY = 0.05
+
+
+def build_anecdote_block(anecdote_allowed: bool, anecdote_used: bool) -> str:
+    """Собирает блок правила про истории из практики/жизни для промпта.
+
+    anecdote_allowed — кубик на сеанс упал так, что одна история разрешена.
+    anecdote_used    — в этом сеансе история уже была (запрещаем повтор).
+    """
+    if anecdote_used:
+        return (
+            "\n\nНЕ упоминай истории из практики или личной жизни "
+            "('была клиентка', 'у меня был парень' и т.п.) — "
+            "ты уже использовал это в этом сеансе. Больше не нужно."
+        )
+    if anecdote_allowed:
+        return (
+            "\n\nИСТОРИЯ ИЗ ПРАКТИКИ ИЛИ ЖИЗНИ (РЕДКИЙ ПРИЁМ): "
+            "в этом ответе можно один раз ненавязчиво вставить короткую историю "
+            "('была клиентка с похожим', 'у меня был знакомый...' и т.п.) — "
+            "но только если она реально сама ложится к вопросу. "
+            "Максимум одно-два предложения, без пересказа всей истории. "
+            "Если не просится — не вставляй принудительно."
+        )
+    return (
+        "\n\nНЕ рассказывай истории из практики и личной жизни "
+        "('была клиентка', 'у меня был парень', 'моя подруга', 'мой бывший' и любые подобные) — "
+        "ни в одном сообщении этого ответа. "
+        "Работай с ситуацией человека напрямую, без отсылок к своему опыту и знакомым."
+    )
 
 FOLLOW_UP_QUESTION_RULE = (
     "\n\nМЯГКИЙ НАВОДЯЩИЙ ВОПРОС (редко и ненавязчиво):"
@@ -1563,7 +1580,7 @@ async def check_profanity(text: str) -> bool:
     return "YES" in result.upper()
 
 # ====== ОТВЕТ ТАРОЛОГА (первичный расклад) ======
-async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_flagged: bool = False) -> str:
+async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_flagged: bool = False, anecdote_allowed: bool = False) -> str:
     history = get_user_tarot_history(user_id, tarologist["id"])[-10:]
     history_text = ""
     if history:
@@ -1612,6 +1629,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 
     age = tarologist.get("age", 35)
     typing_style = get_age_typing_style(age)
+    anecdote_block = build_anecdote_block(anecdote_allowed, False)
 
     if is_flagged:
         moderation_hint = tarologist.get("moderation_hint", "Начни с короткой ироничной ремарки про грубые слова, одно предложение.")
@@ -1628,7 +1646,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 Ты пишешь с телефона двумя пальцами, медленно. Отправляй мысли по одной, короткими сообщениями по 1-2 строки. Каждое сообщение отдели строкой "|||". Суммарно не более 300 знаков. Никаких тире. Знаки препинания почти не ставишь. Сохраняй свой характер.
 {typing_style}
 {NO_CONTACTS_RULE}
-{ANECDOTE_RULE}
+{anecdote_block}
 """
         else:
             prompt = f"""
@@ -1643,7 +1661,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 После вступительной ремарки дай короткий ответ на вопрос от лица своего персонажа. Упомяни карты (придумай). Пиши одним блоком без абзацев. Никаких тире. Общий объём 80-100 слов. Не строй ответ как мини-эссе, пиши хаотично как живой человек. Никаких связок "однако", "при этом", "таким образом".
 {typing_style}
 {NO_CONTACTS_RULE}
-{ANECDOTE_RULE}
+{anecdote_block}
 """
         return await ask_ai(prompt, max_tokens=400)
     elif age >= 40:
@@ -1667,7 +1685,7 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 - Сохраняй свой характер и тон
 {typing_style}
 {NO_CONTACTS_RULE}
-{ANECDOTE_RULE}
+{anecdote_block}
 {FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=500)
@@ -1688,13 +1706,12 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 - Никогда не используй: "однако", "при этом", "таким образом", "во-первых", "во-вторых", "в заключение"
 - Иногда обрывай мысль и перескакивай, потом возвращайся
 - Иногда повтори слово дважды для акцента
-- Иногда упомяни случай из своей практики одной фразой (но не в каждом ответе!)
 - Не заканчивай красиво, последняя мысль может быть обрывистой
 - НЕ будь идеально тёплым в каждой фразе, иногда просто сухо по делу
 - Пиши специфично под эту ситуацию, не обобщай
 {typing_style}
 {NO_CONTACTS_RULE}
-{ANECDOTE_RULE}
+{anecdote_block}
 {FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=1000)
@@ -1752,7 +1769,8 @@ async def send_tarot_answer_delayed(
         await asyncio.sleep(remaining)
 
     try:
-        answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged)
+        anecdote_allowed = random.random() < ANECDOTE_SESSION_PROBABILITY
+        answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged, anecdote_allowed=anecdote_allowed)
         if answer:
             answer = strip_dashes_ellipsis(answer)
             save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
@@ -1782,6 +1800,8 @@ async def send_tarot_answer_delayed(
                 "history": session_history,
                 "msg_count": 0,
                 "profanity_count": 0,
+                "anecdote_allowed": anecdote_allowed,
+                "anecdote_used": _has_anecdote(answer),
                 "expires_at": time.time() + SESSION_DURATION_SEC,
             }
             SESSION_BUSY[user_id_str] = False
@@ -1813,7 +1833,7 @@ async def send_tarot_answer_delayed(
         _remove_pending_answer(pending_id)
 
 # ====== АСТРОЛОГИЯ: ПЕРВИЧНЫЙ ОТВЕТ ======
-async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_flagged: bool = False) -> str:
+async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_flagged: bool = False, anecdote_allowed: bool = False) -> str:
     history = get_user_astro_history(user_id, astrologer["id"])[-10:]
     history_text = ""
     if history:
@@ -1855,6 +1875,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 
     age = astrologer.get("age", 40)
     typing_style = get_age_typing_style(age)
+    anecdote_block = build_anecdote_block(anecdote_allowed, False)
 
     moderation_block = ""
     if is_flagged:
@@ -1887,7 +1908,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 ОБЯЗАТЕЛЬНО используй опечатки из своего характера: пиши 'вообщем' вместо 'вообще', и другие слова из описания личности.
 {typing_style}
 {NO_CONTACTS_RULE}
-{ANECDOTE_RULE}
+{anecdote_block}
 {FOLLOW_UP_QUESTION_RULE}
 """
     else:
@@ -1914,7 +1935,7 @@ async def get_astro_answer(astrologer: dict, user_story: str, user_id: str, is_f
 ОБЯЗАТЕЛЬНО используй опечатки из своего характера: пиши 'вообщем' вместо 'вообще', и другие слова из описания личности.
 {typing_style}
 {NO_CONTACTS_RULE}
-{ANECDOTE_RULE}
+{anecdote_block}
 {FOLLOW_UP_QUESTION_RULE}
 """
     return await ask_ai(prompt, max_tokens=1100)
@@ -1957,7 +1978,8 @@ async def send_astro_answer_delayed(
         await asyncio.sleep(remaining)
 
     try:
-        answer = await get_astro_answer(astrologer, user_story, str(user_id), is_flagged=is_flagged)
+        anecdote_allowed = random.random() < ANECDOTE_SESSION_PROBABILITY
+        answer = await get_astro_answer(astrologer, user_story, str(user_id), is_flagged=is_flagged, anecdote_allowed=anecdote_allowed)
         if answer:
             answer = strip_dashes_ellipsis(answer)
             save_user_astro_message(str(user_id), astrologer["id"], "user", user_story)
@@ -1989,6 +2011,7 @@ async def send_astro_answer_delayed(
                 "history": session_history,
                 "msg_count": 0,
                 "profanity_count": 0,
+                "anecdote_allowed": anecdote_allowed,
                 "anecdote_used": _has_anecdote(answer),
                 "expires_at": time.time() + SESSION_DURATION_SEC,
             }
@@ -2019,7 +2042,7 @@ async def send_astro_answer_delayed(
 
 
 # ====== СЕАНС: ОТВЕТ НА ДОПВОПРОС ======
-async def get_session_reply(tarologist: dict, user_message: str, session_history: list, is_flagged: bool = False) -> str:
+async def get_session_reply(tarologist: dict, user_message: str, session_history: list, is_flagged: bool = False, anecdote_used: bool = False, anecdote_allowed: bool = False) -> str:
     age = tarologist.get("age", 35)
     typing_style = get_age_typing_style(age)
 
@@ -2046,6 +2069,8 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
         "Каждый ответ должен быть НОВЫМ по содержанию."
     )
 
+    anecdote_block = build_anecdote_block(anecdote_allowed, anecdote_used)
+
     if age >= 40:
         prompt = f"""
 {tarologist['personality']}
@@ -2065,6 +2090,7 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 Знаки препинания почти не ставишь. Мысли рваные.
 {typing_style}
 {NO_CONTACTS_RULE}
+{anecdote_block}
 {FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=300)
@@ -2087,6 +2113,7 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 Не строй как мини-эссе. Пиши как мысли приходят. Никаких "однако", "при этом", "таким образом".
 {typing_style}
 {NO_CONTACTS_RULE}
+{anecdote_block}
 {FOLLOW_UP_QUESTION_RULE}
 """
         return await ask_ai(prompt, max_tokens=400)
@@ -2094,10 +2121,19 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 
 def _has_anecdote(text: str) -> bool:
     tl = text.lower()
-    return any(m in tl for m in ["была клиентка", "был клиент", "одна клиентка", "один клиент"])
+    markers = [
+        "была клиентка", "был клиент", "одна клиентка", "один клиент",
+        "у меня был парень", "у меня была девушка", "у меня была подруга",
+        "у меня был знакомый", "у меня была знакомая",
+        "мой бывший", "моя бывшая",
+        "был у меня случай", "была у меня",
+        "я однажды видела", "я однажды видел",
+        "однажды мне попалась", "однажды мне попался",
+    ]
+    return any(m in tl for m in markers)
 
 
-async def get_astro_session_reply(astrologer: dict, user_message: str, session_history: list, is_flagged: bool = False, anecdote_used: bool = False) -> str:
+async def get_astro_session_reply(astrologer: dict, user_message: str, session_history: list, is_flagged: bool = False, anecdote_used: bool = False, anecdote_allowed: bool = False) -> str:
     age = astrologer.get("age", 40)
     typing_style = get_age_typing_style(age)
 
@@ -2118,13 +2154,7 @@ async def get_astro_session_reply(astrologer: dict, user_message: str, session_h
         "Не пересказывай натальную карту снова. Каждый ответ должен быть НОВЫМ по содержанию."
     )
 
-    if anecdote_used:
-        anecdote_block = (
-            "\n\nНЕ упоминай истории из практики ('была клиентка', 'один клиент' и т.п.) — "
-            "ты уже использовал это в этом сеансе. Больше не нужно."
-        )
-    else:
-        anecdote_block = ANECDOTE_RULE
+    anecdote_block = build_anecdote_block(anecdote_allowed, anecdote_used)
 
     if age >= 40:
         prompt = f"""
@@ -2278,16 +2308,16 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
         return
 
     if session.get("type") == "astro":
-        answer = await get_astro_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged, anecdote_used=session.get("anecdote_used", False))
+        answer = await get_astro_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged, anecdote_used=session.get("anecdote_used", False), anecdote_allowed=session.get("anecdote_allowed", False))
     else:
-        answer = await get_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged)
+        answer = await get_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged, anecdote_used=session.get("anecdote_used", False), anecdote_allowed=session.get("anecdote_allowed", False))
     if not answer:
         SESSION_BUSY[user_id_str] = False
         return
 
     answer = strip_dashes_ellipsis(answer)
 
-    if session.get("type") == "astro" and _has_anecdote(answer):
+    if _has_anecdote(answer):
         session["anecdote_used"] = True
 
     session["history"].append({"role": "tarot", "text": answer})
@@ -3894,6 +3924,7 @@ async def _restore_active_sessions() -> None:
                 "history": s.get("history", []),
                 "msg_count": s.get("msg_count", 0),
                 "profanity_count": s.get("profanity_count", 0),
+                "anecdote_allowed": s.get("anecdote_allowed", False),
                 "anecdote_used": s.get("anecdote_used", False),
                 "expires_at": expires_at,
             }
