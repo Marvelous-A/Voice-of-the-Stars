@@ -1293,12 +1293,18 @@ def _shrink_prompt_for_free(prompt: str) -> str:
 
 
 def _is_quota_error(err: dict | None) -> bool:
+    """True если ошибка про деньги/квоту/рейт-лимит апстрима — повод уйти на free-fallback."""
     if not err:
         return False
-    if err.get("code") == 402:
+    if err.get("code") in (402, 429):
         return True
     msg = (err.get("message") or "").lower()
-    return "credit" in msg or "afford" in msg or "tokens limit" in msg
+    raw = ""
+    meta = err.get("metadata")
+    if isinstance(meta, dict):
+        raw = (meta.get("raw") or "").lower()
+    haystack = msg + " " + raw
+    return any(kw in haystack for kw in ("credit", "afford", "tokens limit", "rate-limit", "rate limit"))
 
 
 async def _call_openrouter(model: str, prompt: str, max_tokens: int) -> tuple[str, dict | None]:
