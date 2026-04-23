@@ -1317,7 +1317,6 @@ async def _call_openrouter(model: str, prompt: str, max_tokens: int) -> tuple[st
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
-        "provider": {"quantizations": ["bf16", "fp16", "fp32"], "sort": "price"},
         "usage": {"include": True},
     }
     try:
