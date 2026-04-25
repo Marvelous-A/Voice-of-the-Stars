@@ -1197,8 +1197,12 @@ async def cb_feedback_send(callback: CallbackQuery):
         await callback.answer("BOT_TOKEN не задан — нечем отправлять.", show_alert=True)
         return
     text = build_feedback_message(stype, target["specialist_name"])
+    user_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Завершить отзыв", callback_data="fb_done"),
+        InlineKeyboardButton(text="⏰ Ответить позже", callback_data="fb_later"),
+    ]])
     try:
-        await main_bot.send_message(int(uid), text)
+        await main_bot.send_message(int(uid), text, reply_markup=user_kb)
     except Exception as e:
         await callback.message.edit_text(
             (callback.message.text or "") + f"\n\n⚠️ Не удалось отправить: {e}"
@@ -1211,6 +1215,8 @@ async def cb_feedback_send(callback: CallbackQuery):
         "specialist_id": sid,
         "specialist_name": target["specialist_name"],
         "sent_at": datetime.now().isoformat(),
+        "state": "active",
+        "messages_count": 0,
     }
     save_waiting_feedback(data)
     await callback.message.edit_text(

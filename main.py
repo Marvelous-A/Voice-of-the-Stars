@@ -142,7 +142,12 @@ os.makedirs(VOICE_REQUESTS_DIR, exist_ok=True)
 
 # ====== ОПРОС О КОНСУЛЬТАЦИИ (инициируется из админ-бота) ======
 # Формат записи в waiting_feedback.json:
-#   {"user_id_str": {"type": "tarot|astro", "specialist_id", "specialist_name", "sent_at"}}
+#   {"user_id_str": {"type": "tarot|astro", "specialist_id", "specialist_name",
+#                    "sent_at", "state": "active|deferred", "messages_count": int}}
+# Запись живёт до явного «✅ Завершить» от пользователя или до истечения TTL.
+FEEDBACK_TTL_HOURS = 48
+
+
 def _load_waiting_feedback() -> dict:
     try:
         with open(WAITING_FEEDBACK_FILE, "r", encoding="utf-8") as f:
@@ -165,6 +170,41 @@ def _pop_waiting_feedback(user_id: str) -> dict | None:
     if entry is not None:
         _save_waiting_feedback(data)
     return entry
+
+
+def _update_waiting_feedback(user_id: str, **changes) -> dict | None:
+    data = _load_waiting_feedback()
+    entry = data.get(user_id)
+    if entry is None:
+        return None
+    entry.update(changes)
+    data[user_id] = entry
+    _save_waiting_feedback(data)
+    return entry
+
+
+def _feedback_is_expired(entry: dict) -> bool:
+    sent_at = entry.get("sent_at", "")
+    if not sent_at:
+        return False
+    try:
+        sent_dt = datetime.fromisoformat(sent_at)
+    except ValueError:
+        return False
+    return datetime.now() - sent_dt > timedelta(hours=FEEDBACK_TTL_HOURS)
+
+
+def _feedback_action_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Завершить отзыв", callback_data="fb_done"),
+        InlineKeyboardButton(text="⏰ Ответить позже", callback_data="fb_later"),
+    ]])
+
+
+def _feedback_resume_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✍️ Написать отзыв", callback_data="fb_resume"),
+    ]])
 
 
 # ====== ПЕРСИСТЕНТНОСТЬ ОТЛОЖЕННЫХ ОТВЕТОВ И СЕАНСОВ ======
@@ -3464,6 +3504,85 @@ async def review_cancel(callback: CallbackQuery):
     await callback.message.answer("Отменено.", reply_markup=get_main_keyboard())
     await callback.answer()
 
+
+@dp.callback_query(F.data == "fb_done")
+async def feedback_done(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    entry = _pop_waiting_feedback(user_id)
+    if not entry:
+        await callback.answer("Этот отзыв уже закрыт.", show_alert=False)
+        return
+    stype = entry.get("type", "")
+    sname = entry.get("specialist_name", "—")
+    count = int(entry.get("messages_count", 0))
+    type_label = "🎴 Таролог" if stype == "tarot" else "⭐ Астролог"
+    user_label = (
+        f"@{callback.from_user.username}" if callback.from_user.username
+        else (callback.from_user.full_name or f"ID {user_id}")
+    )
+    await callback.message.answer(
+        "💛 Спасибо за отзыв! Мы всё передали администрации. "
+        "Если появятся новые вопросы — возвращайтесь.",
+        reply_markup=get_main_keyboard(),
+    )
+    asyncio.create_task(notify_admin(
+        f"✅ Отзыв завершён пользователем\n\n"
+        f"👤 {user_label} [ID {user_id}]\n"
+        f"{type_label}: {sname}\n"
+        f"💬 Сообщений в отзыве: {count}"
+    ))
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "fb_later")
+async def feedback_later(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    entry = _update_waiting_feedback(user_id, state="deferred")
+    if not entry:
+        await callback.answer("Запрос на отзыв уже не активен.", show_alert=False)
+        return
+    await callback.message.answer(
+        "⏰ Хорошо, не торопитесь. Когда будете готовы поделиться впечатлением — "
+        "просто нажмите кнопку ниже:",
+        reply_markup=_feedback_resume_keyboard(),
+    )
+    sname = entry.get("specialist_name", "—")
+    user_label = (
+        f"@{callback.from_user.username}" if callback.from_user.username
+        else (callback.from_user.full_name or f"ID {user_id}")
+    )
+    asyncio.create_task(notify_admin(
+        f"⏰ Отзыв отложен пользователем\n\n"
+        f"👤 {user_label} [ID {user_id}]\n"
+        f"⭐ {sname}\n"
+        f"Ожидаем, пока пользователь вернётся к отзыву."
+    ))
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "fb_resume")
+async def feedback_resume(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    entry = _load_waiting_feedback().get(user_id)
+    if not entry:
+        await callback.answer("Запрос на отзыв уже не активен.", show_alert=False)
+        return
+    if _feedback_is_expired(entry):
+        _pop_waiting_feedback(user_id)
+        await callback.message.answer(
+            "Время для этого отзыва истекло. Если будут впечатления — "
+            "напишите их через раздел «⭐ Отзывы»."
+        )
+        await callback.answer()
+        return
+    _update_waiting_feedback(user_id, state="active")
+    await callback.message.answer(
+        "✍️ Отлично! Делитесь впечатлениями — можно несколькими сообщениями. "
+        "Когда закончите, нажмите «✅ Завершить отзыв».",
+        reply_markup=_feedback_action_keyboard(),
+    )
+    await callback.answer()
+
 @dp.message(F.text == "ℹ️ О нас")
 async def about_us(message: Message):
     user_id = message.from_user.id
@@ -3706,32 +3825,39 @@ async def handle_story(message: Message):
 
     # ====== ОТВЕТ НА ЗАПРОС ОБ ОПЫТЕ КОНСУЛЬТАЦИИ (инициирован админом) ======
     feedback_entry = _load_waiting_feedback().get(user_id)
-    if feedback_entry:
-        feedback_text = (message.text or "").strip()
-        if len(feedback_text) < 2:
-            await message.answer("Напиши, пожалуйста, чуть подробнее — пара слов или больше. 💛")
+    if feedback_entry and feedback_entry.get("state", "active") == "active":
+        if _feedback_is_expired(feedback_entry):
+            _pop_waiting_feedback(user_id)
+        else:
+            feedback_text = (message.text or "").strip()
+            if len(feedback_text) < 2:
+                await message.answer("Напиши, пожалуйста, чуть подробнее — пара слов или больше. 💛")
+                return
+            count = int(feedback_entry.get("messages_count", 0)) + 1
+            _update_waiting_feedback(user_id, messages_count=count)
+            stype = feedback_entry.get("type", "")
+            sname = feedback_entry.get("specialist_name", "—")
+            type_label = "🎴 Таролог" if stype == "tarot" else "⭐ Астролог"
+            user_label = (
+                f"@{message.from_user.username}" if message.from_user.username
+                else (message.from_user.full_name or f"ID {user_id}")
+            )
+            if count == 1:
+                ack = (
+                    "💛 Спасибо, передал админу. Если хотите дополнить — пишите ещё, "
+                    "сколько нужно. Когда закончите, нажмите «✅ Завершить отзыв»."
+                )
+            else:
+                ack = "💛 Принял. Можно дописать или закрыть отзыв кнопкой ниже."
+            await message.answer(ack, reply_markup=_feedback_action_keyboard())
+            asyncio.create_task(notify_admin(
+                f"💌 Отзыв о консультации (сообщение #{count})\n\n"
+                f"👤 {user_label} [ID {user_id}]\n"
+                f"{type_label}: {sname}\n"
+                f"🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"💬 Ответ пользователя:\n{feedback_text}"
+            ))
             return
-        _pop_waiting_feedback(user_id)
-        stype = feedback_entry.get("type", "")
-        sname = feedback_entry.get("specialist_name", "—")
-        type_label = "🎴 Таролог" if stype == "tarot" else "⭐ Астролог"
-        user_label = (
-            f"@{message.from_user.username}" if message.from_user.username
-            else (message.from_user.full_name or f"ID {user_id}")
-        )
-        await message.answer(
-            "💛 Спасибо! Мы передали ваш отзыв администратору. "
-            "Если появятся новые вопросы — возвращайтесь.",
-            reply_markup=get_main_keyboard(),
-        )
-        asyncio.create_task(notify_admin(
-            f"💌 Отзыв о консультации\n\n"
-            f"👤 {user_label} [ID {user_id}]\n"
-            f"{type_label}: {sname}\n"
-            f"🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-            f"💬 Ответ пользователя:\n{feedback_text}"
-        ))
-        return
 
     # ====== ПОТОК ОТЗЫВА ======
     if user_id in WAITING_REVIEW:
