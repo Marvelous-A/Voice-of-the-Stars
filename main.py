@@ -2549,7 +2549,7 @@ CHANNEL_POST_TOPICS = [
     {"category": "meditation", "topic": "Напиши пост о том, почему одним знакам зодиака легко медитировать, а другим сложно."},
 ]
 
-CHANNEL_POST_INTERVAL = 90  # интервал постинга в минутах (1,5 часа)
+CHANNEL_POST_INTERVAL = 85  # интервал постинга в минутах (1 час 25 минут)
 CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
 PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
 
@@ -2865,7 +2865,7 @@ async def scheduler():
             morning_sent_date = today
             await send_morning_notifications()
 
-        # Автопостинг в канал каждые 1,5 часа в активные часы
+        # Автопостинг в канал каждые 1 час 25 минут в активные часы
         if CHANNEL_ACTIVE_HOURS[0] <= msk.hour < CHANNEL_ACTIVE_HOURS[1]:
             should_post = False
             if last_channel_post is None:
