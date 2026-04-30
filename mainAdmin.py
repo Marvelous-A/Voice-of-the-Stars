@@ -17,6 +17,7 @@ import re
 from datetime import datetime, timedelta
 from os import getenv
 
+import main as main_app
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
@@ -89,18 +90,22 @@ BTN_REQUESTS = "📩 Консультации"
 BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_FEEDBACK = "💌 Запросить отзыв"
+BTN_CHANNEL_POST = "📢 Сгенерировать пост"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
+
+CHANNEL_POST_LOCK = asyncio.Lock()
 
 
 def get_admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_STATUS)],
+            [KeyboardButton(text=BTN_CHANNEL_POST)],
             [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
-            [KeyboardButton(text=BTN_USERS), KeyboardButton(text=BTN_FIND)],
+            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_USERS)],
             [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
-            [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_REFRESH)],
+            [KeyboardButton(text=BTN_REFRESH)],
         ],
         resize_keyboard=True,
     )
@@ -880,6 +885,35 @@ async def handle_refresh(message: Message):
 async def handle_stats(message: Message):
     _reset_input_state(message.from_user.id)
     await message.answer(render_stats(), parse_mode="Markdown")
+
+
+@dp.message(F.text == BTN_CHANNEL_POST)
+async def handle_channel_post(message: Message):
+    _reset_input_state(message.from_user.id)
+    if not CHANNEL_ID:
+        await message.answer("⚠️ CHANNEL_ID не задан в .env — не знаю, куда публиковать пост.")
+        return
+
+    if CHANNEL_POST_LOCK.locked():
+        await message.answer("⏳ Пост уже генерируется. Дождись завершения текущей публикации.")
+        return
+
+    async with CHANNEL_POST_LOCK:
+        status = await message.answer("📢 Генерирую пост для канала и подбираю картинку...")
+        posted = await main_app.post_to_channel()
+        if not posted:
+            await status.edit_text(
+                "⚠️ Не удалось опубликовать пост. Проверь логи основного бота, токены ИИ и доступ бота к каналу."
+            )
+            return
+
+        posted_at = main_app._msk_now()
+        main_app._mark_channel_post_time(posted_at)
+        next_post_at = posted_at + timedelta(minutes=main_app.CHANNEL_POST_INTERVAL)
+        await status.edit_text(
+            "✅ Пост опубликован в канале.\n\n"
+            f"Следующий автоматический пост: примерно в {next_post_at.strftime('%d.%m.%Y %H:%M')} МСК."
+        )
 
 
 @dp.message(F.text == BTN_USERS)

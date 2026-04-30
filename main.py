@@ -2676,6 +2676,12 @@ def _is_fresh_image(url: str) -> bool:
     return bool(url) and _normalize_image_url(url) not in RECENT_IMAGE_URLS
 
 
+def _sync_recent_images_from_state() -> None:
+    RECENT_IMAGE_URLS.clear()
+    for u in load_channel_state().get("recent_images", []) or []:
+        RECENT_IMAGE_URLS.append(u)
+
+
 async def get_channel_image(category: str = "") -> str:
     """Подбирает тематическую картинку под категорию поста. Избегает недавно использованных."""
     queries = list(CHANNEL_IMAGE_QUERIES.get(category, []))
@@ -2818,16 +2824,28 @@ def _mark_channel_post_time(msk) -> None:
     save_channel_state(state)
 
 
-async def post_to_channel():
+def _get_last_channel_post_from_state():
+    state = load_channel_state()
+    last_post_iso = state.get("last_post")
+    if not last_post_iso:
+        return None
+    try:
+        return datetime.fromisoformat(last_post_iso)
+    except Exception:
+        return None
+
+
+async def post_to_channel() -> bool:
     """Генерирует и отправляет пост в канал с подобранной по теме картинкой."""
     if not CHANNEL_ID:
-        return
+        return False
     try:
+        _sync_recent_images_from_state()
         topic_info = random.choice(CHANNEL_POST_TOPICS)
         text = await generate_channel_post(topic_info["topic"])
         if not text:
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
-            return
+            return False
 
         text = with_channel_bot_promo(text)
 
@@ -2850,8 +2868,10 @@ async def post_to_channel():
         msk = _msk_now()
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
               f"(категория: {topic_info.get('category', '-')}, фото: {'да' if image_url else 'нет'})")
+        return True
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
+        return False
 
 # ====== ПЛАНИРОВЩИК ======
 async def scheduler():
@@ -2869,17 +2889,8 @@ async def scheduler():
     # Восстанавливаем состояние автопостинга после возможного рестарта:
     # recent_images — чтобы не повторить недавнюю картинку,
     # last_post — чтобы не слать пост сразу после перезапуска.
-    channel_state = load_channel_state()
-    RECENT_IMAGE_URLS.clear()
-    for u in channel_state.get("recent_images", []) or []:
-        RECENT_IMAGE_URLS.append(u)
-    last_channel_post = None
-    last_post_iso = channel_state.get("last_post")
-    if last_post_iso:
-        try:
-            last_channel_post = datetime.fromisoformat(last_post_iso)
-        except Exception:
-            last_channel_post = None
+    _sync_recent_images_from_state()
+    last_channel_post = _get_last_channel_post_from_state()
 
     # Если при старте уже прошло 8 утра — отмечаем как отправленное, чтобы не слать повторно
     if msk.hour >= 8:
@@ -2902,15 +2913,20 @@ async def scheduler():
 
         # Автопостинг в канал каждые 1 час 25 минут в активные часы
         if CHANNEL_ACTIVE_HOURS[0] <= msk.hour < CHANNEL_ACTIVE_HOURS[1]:
+            state_last_post = _get_last_channel_post_from_state()
+            if state_last_post and (last_channel_post is None or state_last_post > last_channel_post):
+                last_channel_post = state_last_post
+
             should_post = False
             if last_channel_post is None:
                 should_post = True
             elif (msk - last_channel_post).total_seconds() >= CHANNEL_POST_INTERVAL * 60:
                 should_post = True
             if should_post:
-                last_channel_post = msk
-                _mark_channel_post_time(msk)
-                await post_to_channel()
+                posted = await post_to_channel()
+                if posted:
+                    last_channel_post = _msk_now()
+                    _mark_channel_post_time(last_channel_post)
 
         next_minute = (msk + timedelta(minutes=1)).replace(second=0, microsecond=0)
         await asyncio.sleep((next_minute - msk).total_seconds())
