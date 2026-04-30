@@ -2549,6 +2549,90 @@ CHANNEL_POST_TOPICS = [
     {"category": "meditation", "topic": "Напиши пост о том, почему одним знакам зодиака легко медитировать, а другим сложно."},
 ]
 
+CHANNEL_POST_EXTRA_TOPICS = [
+    ("astrology", "Астрология"),
+    ("astrology", "Натальная карта"),
+    ("zodiac", "Гороскопы"),
+    ("astrology", "Синастрия и совместимость"),
+    ("planets", "Прогностика: транзиты, прогрессии, соляры"),
+    ("moon", "Лунные циклы и лунный календарь"),
+    ("astrology", "Ведическая астрология"),
+    ("astrology", "Китайская астрология"),
+    ("numerology", "Нумерология"),
+    ("tarot", "Таро"),
+    ("tarot", "Оракульные карты"),
+    ("divination", "Ленорман"),
+    ("divination", "Руны"),
+    ("divination", "Маятник и биолокация"),
+    ("divination", "Хиромантия"),
+    ("mystic", "Экстрасенсорика"),
+    ("mystic", "Ясновидение"),
+    ("mystic", "Яснослышание"),
+    ("mystic", "Яснознание"),
+    ("mystic", "Интуиция и ее развитие"),
+    ("mystic", "Энергетика человека"),
+    ("mystic", "Чакры"),
+    ("mystic", "Аура"),
+    ("mystic", "Энергетическая защита"),
+    ("mystic", "Очищение пространства"),
+    ("mystic", "Снятие негатива"),
+    ("meditation", "Медитации"),
+    ("meditation", "Визуализации"),
+    ("dreams", "Осознанные сновидения"),
+    ("dreams", "Астральные путешествия"),
+    ("karma", "Регрессии в прошлые жизни"),
+    ("karma", "Реинкарнация"),
+    ("karma", "Карма"),
+    ("karma", "Родовые программы"),
+    ("karma", "Работа с предками"),
+    ("mystic", "Духовные практики"),
+    ("mystic", "Магия свечей"),
+    ("mystic", "Ритуалы и обряды"),
+    ("mystic", "Заговоры"),
+    ("crystals", "Амулеты и талисманы"),
+    ("crystals", "Кристаллы и минералы"),
+    ("crystals", "Литотерапия"),
+    ("mystic", "Травничество"),
+    ("mystic", "Ароматерапия"),
+    ("meditation", "Рейки"),
+    ("meditation", "Цигун"),
+    ("meditation", "Кундалини"),
+    ("mystic", "Каббала"),
+    ("mystic", "Алхимия"),
+    ("mystic", "Герметизм"),
+    ("mystic", "Шаманизм"),
+    ("mystic", "Тотемные животные"),
+    ("mystic", "Ангелология"),
+    ("mystic", "Работа с духовными наставниками"),
+    ("mystic", "Ченнелинг"),
+    ("mystic", "Спиритизм"),
+    ("mystic", "Контакт с тонким миром"),
+    ("numerology", "Символика и сакральная геометрия"),
+    ("mystic", "Фэншуй"),
+    ("mystic", "Васту"),
+    ("meditation", "Мандалы"),
+    ("meditation", "Мантры"),
+    ("mystic", "Сакральные тексты"),
+    ("mystic", "Энергетические практики для дома"),
+    ("mystic", "Практики исполнения желаний"),
+    ("mystic", "Закон притяжения"),
+    ("mystic", "Тета-хилинг"),
+    ("numerology", "Матрица судьбы"),
+    ("mystic", "Дизайн человека"),
+    ("mystic", "Психосоматика в эзотерическом подходе"),
+]
+
+CHANNEL_POST_TOPICS.extend(
+    {
+        "category": category,
+        "topic": (
+            f"Напиши короткий интересный пост на тему: {topic_name}. "
+            "Раскрой одну практичную мысль, добавь живой пример или наблюдение и мягкий вопрос читателю."
+        ),
+    }
+    for category, topic_name in CHANNEL_POST_EXTRA_TOPICS
+)
+
 CHANNEL_POST_INTERVAL = 85  # интервал постинга в минутах (1 час 25 минут)
 CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
 PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
@@ -2610,6 +2694,8 @@ UNSPLASH_FALLBACK_IMAGES = [
 # Персистится в CHANNEL_STATE_FILE, чтобы переживать перезапуски.
 RECENT_IMAGE_URLS: list[str] = []
 MAX_RECENT_IMAGES = 12
+RECENT_TOPIC_KEYS: list[str] = []
+MAX_RECENT_TOPICS = 8
 
 
 def _normalize_image_url(url: str) -> str:
@@ -2680,6 +2766,52 @@ def _sync_recent_images_from_state() -> None:
     RECENT_IMAGE_URLS.clear()
     for u in load_channel_state().get("recent_images", []) or []:
         RECENT_IMAGE_URLS.append(u)
+
+
+def _topic_key(topic_info: dict) -> str:
+    return (topic_info.get("topic") or "").strip()
+
+
+def _sync_recent_topics_from_state() -> None:
+    RECENT_TOPIC_KEYS.clear()
+    for key in load_channel_state().get("recent_topics", []) or []:
+        if isinstance(key, str) and key.strip():
+            RECENT_TOPIC_KEYS.append(key.strip())
+    while len(RECENT_TOPIC_KEYS) > MAX_RECENT_TOPICS:
+        RECENT_TOPIC_KEYS.pop(0)
+
+
+def _remember_channel_topic(topic_info: dict) -> None:
+    key = _topic_key(topic_info)
+    if not key:
+        return
+    if key in RECENT_TOPIC_KEYS:
+        RECENT_TOPIC_KEYS.remove(key)
+    RECENT_TOPIC_KEYS.append(key)
+    while len(RECENT_TOPIC_KEYS) > MAX_RECENT_TOPICS:
+        RECENT_TOPIC_KEYS.pop(0)
+
+    state = load_channel_state()
+    state["recent_topics"] = RECENT_TOPIC_KEYS
+    save_channel_state(state)
+
+
+def _select_channel_topic() -> dict:
+    _sync_recent_topics_from_state()
+    fresh_topics = [
+        topic_info for topic_info in CHANNEL_POST_TOPICS
+        if _topic_key(topic_info) not in RECENT_TOPIC_KEYS
+    ]
+    if fresh_topics:
+        return random.choice(fresh_topics)
+
+    # If every topic is in recent history, allow the oldest one back into rotation.
+    oldest_key = RECENT_TOPIC_KEYS[0] if RECENT_TOPIC_KEYS else ""
+    fallback_topics = [
+        topic_info for topic_info in CHANNEL_POST_TOPICS
+        if _topic_key(topic_info) == oldest_key
+    ]
+    return random.choice(fallback_topics or CHANNEL_POST_TOPICS)
 
 
 async def get_channel_image(category: str = "") -> str:
@@ -2841,7 +2973,7 @@ async def post_to_channel() -> bool:
         return False
     try:
         _sync_recent_images_from_state()
-        topic_info = random.choice(CHANNEL_POST_TOPICS)
+        topic_info = _select_channel_topic()
         text = await generate_channel_post(topic_info["topic"])
         if not text:
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
@@ -2866,8 +2998,11 @@ async def post_to_channel() -> bool:
             await _send(plain, None)
 
         msk = _msk_now()
+        _remember_channel_topic(topic_info)
+        topic_preview = _topic_key(topic_info)[:80]
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
-              f"(категория: {topic_info.get('category', '-')}, фото: {'да' if image_url else 'нет'})")
+              f"(категория: {topic_info.get('category', '-')}, тема: {topic_preview}, "
+              f"фото: {'да' if image_url else 'нет'})")
         return True
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
@@ -2888,8 +3023,10 @@ async def scheduler():
 
     # Восстанавливаем состояние автопостинга после возможного рестарта:
     # recent_images — чтобы не повторить недавнюю картинку,
+    # recent_topics — чтобы не повторить недавнюю тему,
     # last_post — чтобы не слать пост сразу после перезапуска.
     _sync_recent_images_from_state()
+    _sync_recent_topics_from_state()
     last_channel_post = _get_last_channel_post_from_state()
 
     # Если при старте уже прошло 8 утра — отмечаем как отправленное, чтобы не слать повторно
