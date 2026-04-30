@@ -2721,6 +2721,22 @@ def clean_markdown(text: str) -> str:
 
 # Разрешённые теги Telegram HTML (которые мы хотим видеть в постах)
 _ALLOWED_HTML_TAGS = {"b", "i", "u", "s", "tg-spoiler"}
+TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
+CHANNEL_BOT_PROMO_INTROS = [
+    "Если хочется понять, как это проявляется именно в твоей ситуации, можно прийти за личным разбором.\n\n",
+    "Иногда общий знак только намекает, а личная консультация показывает, где именно сейчас точка выбора.\n\n",
+    "А если откликнулось и хочется посмотреть глубже, можно разобрать свой вопрос лично.\n\n",
+    "Когда тема цепляет не случайно, лучше смотреть её не в общем прогнозе, а через твою ситуацию.\n\n",
+    "Если чувствуешь, что это про тебя, можно задать вопрос и получить более точный разбор.\n\n",
+    "Общий пост даёт направление, а личный расклад или астрологический разбор помогает увидеть детали.\n\n",
+]
+CHANNEL_BOT_PROMO_OFFER = (
+    "<b>Голос Звёзд</b> - консультации таро и астрологии\n\n"
+    "Услуги и тарифы:\n"
+    "Консультация таролога - 150 руб. + бесплатные каждый день!\n"
+    "Консультация астролога - 150 руб. + бесплатные каждый день!\n"
+    "Бот: @VoiceOfTheStarsBot"
+)
 
 
 def sanitize_html_for_telegram(text: str) -> str:
@@ -2738,6 +2754,27 @@ def sanitize_html_for_telegram(text: str) -> str:
         if opens != closes:
             text = re.sub(rf'</?{tag}>', '', text, flags=re.IGNORECASE)
     return text
+
+
+def with_channel_bot_promo(text: str) -> str:
+    """Добавляет к посту плавный переход к основному боту и сохраняет лимит подписи Telegram."""
+    text = text.strip()
+    if "@VoiceOfTheStarsBot" in text:
+        return text[:TELEGRAM_PHOTO_CAPTION_LIMIT]
+
+    suffix = "\n\n" + random.choice(CHANNEL_BOT_PROMO_INTROS) + CHANNEL_BOT_PROMO_OFFER
+    full_text = f"{text}{suffix}"
+    if len(full_text) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
+        return full_text
+
+    available = TELEGRAM_PHOTO_CAPTION_LIMIT - len(suffix) - 3
+    if available <= 0:
+        return (random.choice(CHANNEL_BOT_PROMO_INTROS) + CHANNEL_BOT_PROMO_OFFER)[:TELEGRAM_PHOTO_CAPTION_LIMIT]
+
+    trimmed = text[:available].rstrip()
+    trimmed = re.sub(r'</?([a-zA-Z][a-zA-Z0-9\-]*)(?:\s[^>]*)?$', '', trimmed).rstrip()
+    trimmed = sanitize_html_for_telegram(trimmed)
+    return f"{trimmed}...{suffix}"
 
 
 async def generate_channel_post(topic: str) -> str:
@@ -2792,9 +2829,7 @@ async def post_to_channel():
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
             return
 
-        # Обрезаем до лимита caption (1024 символа)
-        if len(text) > 1024:
-            text = text[:1021] + "..."
+        text = with_channel_bot_promo(text)
 
         image_url = await get_channel_image(topic_info.get("category", ""))
 
