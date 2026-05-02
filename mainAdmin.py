@@ -35,6 +35,7 @@ PROXY_URL = getenv("PROXY_URL", "")
 # Для закреплённого сообщения со ссылками
 MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
 CHANNEL_ID = getenv("CHANNEL_ID", "")  # напр. "@VoiceOfTheStarsInfo"
+MAIN_BOT_URL = getenv("MAIN_BOT_URL", "")
 MAX_QUEUE_URL = getenv("MAX_QUEUE_URL", "http://155.212.138.205/max-queue/")
 
 if not ADMIN_BOT_TOKEN:
@@ -115,10 +116,13 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
 def build_links_markup() -> InlineKeyboardMarkup | None:
     """Инлайн-кнопки со ссылками на основного бота и канал."""
     rows = []
-    if MAIN_BOT_USERNAME:
+    main_bot_url = MAIN_BOT_URL.strip()
+    if not main_bot_url and MAIN_BOT_USERNAME:
+        main_bot_url = f"https://t.me/{MAIN_BOT_USERNAME}?start=admin"
+    if main_bot_url:
         rows.append([InlineKeyboardButton(
             text="🌟 Открыть основного бота",
-            url=f"https://t.me/{MAIN_BOT_USERNAME}",
+            url=main_bot_url,
         )])
     if CHANNEL_ID:
         clean = CHANNEL_ID.lstrip("@")
