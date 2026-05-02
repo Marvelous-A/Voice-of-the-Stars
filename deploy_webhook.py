@@ -15,8 +15,10 @@ Set WEBHOOK_SECRET in .env (same value as in GitHub webhook settings).
 import hashlib
 import hmac
 import os
+import shutil
 import subprocess
 import threading
+from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
@@ -26,9 +28,12 @@ load_dotenv()
 PORT = 9000
 SECRET = os.getenv("WEBHOOK_SECRET", "")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+REMOTE = "origin"
+BRANCH = "master"
 
 BOT_DIR = "/home/bot"
 BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
+DEPLOY_BACKUP_DIR = os.getenv("DEPLOY_BACKUP_DIR", "/root/deploy-backup")
 CODE_FILES = [
     "main.py",
     "mainAdmin.py",
@@ -53,18 +58,68 @@ def verify_signature(payload: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-def deploy():
-    print("=== Deploying ===", flush=True)
-
-    # git pull
+def run_command(args: list[str], cwd: str = PROJECT_DIR) -> subprocess.CompletedProcess:
     result = subprocess.run(
-        ["git", "pull", "origin", "master"],
-        cwd=PROJECT_DIR,
+        args,
+        cwd=cwd,
         capture_output=True,
         text=True,
     )
-    print(result.stdout, result.stderr, flush=True)
+    print(f"$ {' '.join(args)}", flush=True)
+    if result.stdout:
+        print(result.stdout, end="", flush=True)
+    if result.stderr:
+        print(result.stderr, end="", flush=True)
+    return result
+
+
+def git_lines(args: list[str]) -> list[str] | None:
+    result = run_command(["git", *args])
     if result.returncode != 0:
+        return None
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def backup_conflicting_untracked_files() -> bool:
+    tracked_files = set(git_lines(["ls-tree", "-r", "--name-only", f"{REMOTE}/{BRANCH}"]) or [])
+    untracked_files = set(git_lines(["ls-files", "--others"]) or [])
+    conflicts = sorted(tracked_files & untracked_files)
+    if not conflicts:
+        return True
+
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    backup_dir = os.path.join(DEPLOY_BACKUP_DIR, f"git-untracked-{stamp}")
+    os.makedirs(backup_dir, exist_ok=True)
+
+    for rel_path in conflicts:
+        src = os.path.abspath(os.path.join(PROJECT_DIR, rel_path))
+        project_root = os.path.abspath(PROJECT_DIR)
+        if not (src == project_root or src.startswith(project_root + os.sep)):
+            print(f"Refusing to back up path outside project: {rel_path}", flush=True)
+            return False
+
+        dst = os.path.join(backup_dir, rel_path)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        print(f"Backing up untracked conflict: {rel_path} -> {dst}", flush=True)
+        shutil.move(src, dst)
+
+    return True
+
+
+def pull_latest() -> bool:
+    fetch = run_command(["git", "fetch", REMOTE, BRANCH])
+    if fetch.returncode != 0:
+        return False
+    if not backup_conflicting_untracked_files():
+        return False
+    pull = run_command(["git", "pull", "--ff-only", REMOTE, BRANCH])
+    return pull.returncode == 0
+
+
+def deploy():
+    print("=== Deploying ===", flush=True)
+
+    if not pull_latest():
         print("=== Deploy aborted: git pull failed; keeping current bot files ===", flush=True)
         return
 
