@@ -29,7 +29,14 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 BOT_DIR = "/home/bot"
 BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
-CODE_FILES = ["main.py", "mainAdmin.py", "requirements.txt", "descriptions.json"]
+CODE_FILES = [
+    "main.py",
+    "mainAdmin.py",
+    "max_publisher.py",
+    "max_connector_server.py",
+    "requirements.txt",
+    "descriptions.json",
+]
 
 # Чтобы мусорные сканеры не могли подвесить однопоточный сервер:
 SOCKET_TIMEOUT_SEC = 10               # молчуны и медленные клиенты отваливаются
@@ -57,6 +64,9 @@ def deploy():
         text=True,
     )
     print(result.stdout, result.stderr, flush=True)
+    if result.returncode != 0:
+        print("=== Deploy aborted: git pull failed; keeping current bot files ===", flush=True)
+        return
 
     # copy code files to bot directory
     for fname in CODE_FILES:
