@@ -131,7 +131,7 @@ def build_links_markup() -> InlineKeyboardMarkup | None:
             url=f"https://t.me/{clean}",
         )])
     rows.append([InlineKeyboardButton(
-        text="🌐 Очередь MAX",
+        text="🌐 Сайт MAX",
         url=MAX_QUEUE_URL,
     )])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
@@ -887,6 +887,7 @@ def _reset_input_state(admin_id: int) -> None:
 @dp.message(F.text == BTN_REFRESH)
 async def handle_refresh(message: Message):
     _reset_input_state(message.from_user.id)
+    await pin_links_message(message.chat.id)
     await message.answer("Меню обновлено 👇", reply_markup=get_admin_keyboard())
 
 
