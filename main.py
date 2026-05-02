@@ -12,6 +12,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
+import max_publisher
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
@@ -34,6 +35,11 @@ EMAIL_PASSWORD = getenv("EMAIL_PASSWORD", "") # Пароль от этой по�
 EMAIL_TO = "mogneto.r@mail.ru"               # Куда приходят уведомления
 CHANNEL_ID = getenv("CHANNEL_ID", "")        # ID или @username канала для автопостинга
 CHANNEL_URL = f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID and CHANNEL_ID.startswith("@") else ""
+PUBLISH_TARGETS = {
+    target.strip()
+    for target in getenv("PUBLISH_TARGETS", "telegram").split(",")
+    if target.strip()
+}
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 
@@ -2971,6 +2977,96 @@ def _get_last_channel_post_from_state():
         return None
 
 
+async def build_channel_post() -> dict | None:
+    """Generates a post once so different publishing adapters can use it."""
+    _sync_recent_images_from_state()
+    topic_info = _select_channel_topic()
+    text = await generate_channel_post(topic_info["topic"])
+    if not text:
+        print("[autoposting] AI returned empty post text, skipping")
+        return None
+
+    text = with_channel_bot_promo(text)
+    image_url = await get_channel_image(topic_info.get("category", ""))
+    return {
+        "text": text,
+        "image_url": image_url,
+        "topic_info": topic_info,
+    }
+
+
+async def post_to_telegram_channel(post: dict) -> bool:
+    if not CHANNEL_ID:
+        return False
+
+    text = post["text"]
+    image_url = post.get("image_url")
+
+    async def _send(body: str, parse_mode: str | None):
+        if image_url:
+            await bot.send_photo(CHANNEL_ID, photo=image_url, caption=body, parse_mode=parse_mode)
+        else:
+            await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
+
+    try:
+        await _send(text, "HTML")
+        return True
+    except Exception as e:
+        print(f"[autoposting] Telegram rejected HTML, sending plain text: {e}")
+        try:
+            plain = re.sub(r'</?[a-zA-Z][a-zA-Z0-9\-]*>', '', text)
+            await _send(plain, None)
+            return True
+        except Exception as plain_error:
+            print(f"[autoposting] Telegram publish error: {plain_error}")
+            return False
+
+
+def has_configured_publish_target() -> bool:
+    if "telegram" in PUBLISH_TARGETS and CHANNEL_ID:
+        return True
+    if "max_manual" in PUBLISH_TARGETS and admin_bot and ADMIN_ID:
+        return True
+    if "max_connector" in PUBLISH_TARGETS and getenv("MAX_CONNECTOR_URL", ""):
+        return True
+    return False
+
+
+async def publish_channel_post() -> bool:
+    try:
+        if not has_configured_publish_target():
+            print("[autoposting] no configured publish target")
+            return False
+
+        post = await build_channel_post()
+        if not post:
+            return False
+
+        ok = False
+        if "telegram" in PUBLISH_TARGETS:
+            ok = await post_to_telegram_channel(post) or ok
+        if "max_manual" in PUBLISH_TARGETS:
+            ok = await max_publisher.send_manual_preview(admin_bot, ADMIN_ID, post) or ok
+        if "max_connector" in PUBLISH_TARGETS:
+            ok = await max_publisher.post_to_connector(post) or ok
+
+        if ok:
+            msk = _msk_now()
+            topic_info = post["topic_info"]
+            _remember_channel_topic(topic_info)
+            topic_preview = _topic_key(topic_info)[:80]
+            print(
+                f"[MSK {msk}] Channel post published "
+                f"(targets: {', '.join(sorted(PUBLISH_TARGETS))}, "
+                f"category: {topic_info.get('category', '-')}, topic: {topic_preview}, "
+                f"photo: {'yes' if post.get('image_url') else 'no'})"
+            )
+        return ok
+    except Exception as e:
+        print(f"[autoposting] error: {e}")
+        return False
+
+
 async def post_to_channel() -> bool:
     """Генерирует и отправляет пост в канал с подобранной по теме картинкой."""
     if not CHANNEL_ID:
@@ -3064,7 +3160,7 @@ async def scheduler():
             elif (msk - last_channel_post).total_seconds() >= CHANNEL_POST_INTERVAL * 60:
                 should_post = True
             if should_post:
-                posted = await post_to_channel()
+                posted = await publish_channel_post()
                 if posted:
                     last_channel_post = _msk_now()
                     _mark_channel_post_time(last_channel_post)

@@ -890,8 +890,8 @@ async def handle_stats(message: Message):
 @dp.message(F.text == BTN_CHANNEL_POST)
 async def handle_channel_post(message: Message):
     _reset_input_state(message.from_user.id)
-    if not CHANNEL_ID:
-        await message.answer("⚠️ CHANNEL_ID не задан в .env — не знаю, куда публиковать пост.")
+    if not main_app.has_configured_publish_target():
+        await message.answer("⚠️ Не настроена ни одна цель публикации. Проверь PUBLISH_TARGETS, CHANNEL_ID или MAX_CONNECTOR_URL в .env.")
         return
 
     if CHANNEL_POST_LOCK.locked():
@@ -900,7 +900,7 @@ async def handle_channel_post(message: Message):
 
     async with CHANNEL_POST_LOCK:
         status = await message.answer("📢 Генерирую пост для канала и подбираю картинку...")
-        posted = await main_app.post_to_channel()
+        posted = await main_app.publish_channel_post()
         if not posted:
             await status.edit_text(
                 "⚠️ Не удалось опубликовать пост. Проверь логи основного бота, токены ИИ и доступ бота к каналу."
