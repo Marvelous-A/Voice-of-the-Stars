@@ -93,6 +93,7 @@ BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_FEEDBACK = "💌 Запросить отзыв"
 BTN_CHANNEL_POST = "📢 Сгенерировать пост"
+BTN_QUICK_LINKS = "🔗 Быстрые ссылки"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
 
@@ -103,7 +104,7 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_STATUS)],
-            [KeyboardButton(text=BTN_CHANNEL_POST)],
+            [KeyboardButton(text=BTN_CHANNEL_POST), KeyboardButton(text=BTN_QUICK_LINKS)],
             [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
             [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_USERS)],
             [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
@@ -137,25 +138,28 @@ def build_links_markup() -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
-async def pin_links_message(chat_id: int):
-    """Публикует сообщение со ссылками и закрепляет его (без уведомления)."""
+async def unpin_admin_messages(chat_id: int):
+    """Снимает старые закрепы в админ-чате."""
+    try:
+        await bot.unpin_all_chat_messages(chat_id)
+    except Exception as e:
+        print(f"[unpin_admin_messages] {e}")
+
+
+async def send_quick_links_message(chat_id: int):
+    """Публикует сообщение с быстрыми ссылками без закрепления."""
     markup = build_links_markup()
     if not markup:
         return
     try:
-        sent = await bot.send_message(
+        await bot.send_message(
             chat_id,
             "🔗 *Быстрые ссылки*",
             parse_mode="Markdown",
             reply_markup=markup,
         )
-        try:
-            await bot.unpin_all_chat_messages(chat_id)
-        except Exception:
-            pass
-        await bot.pin_chat_message(chat_id, sent.message_id, disable_notification=True)
     except Exception as e:
-        print(f"[pin_links] {e}")
+        print(f"[send_quick_links] {e}")
 
 
 # ====== ЗАГРУЗКА ДАННЫХ ======
@@ -869,7 +873,7 @@ def build_dialog_txt(dtype: str, user_id: str, spec_id: str) -> tuple[bytes, str
 # ====== ХЭНДЛЕРЫ ======
 @dp.message(CommandStart())
 async def start(message: Message):
-    await pin_links_message(message.chat.id)
+    await unpin_admin_messages(message.chat.id)
     await message.answer(
         "🛠 *Админ-панель «Голос Звёзд»*\n\n"
         "Здесь только твои служебные уведомления и команды.\n"
@@ -887,8 +891,14 @@ def _reset_input_state(admin_id: int) -> None:
 @dp.message(F.text == BTN_REFRESH)
 async def handle_refresh(message: Message):
     _reset_input_state(message.from_user.id)
-    await pin_links_message(message.chat.id)
+    await unpin_admin_messages(message.chat.id)
     await message.answer("Меню обновлено 👇", reply_markup=get_admin_keyboard())
+
+
+@dp.message(F.text == BTN_QUICK_LINKS)
+async def handle_quick_links(message: Message):
+    _reset_input_state(message.from_user.id)
+    await send_quick_links_message(message.chat.id)
 
 
 @dp.message(F.text == BTN_STATS)
