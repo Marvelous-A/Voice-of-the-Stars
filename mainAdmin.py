@@ -35,6 +35,7 @@ PROXY_URL = getenv("PROXY_URL", "")
 # Для закреплённого сообщения со ссылками
 MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
 CHANNEL_ID = getenv("CHANNEL_ID", "")  # напр. "@VoiceOfTheStarsInfo"
+MAX_QUEUE_URL = getenv("MAX_QUEUE_URL", "http://155.212.138.205/max-queue/")
 
 if not ADMIN_BOT_TOKEN:
     raise SystemExit("ADMIN_BOT_TOKEN не задан в .env — создайте бота в @BotFather и пропишите токен.")
@@ -125,6 +126,10 @@ def build_links_markup() -> InlineKeyboardMarkup | None:
             text="📢 Открыть канал",
             url=f"https://t.me/{clean}",
         )])
+    rows.append([InlineKeyboardButton(
+        text="🌐 Очередь MAX",
+        url=MAX_QUEUE_URL,
+    )])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
