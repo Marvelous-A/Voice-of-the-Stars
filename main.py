@@ -999,6 +999,48 @@ def get_astro_card_keyboard(astro_id: str):
         [InlineKeyboardButton(text="◀ К списку", callback_data="astro_list")],
     ])
 
+
+def _build_main_bot_deeplink(payload: str = "") -> str:
+    if not MAIN_BOT_USERNAME:
+        return MAIN_BOT_URL
+    if payload:
+        return f"https://t.me/{MAIN_BOT_USERNAME}?start={payload}"
+    return f"https://t.me/{MAIN_BOT_USERNAME}"
+
+
+def _specialist_start_payload(specialist_type: str, specialist_id: str) -> str:
+    return f"spec_{specialist_type}_{specialist_id}"
+
+
+def _resolve_specialist_start(payload: str) -> tuple[str, dict] | None:
+    if not payload.startswith("spec_"):
+        return None
+    parts = payload.split("_", 2)
+    if len(parts) != 3:
+        return None
+    _, specialist_type, specialist_id = parts
+    if specialist_type == "tarot":
+        specialist = TAROLOGISTS_BY_ID.get(specialist_id)
+    elif specialist_type == "astro":
+        specialist = ASTROLOGERS_BY_ID.get(specialist_id)
+    else:
+        specialist = None
+    if not specialist:
+        return None
+    return specialist_type, specialist
+
+
+def _specialist_card_text(specialist_type: str, specialist: dict) -> tuple[str, InlineKeyboardMarkup]:
+    if specialist_type == "tarot":
+        return (
+            specialist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
+            get_tarot_card_keyboard(specialist["id"]),
+        )
+    return (
+        specialist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
+        get_astro_card_keyboard(specialist["id"]),
+    )
+
 # ====== ФАЙЛОВЫЕ ФУНКЦИИ ======
 def load_users():
     try:
@@ -2878,17 +2920,19 @@ CHANNEL_BOT_PROMO_INTROS = [
     "Если чувствуешь, что это про тебя, можно задать вопрос и получить более точный разбор.\n\n",
     "Общий пост даёт направление, а личный расклад или астрологический разбор помогает увидеть детали.\n\n",
 ]
-CHANNEL_BOT_PROMO_OFFER = (
-    "<b>Голос Звёзд</b> - твой мистический помощник в Telegram\n\n"
-    "Внутри бота:\n"
-    "• ежедневный прогноз по знаку зодиака\n"
-    "• подробное описание твоего знака\n"
-    "• совместимость знаков в любви и общении\n"
-    "• личные консультации тарологов и астрологов\n"
-    "• отзывы пользователей и бонусы за друзей\n\n"
-    "Консультация специалиста - 150 руб., есть бесплатные каждый день.\n"
-    f"Бот: @{MAIN_BOT_USERNAME}"
-)
+def _channel_bot_promo_offer() -> str:
+    bot_label = f"@{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "бот"
+    return (
+        "<b>Голос Звёзд</b> - твой мистический помощник в Telegram\n\n"
+        "Внутри бота:\n"
+        "• ежедневный прогноз по знаку зодиака\n"
+        "• подробное описание твоего знака\n"
+        "• совместимость знаков в любви и общении\n"
+        "• личные консультации тарологов и астрологов\n"
+        "• отзывы пользователей и бонусы за друзей\n\n"
+        "Консультация специалиста - 150 руб., есть бесплатные каждый день.\n"
+        f"Бот: {bot_label}"
+    )
 
 
 def _specialist_gender(specialist: dict) -> str:
@@ -2940,7 +2984,8 @@ def _channel_author_signature(author_info: dict | None) -> str:
     specialist = author_info["specialist"]
     role = "тарологом" if author_info["type"] == "tarot" else "астрологом"
     name = specialist["name"]
-    return f'Пост написан {role} <a href="{MAIN_BOT_URL}">{name}</a>.'
+    payload = _specialist_start_payload(author_info["type"], specialist["id"])
+    return f'Пост написан {role} <a href="{_build_main_bot_deeplink(payload)}">{name}</a>.'
 
 
 def sanitize_html_for_telegram(text: str) -> str:
@@ -2989,7 +3034,7 @@ def with_channel_bot_promo(text: str, final_suffix: str = "") -> str:
         trimmed = sanitize_html_for_telegram(trimmed)
         return f"{trimmed}...{final_block}"
 
-    promo = random.choice(CHANNEL_BOT_PROMO_INTROS) + CHANNEL_BOT_PROMO_OFFER
+    promo = random.choice(CHANNEL_BOT_PROMO_INTROS) + _channel_bot_promo_offer()
     suffix = "\n\n" + promo + final_block
     if len(suffix) >= TELEGRAM_PHOTO_CAPTION_LIMIT:
         suffix = final_block
@@ -3308,10 +3353,28 @@ async def start(message: Message):
     users.setdefault(user_id, {})
     users[user_id]["username"] = message.from_user.username or ""
     users[user_id]["full_name"] = message.from_user.full_name or ""
+    payload = ""
+    if message.text:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1:
+            payload = parts[1].strip()
+    specialist_target = _resolve_specialist_start(payload)
+    if specialist_target:
+        specialist_type, specialist = specialist_target
+        if is_new_user:
+            users[user_id]["joined_at"] = datetime.now().isoformat()
+            users[user_id]["first_day_msk"] = _msk_now().date().isoformat()
+            save_users(users)
+            asyncio.create_task(_notify_new_user(message))
+        else:
+            save_users(users)
+        card_text, card_kb = _specialist_card_text(specialist_type, specialist)
+        await message.answer(card_text, parse_mode="Markdown", reply_markup=card_kb)
+        return
     # Обработка реферальной ссылки (только для новых пользователей)
     ref_id = None
-    if message.text and message.text.startswith("/start ref_") and is_new_user:
-        ref_id = message.text.replace("/start ref_", "").strip()
+    if payload.startswith("ref_") and is_new_user:
+        ref_id = payload.replace("ref_", "", 1).strip()
         if ref_id == user_id:
             ref_id = None  # нельзя пригласить самого себя
     if user_id in users and "sign" in users[user_id]:
@@ -3636,11 +3699,8 @@ async def view_tarot_card(callback: CallbackQuery):
     if not tarologist:
         await callback.answer("Таролог не найден")
         return
-    await callback.message.edit_text(
-        tarologist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
-        parse_mode="Markdown",
-        reply_markup=get_tarot_card_keyboard(tarot_id)
-    )
+    card_text, card_kb = _specialist_card_text("tarot", tarologist)
+    await callback.message.edit_text(card_text, parse_mode="Markdown", reply_markup=card_kb)
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("ask_") & ~F.data.startswith("ask_astro_"))
@@ -3744,11 +3804,8 @@ async def view_astro_card(callback: CallbackQuery):
     if not astrologer:
         await callback.answer("Астролог не найден")
         return
-    await callback.message.edit_text(
-        astrologer["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
-        parse_mode="Markdown",
-        reply_markup=get_astro_card_keyboard(astro_id)
-    )
+    card_text, card_kb = _specialist_card_text("astro", astrologer)
+    await callback.message.edit_text(card_text, parse_mode="Markdown", reply_markup=card_kb)
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("ask_astro_"))
@@ -4437,6 +4494,14 @@ async def heartbeat():
 
 # ====== ЗАПУСК ======
 async def on_startup(bot):
+    global MAIN_BOT_USERNAME, MAIN_BOT_URL
+    try:
+        me = await bot.get_me()
+        if me.username:
+            MAIN_BOT_USERNAME = me.username.lstrip("@")
+            MAIN_BOT_URL = f"https://t.me/{MAIN_BOT_USERNAME}"
+    except Exception as e:
+        print(f"[on_startup] failed to resolve bot username: {e}")
     await notify_admin("🔄 Бот перезапущен и работает.")
 
 
