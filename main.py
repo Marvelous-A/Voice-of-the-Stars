@@ -760,8 +760,8 @@ SESSION_MSG_QUEUE = {}  # {user_id_str: str} — последнее сообще
 # ====== ЛИМИТЫ СЕАНСА ======
 MAX_SESSION_MESSAGES = 7  # максимум сообщений от пользователя в одном сеансе
 MAX_SESSION_PROFANITY = 2  # после стольких грубостей в сеансе — завершаем
-FREE_SESSIONS_FIRST_DAY = 2  # сеансов в первый день после регистрации
-FREE_SESSIONS_DAILY = 1      # сеансов в каждые следующие сутки (не накапливаются)
+FREE_SESSIONS_FIRST_DAY = 1  # один бесплатный сеанс в день регистрации
+FREE_SESSIONS_DAILY = 0      # ежедневных бесплатных сеансов нет
 
 # ====== ЗАПРЕТ ВНЕШНИХ КОНТАКТОВ (вставляется во все промпты) ======
 NO_CONTACTS_RULE = (
@@ -1073,11 +1073,13 @@ def _get_first_day_msk(user: dict) -> str | None:
     return None
 
 def get_daily_free_limit(user_id: str) -> int:
-    """Базовый лимит бесплатных сеансов на сегодня: 2 в первый день, 1 в последующие."""
+    """Базовый лимит бесплатных сеансов: 1 в день регистрации, 0 в последующие дни."""
     users = load_users()
     user = users.get(user_id, {})
     today = _msk_now().date().isoformat()
-    first_day = _get_first_day_msk(user) or today
+    first_day = _get_first_day_msk(user)
+    if not first_day:
+        return 0
     return FREE_SESSIONS_FIRST_DAY if first_day == today else FREE_SESSIONS_DAILY
 
 def increment_sessions_today(user_id: str):
@@ -1117,7 +1119,7 @@ def get_bonus_sessions(user_id: str) -> int:
     return users.get(user_id, {}).get("bonus_sessions", 0)
 
 def get_effective_session_limit(user_id: str) -> int:
-    """Общий лимит сеансов на сегодня = базовый (2 в первый день, 1 дальше) + бонусные."""
+    """Общий лимит сеансов на сегодня = базовый первый бесплатный сеанс + бонусные."""
     return get_daily_free_limit(user_id) + get_bonus_sessions(user_id)
 
 def save_referral_link(referrer_id: str, new_user_id: str) -> bool:
@@ -2930,7 +2932,7 @@ def _channel_bot_promo_offer() -> str:
         "• совместимость знаков в любви и общении\n"
         "• личные консультации тарологов и астрологов\n"
         "• отзывы пользователей и бонусы за друзей\n\n"
-        "Консультация специалиста - 150 руб., есть бесплатные каждый день.\n"
+        "Консультация специалиста - 150 руб., первый сеанс после регистрации бесплатный.\n"
         f"Бот: {bot_label}"
     )
 
@@ -3653,10 +3655,9 @@ async def tarot_list(message: Message):
     if not is_admin and remaining == 0:
         bonus = get_bonus_sessions(user_id)
         hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
-        base_limit = get_daily_free_limit(user_id)
         await message.answer(
             "🔒 *Лимит сеансов исчерпан*\n\n"
-            f"Базовый лимит: {base_limit} сеанс(а) в день. "
+            "Первый бесплатный сеанс после регистрации уже использован. "
             f"Бонусных сеансов: {bonus}.{hint}\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
@@ -3758,10 +3759,9 @@ async def astro_list(message: Message):
     if not is_admin and remaining == 0:
         bonus = get_bonus_sessions(user_id)
         hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
-        base_limit = get_daily_free_limit(user_id)
         await message.answer(
             "🔒 *Лимит сеансов исчерпан*\n\n"
-            f"Базовый лимит: {base_limit} сеанс(а) в день. "
+            "Первый бесплатный сеанс после регистрации уже использован. "
             f"Бонусных сеансов: {bonus}.{hint}\n\n"
             "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
             parse_mode="Markdown",
