@@ -36,6 +36,8 @@ class CkassaConfig:
     base_url: str = DEFAULT_BASE_URL
     invoice_ttl_minutes: int = 60
     timeout_sec: int = 60
+    invoice_type_with_phone: str = "READ_ONLY"
+    invoice_type_without_phone: str = "READ_ONLY"
 
     @classmethod
     def from_env(cls) -> "CkassaConfig":
@@ -51,6 +53,8 @@ class CkassaConfig:
             base_url=base_url,
             invoice_ttl_minutes=_read_int_env("CKASSA_INVOICE_TTL_MINUTES", 60),
             timeout_sec=_read_int_env("CKASSA_TIMEOUT_SEC", 60),
+            invoice_type_with_phone=os.getenv("CKASSA_INVOICE_TYPE_WITH_PHONE", "READ_ONLY").strip() or "READ_ONLY",
+            invoice_type_without_phone=os.getenv("CKASSA_INVOICE_TYPE_WITHOUT_PHONE", "READ_ONLY").strip() or "READ_ONLY",
         )
 
     def validate(self) -> None:
@@ -104,18 +108,19 @@ class CkassaClient:
         best_before = format_ckassa_datetime(
             datetime.now(MSK) + timedelta(minutes=self.config.invoice_ttl_minutes)
         )
+        properties = [order_id, phone, telegram_id]
         payload = {
             "servCode": self.config.serv_code,
             "startPaySelect": bool(phone),
-            "invType": "READ_ONLY" if phone else "AMOUNT_READ_ONLY",
+            "invType": (
+                self.config.invoice_type_with_phone
+                if phone
+                else self.config.invoice_type_without_phone
+            ),
             "amount": self.config.amount_kopeks,
             "bestBefore": best_before,
             "tgInvPayer": telegram_id,
-            "properties": [
-                order_id,
-                phone,
-                telegram_id,
-            ],
+            "properties": properties,
         }
         text = await self._request_text("POST", "invoice/create2/", json=payload)
         pay_url = text.strip().strip('"')
