@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import threading
+import tempfile
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -43,6 +44,17 @@ CODE_FILES = [
     "requirements.txt",
     "descriptions.json",
 ]
+RUNTIME_SEED_FILES = [
+    ".env",
+    "users.json",
+    "forecast.json",
+    "reviews.json",
+    "pending_reviews.json",
+    "consultation_requests.json",
+    "active_sessions.json",
+    "pending_answers.json",
+    "ckassa_payments.json",
+]
 
 # Чтобы мусорные сканеры не могли подвесить однопоточный сервер:
 SOCKET_TIMEOUT_SEC = 10               # молчуны и медленные клиенты отваливаются
@@ -63,6 +75,22 @@ def run_command(args: list[str], cwd: str = PROJECT_DIR) -> subprocess.Completed
     result = subprocess.run(
         args,
         cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    print(f"$ {' '.join(args)}", flush=True)
+    if result.stdout:
+        print(result.stdout, end="", flush=True)
+    if result.stderr:
+        print(result.stderr, end="", flush=True)
+    return result
+
+
+def run_logged(args: list[str], cwd: str = PROJECT_DIR, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    result = subprocess.run(
+        args,
+        cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
     )
@@ -117,6 +145,69 @@ def pull_latest() -> bool:
     return pull.returncode == 0
 
 
+def deploy_files() -> list[str]:
+    files = set(CODE_FILES)
+    for fname in os.listdir(PROJECT_DIR):
+        if fname.endswith(".py") and fname != "deploy_webhook.py":
+            files.add(fname)
+    return sorted(files)
+
+
+def copy_existing_runtime_files(target_dir: str) -> None:
+    for fname in RUNTIME_SEED_FILES:
+        src = os.path.join(BOT_DIR, fname)
+        dst = os.path.join(target_dir, fname)
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+
+
+def copy_code_files(target_dir: str) -> None:
+    for fname in deploy_files():
+        src = os.path.join(PROJECT_DIR, fname)
+        dst = os.path.join(target_dir, fname)
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+            print(f"Prepared {fname} -> {target_dir}", flush=True)
+        else:
+            print(f"Missing deploy source file: {fname}", flush=True)
+
+
+def install_dependencies() -> bool:
+    requirements_path = os.path.join(PROJECT_DIR, "requirements.txt")
+    result = run_logged(
+        [BOT_VENV_PYTHON, "-m", "pip", "install", "-r", requirements_path, "-q"],
+        cwd=BOT_DIR,
+    )
+    if result.returncode != 0:
+        print("=== Deploy aborted: dependency installation failed ===", flush=True)
+        return False
+    return True
+
+
+def validate_candidate(candidate_dir: str) -> bool:
+    py_files = [
+        os.path.join(candidate_dir, fname)
+        for fname in deploy_files()
+        if fname.endswith(".py") and os.path.exists(os.path.join(candidate_dir, fname))
+    ]
+    compile_result = run_logged([BOT_VENV_PYTHON, "-m", "py_compile", *py_files], cwd=candidate_dir)
+    if compile_result.returncode != 0:
+        print("=== Deploy aborted: candidate code does not compile ===", flush=True)
+        return False
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = candidate_dir
+    import_result = run_logged(
+        [BOT_VENV_PYTHON, "-c", "import main; import mainAdmin; print('Import validation OK')"],
+        cwd=candidate_dir,
+        env=env,
+    )
+    if import_result.returncode != 0:
+        print("=== Deploy aborted: candidate code fails import validation ===", flush=True)
+        return False
+    return True
+
+
 def deploy():
     print("=== Deploying ===", flush=True)
 
@@ -124,22 +215,21 @@ def deploy():
         print("=== Deploy aborted: git pull failed; keeping current bot files ===", flush=True)
         return
 
-    # copy code files to bot directory
-    for fname in CODE_FILES:
-        src = os.path.join(PROJECT_DIR, fname)
-        dst = os.path.join(BOT_DIR, fname)
-        if os.path.exists(src):
-            subprocess.run(["cp", src, dst], check=False)
-            print(f"Copied {fname} -> {BOT_DIR}", flush=True)
+    if not install_dependencies():
+        return
 
-    # install new dependencies (if any)
-    subprocess.run(
-        [BOT_VENV_PYTHON, "-m", "pip", "install", "-r",
-         os.path.join(BOT_DIR, "requirements.txt"), "-q"],
-        cwd=BOT_DIR,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="voice-stars-deploy-") as candidate_dir:
+        copy_existing_runtime_files(candidate_dir)
+        copy_code_files(candidate_dir)
+        if not validate_candidate(candidate_dir):
+            return
+
+        for fname in deploy_files():
+            src = os.path.join(candidate_dir, fname)
+            dst = os.path.join(BOT_DIR, fname)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+                print(f"Copied {fname} -> {BOT_DIR}", flush=True)
 
     # restart bots via systemd
     subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)
