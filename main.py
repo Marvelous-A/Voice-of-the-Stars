@@ -948,9 +948,10 @@ def get_ckassa_phone_keyboard():
     )
 
 
-def get_ckassa_payment_keyboard(pay_url: str):
+def get_ckassa_payment_keyboard(pay_url: str, amount_text: str = ""):
+    pay_text = f"💳 {amount_text}" if amount_text else "💳 Оплатить"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
+        [InlineKeyboardButton(text=pay_text, url=pay_url)],
         [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data="ckassa_check")],
     ])
 
@@ -1007,10 +1008,11 @@ def get_tarologists_list_keyboard():
         buttons.append(row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_tarot_card_keyboard(tarot_id: str):
+def get_tarot_card_keyboard(tarot_id: str, payment_required: bool = False):
     """Кнопки под карточкой таролога."""
+    select_text = _ckassa_amount_button_text() if payment_required else "✅ Выбрать"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_{tarot_id}")],
+        [InlineKeyboardButton(text=select_text, callback_data=f"ask_{tarot_id}")],
         [InlineKeyboardButton(text="◀ К списку", callback_data="tarot_list")],
     ])
 
@@ -1027,10 +1029,11 @@ def get_astrologers_list_keyboard():
         buttons.append(row)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_astro_card_keyboard(astro_id: str):
+def get_astro_card_keyboard(astro_id: str, payment_required: bool = False):
     """Кнопки под карточкой астролога."""
+    select_text = _ckassa_amount_button_text() if payment_required else "✅ Выбрать"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выбрать", callback_data=f"ask_astro_{astro_id}")],
+        [InlineKeyboardButton(text=select_text, callback_data=f"ask_astro_{astro_id}")],
         [InlineKeyboardButton(text="◀ К списку", callback_data="astro_list")],
     ])
 
@@ -1065,15 +1068,21 @@ def _resolve_specialist_start(payload: str) -> tuple[str, dict] | None:
     return specialist_type, specialist
 
 
-def _specialist_card_text(specialist_type: str, specialist: dict) -> tuple[str, InlineKeyboardMarkup]:
+def _specialist_card_text(
+    specialist_type: str,
+    specialist: dict,
+    user_id: str | int | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    payment_required = user_id is not None and _needs_ckassa_payment(user_id)
+    agreement = "\n\n_Нажимая кнопку ниже, ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._"
     if specialist_type == "tarot":
         return (
-            specialist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
-            get_tarot_card_keyboard(specialist["id"]),
+            specialist["description"] + agreement,
+            get_tarot_card_keyboard(specialist["id"], payment_required),
         )
     return (
-        specialist["description"] + "\n\n_Нажимая «Выбрать», ты соглашаешься с условиями публичной оферты и политикой обработки персональных данных (раздел «⚙️ Настройки»)._",
-        get_astro_card_keyboard(specialist["id"]),
+        specialist["description"] + agreement,
+        get_astro_card_keyboard(specialist["id"], payment_required),
     )
 
 # ====== ФАЙЛОВЫЕ ФУНКЦИИ ======
@@ -1185,6 +1194,18 @@ def get_effective_session_limit(user_id: str) -> int:
     """Общий лимит сеансов на сегодня = бесплатные + бонусные + оплаченные."""
     return get_daily_free_limit(user_id) + get_bonus_sessions(user_id) + get_paid_sessions(user_id)
 
+def _ckassa_amount_button_text() -> str:
+    return f"💳 {ckassa_client.config.amount_rub_text}"
+
+def _needs_ckassa_payment(user_id: str | int) -> bool:
+    try:
+        if int(user_id) == ADMIN_ID:
+            return False
+    except (TypeError, ValueError):
+        pass
+    user_id = str(user_id)
+    return get_sessions_today(user_id) >= get_effective_session_limit(user_id)
+
 def _payment_specialist_name(specialist_type: str, specialist_id: str) -> str:
     if specialist_type == "tarot":
         specialist = TAROLOGISTS_BY_ID.get(specialist_id)
@@ -1218,8 +1239,8 @@ async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = Fal
     await message.answer(
         f"💳 {prefix}\n\n"
         f"Сумма: {amount_rub}{specialist_line}\n"
-        "После оплаты нажми «Проверить оплату» или просто подожди: бот сам увидит платеж и начислит один сеанс.",
-        reply_markup=get_ckassa_payment_keyboard(order["invoice_url"]),
+        "Нажми кнопку ниже — откроется страница Ckassa. После оплаты нажми «Проверить оплату» или просто подожди: бот сам увидит платеж и начислит один сеанс.",
+        reply_markup=get_ckassa_payment_keyboard(order["invoice_url"], amount_rub),
         disable_web_page_preview=True,
     )
 
@@ -1236,29 +1257,18 @@ async def offer_ckassa_payment(message: Message, user, specialist_type: str = ""
         await notify_admin(f"[Ckassa] Payment config error: {e}")
         return
 
-    phone = get_user_phone(user_id)
-    if not phone:
-        WAITING_CKASSA_PHONE[user_id] = {
-            "specialist_type": specialist_type,
-            "specialist_id": specialist_id,
-        }
-        await message.answer(
-            "Для оплаты нужен номер телефона. Отправь его кнопкой ниже или напиши цифрами, например 79990000000.",
-            reply_markup=get_ckassa_phone_keyboard(),
-        )
-        return
-
     active_order = ckassa_store.find_active_order(user_id, ckassa_client.config.amount_kopeks)
     if active_order:
         await _send_ckassa_invoice(message, active_order, reused=True)
         return
 
     try:
+        phone = get_user_phone(user_id)
         order_id = make_order_id(user_id)
         invoice = await ckassa_client.create_invoice(
             order_id=order_id,
-            phone=phone,
             telegram_id=user_id,
+            phone=phone,
         )
         order = ckassa_store.create_order(
             order_id=invoice.order_id,
@@ -3600,7 +3610,7 @@ async def start(message: Message):
             asyncio.create_task(_notify_new_user(message))
         else:
             save_users(users)
-        card_text, card_kb = _specialist_card_text(specialist_type, specialist)
+        card_text, card_kb = _specialist_card_text(specialist_type, specialist, message.from_user.id)
         await message.answer(card_text, parse_mode="Markdown", reply_markup=card_kb)
         return
     # Обработка реферальной ссылки (только для новых пользователей)
@@ -3955,7 +3965,7 @@ async def view_tarot_card(callback: CallbackQuery):
     if not tarologist:
         await callback.answer("Таролог не найден")
         return
-    card_text, card_kb = _specialist_card_text("tarot", tarologist)
+    card_text, card_kb = _specialist_card_text("tarot", tarologist, callback.from_user.id)
     await callback.message.edit_text(card_text, parse_mode="Markdown", reply_markup=card_kb)
     await callback.answer()
 
@@ -4049,7 +4059,7 @@ async def view_astro_card(callback: CallbackQuery):
     if not astrologer:
         await callback.answer("Астролог не найден")
         return
-    card_text, card_kb = _specialist_card_text("astro", astrologer)
+    card_text, card_kb = _specialist_card_text("astro", astrologer, callback.from_user.id)
     await callback.message.edit_text(card_text, parse_mode="Markdown", reply_markup=card_kb)
     await callback.answer()
 

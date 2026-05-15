@@ -68,7 +68,7 @@ class CkassaConfig:
     def amount_rub_text(self) -> str:
         rub = self.amount_kopeks // 100
         kop = self.amount_kopeks % 100
-        return f"{rub} руб." if kop == 0 else f"{rub},{kop:02d} руб."
+        return f"{rub} {_rub_word(rub)}" if kop == 0 else f"{rub},{kop:02d} руб."
 
 
 @dataclass(frozen=True)
@@ -87,13 +87,14 @@ class CkassaClient:
         self,
         *,
         order_id: str,
-        phone: str,
         telegram_id: str,
+        phone: str = "",
     ) -> CkassaInvoice:
         self.config.validate()
         _validate_order_id(order_id)
         phone = normalize_phone(phone)
-        _validate_phone(phone)
+        if phone:
+            _validate_phone(phone)
         _validate_telegram_id(telegram_id)
 
         best_before = format_ckassa_datetime(
@@ -102,7 +103,7 @@ class CkassaClient:
         payload = {
             "servCode": self.config.serv_code,
             "startPaySelect": "true",
-            "invType": "READ_ONLY",
+            "invType": "READ_ONLY" if phone else "AMOUNT_READ_ONLY",
             "amount": self.config.amount_kopeks,
             "bestBefore": best_before,
             "tgInvPayer": telegram_id,
@@ -204,10 +205,10 @@ class CkassaPaymentStore:
         *,
         order_id: str,
         user_id: str,
-        phone: str,
         amount_kopeks: int,
         invoice_url: str,
         best_before: str,
+        phone: str = "",
         specialist_type: str | None = None,
         specialist_id: str | None = None,
     ) -> dict[str, Any]:
@@ -324,6 +325,17 @@ def _read_int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _rub_word(value: int) -> str:
+    value = abs(value)
+    if value % 100 in {11, 12, 13, 14}:
+        return "рублей"
+    if value % 10 == 1:
+        return "рубль"
+    if value % 10 in {2, 3, 4}:
+        return "рубля"
+    return "рублей"
 
 
 def normalize_phone(value: str) -> str:
