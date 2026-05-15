@@ -23,6 +23,10 @@ class CkassaPaymentConfigError(CkassaPaymentError):
     pass
 
 
+class CkassaPaymentAccessDenied(CkassaPaymentError):
+    pass
+
+
 @dataclass(frozen=True)
 class CkassaConfig:
     api_login: str
@@ -116,9 +120,9 @@ class CkassaClient:
         text = await self._request_text("POST", "invoice/create2/", json=payload)
         pay_url = text.strip().strip('"')
         if pay_url.startswith("{"):
-            error = _ckassa_result_error(pay_url)
+            error = _ckassa_result_exception(pay_url)
             if error:
-                raise CkassaPaymentError(error)
+                raise error
         if not pay_url.startswith(("http://", "https://")):
             raise CkassaPaymentError(f"Unexpected Ckassa invoice response: {pay_url[:200]}")
         return CkassaInvoice(
@@ -331,7 +335,7 @@ def _read_int_env(name: str, default: int) -> int:
         return default
 
 
-def _ckassa_result_error(text: str) -> str | None:
+def _ckassa_result_exception(text: str) -> CkassaPaymentError | None:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -345,8 +349,12 @@ def _ckassa_result_error(text: str) -> str | None:
     if code in (None, 0, "0"):
         return None
     if details:
-        return f"Ckassa error {code}: {message} ({details})"
-    return f"Ckassa error {code}: {message}"
+        error_text = f"Ckassa error {code}: {message} ({details})"
+    else:
+        error_text = f"Ckassa error {code}: {message}"
+    if str(code) == "2715":
+        return CkassaPaymentAccessDenied(error_text)
+    return CkassaPaymentError(error_text)
 
 
 def _rub_word(value: int) -> str:

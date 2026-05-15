@@ -15,6 +15,7 @@ import aiohttp
 import max_publisher
 from ckassa_payments import (
     CkassaClient,
+    CkassaPaymentAccessDenied,
     CkassaPaymentConfigError,
     CkassaPaymentError,
     CkassaPaymentStore,
@@ -936,10 +937,11 @@ def get_cancel_keyboard():
         is_persistent=True
     )
 
-def get_ckassa_phone_keyboard():
+def get_ckassa_phone_keyboard(amount_text: str = ""):
+    button_text = f"💳 Оплатить {amount_text}" if amount_text else "📱 Отправить телефон"
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📱 Отправить телефон", request_contact=True)],
+            [KeyboardButton(text=button_text, request_contact=True)],
             [KeyboardButton(text="❌ Отменить")],
             [KeyboardButton(text="🏠 Главное меню")]
         ],
@@ -1228,6 +1230,22 @@ def _payment_continue_keyboard(order: dict) -> InlineKeyboardMarkup | None:
         ])
     return None
 
+async def _request_ckassa_phone_for_payment(
+    message: Message,
+    user_id: str,
+    specialist_type: str,
+    specialist_id: str,
+) -> None:
+    amount_rub = ckassa_client.config.amount_rub_text
+    WAITING_CKASSA_PHONE[user_id] = {
+        "specialist_type": specialist_type,
+        "specialist_id": specialist_id,
+    }
+    await message.answer(
+        f"Ckassa не дала создать ссылку без телефона. Нажми кнопку ниже — после подтверждения я сразу пришлю оплату на {amount_rub}.",
+        reply_markup=get_ckassa_phone_keyboard(amount_rub),
+    )
+
 async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = False) -> None:
     prefix = "У тебя уже есть активная ссылка на оплату." if reused else "Готово, создал ссылку на оплату."
     specialist_name = _payment_specialist_name(
@@ -1281,6 +1299,16 @@ async def offer_ckassa_payment(message: Message, user, specialist_type: str = ""
             specialist_id=specialist_id,
         )
         await _send_ckassa_invoice(message, order)
+    except CkassaPaymentAccessDenied as e:
+        print(f"[Ckassa] create invoice access denied for user {user_id}: {e}")
+        await notify_admin(f"[Ckassa] Create invoice access denied for user {user_id}: {e}")
+        if not get_user_phone(user_id):
+            await _request_ckassa_phone_for_payment(message, user_id, specialist_type, specialist_id)
+            return
+        await message.answer(
+            "Ckassa отклонила создание ссылки на оплату. Я уже передал администратору, что нужно проверить доступы в Ckassa.",
+            reply_markup=get_main_keyboard(),
+        )
     except CkassaPaymentError as e:
         print(f"[Ckassa] create invoice failed: {e}")
         await notify_admin(f"[Ckassa] Create invoice failed for user {user_id}: {e}")
@@ -4378,7 +4406,7 @@ async def handle_ckassa_contact(message: Message):
 
     flow = WAITING_CKASSA_PHONE.pop(user_id, {})
     save_user_phone(user_id, phone)
-    await message.answer("Телефон сохранил. Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
+    await message.answer("Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
     await offer_ckassa_payment(
         message,
         message.from_user,
@@ -4558,7 +4586,7 @@ async def handle_story(message: Message):
             return
         flow = WAITING_CKASSA_PHONE.pop(user_id, {})
         save_user_phone(user_id, phone)
-        await message.answer("Телефон сохранил. Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
+        await message.answer("Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
         await offer_ckassa_payment(
             message,
             message.from_user,
