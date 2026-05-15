@@ -102,7 +102,7 @@ class CkassaClient:
         )
         payload = {
             "servCode": self.config.serv_code,
-            "startPaySelect": "true",
+            "startPaySelect": bool(phone),
             "invType": "READ_ONLY" if phone else "AMOUNT_READ_ONLY",
             "amount": self.config.amount_kopeks,
             "bestBefore": best_before,
@@ -115,6 +115,10 @@ class CkassaClient:
         }
         text = await self._request_text("POST", "invoice/create2/", json=payload)
         pay_url = text.strip().strip('"')
+        if pay_url.startswith("{"):
+            error = _ckassa_result_error(pay_url)
+            if error:
+                raise CkassaPaymentError(error)
         if not pay_url.startswith(("http://", "https://")):
             raise CkassaPaymentError(f"Unexpected Ckassa invoice response: {pay_url[:200]}")
         return CkassaInvoice(
@@ -325,6 +329,24 @@ def _read_int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _ckassa_result_error(text: str) -> str | None:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, dict):
+        return None
+    code = result.get("code")
+    message = result.get("message") or "unknown error"
+    details = result.get("details")
+    if code in (None, 0, "0"):
+        return None
+    if details:
+        return f"Ckassa error {code}: {message} ({details})"
+    return f"Ckassa error {code}: {message}"
 
 
 def _rub_word(value: int) -> str:
