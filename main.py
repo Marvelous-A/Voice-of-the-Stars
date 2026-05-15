@@ -13,6 +13,16 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 import max_publisher
+from ckassa_payments import (
+    CkassaClient,
+    CkassaPaymentConfigError,
+    CkassaPaymentError,
+    CkassaPaymentStore,
+    extract_payment_order_id,
+    make_order_id,
+    normalize_phone,
+    payment_identity,
+)
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
@@ -44,6 +54,12 @@ PUBLISH_TARGETS = {
 }
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
+CKASSA_PAYMENTS_FILE = "ckassa_payments.json"
+CKASSA_POLL_INTERVAL_SEC = int(getenv("CKASSA_POLL_INTERVAL_SEC", "60"))
+ckassa_client = CkassaClient()
+ckassa_store = CkassaPaymentStore(CKASSA_PAYMENTS_FILE)
+CKASSA_STATE_LOCK = asyncio.Lock()
+WAITING_CKASSA_PHONE = {}
 
 PROXY_URL = getenv("PROXY_URL", "")  # socks5://... или пусто если прокси не нужен
 session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
@@ -920,6 +936,25 @@ def get_cancel_keyboard():
         is_persistent=True
     )
 
+def get_ckassa_phone_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Отправить телефон", request_contact=True)],
+            [KeyboardButton(text="❌ Отменить")],
+            [KeyboardButton(text="🏠 Главное меню")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def get_ckassa_payment_keyboard(pay_url: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
+        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data="ckassa_check")],
+    ])
+
+
 def get_session_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -1053,6 +1088,18 @@ def save_users(data):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
+def get_user_phone(user_id: str) -> str:
+    users = load_users()
+    return normalize_phone(users.get(user_id, {}).get("phone", ""))
+
+def save_user_phone(user_id: str, phone: str) -> str:
+    phone = normalize_phone(phone)
+    users = load_users()
+    users.setdefault(user_id, {})
+    users[user_id]["phone"] = phone
+    save_users(users)
+    return phone
+
 def get_sessions_today(user_id: str) -> int:
     """Сколько сеансов пользователь провёл сегодня."""
     users = load_users()
@@ -1098,6 +1145,10 @@ def increment_sessions_today(user_id: str):
         bonus = users[user_id].get("bonus_sessions", 0)
         if bonus > 0:
             users[user_id]["bonus_sessions"] = bonus - 1
+        else:
+            paid = users[user_id].get("paid_sessions", 0)
+            if paid > 0:
+                users[user_id]["paid_sessions"] = paid - 1
     save_users(users)
 
 def track_activity(user_id: str, action: str):
@@ -1118,9 +1169,188 @@ def get_bonus_sessions(user_id: str) -> int:
     users = load_users()
     return users.get(user_id, {}).get("bonus_sessions", 0)
 
+def get_paid_sessions(user_id: str) -> int:
+    users = load_users()
+    return users.get(user_id, {}).get("paid_sessions", 0)
+
+def add_paid_session_credit(user_id: str, count: int = 1) -> int:
+    users = load_users()
+    users.setdefault(user_id, {})
+    current = int(users[user_id].get("paid_sessions", 0))
+    users[user_id]["paid_sessions"] = current + count
+    save_users(users)
+    return users[user_id]["paid_sessions"]
+
 def get_effective_session_limit(user_id: str) -> int:
-    """Общий лимит сеансов на сегодня = базовый первый бесплатный сеанс + бонусные."""
-    return get_daily_free_limit(user_id) + get_bonus_sessions(user_id)
+    """Общий лимит сеансов на сегодня = бесплатные + бонусные + оплаченные."""
+    return get_daily_free_limit(user_id) + get_bonus_sessions(user_id) + get_paid_sessions(user_id)
+
+def _payment_specialist_name(specialist_type: str, specialist_id: str) -> str:
+    if specialist_type == "tarot":
+        specialist = TAROLOGISTS_BY_ID.get(specialist_id)
+    elif specialist_type == "astro":
+        specialist = ASTROLOGERS_BY_ID.get(specialist_id)
+    else:
+        specialist = None
+    return specialist.get("name", "") if specialist else ""
+
+def _payment_continue_keyboard(order: dict) -> InlineKeyboardMarkup | None:
+    specialist_type = order.get("specialist_type", "")
+    specialist_id = order.get("specialist_id", "")
+    if specialist_type == "tarot" and specialist_id:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎴 Продолжить с тарологом", callback_data=f"ask_{specialist_id}")]
+        ])
+    if specialist_type == "astro" and specialist_id:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ Продолжить с астрологом", callback_data=f"ask_astro_{specialist_id}")]
+        ])
+    return None
+
+async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = False) -> None:
+    prefix = "У тебя уже есть активная ссылка на оплату." if reused else "Готово, создал ссылку на оплату."
+    specialist_name = _payment_specialist_name(
+        order.get("specialist_type", ""),
+        order.get("specialist_id", ""),
+    )
+    specialist_line = f"\nСпециалист: {specialist_name}" if specialist_name else ""
+    amount_rub = ckassa_client.config.amount_rub_text
+    await message.answer(
+        f"💳 {prefix}\n\n"
+        f"Сумма: {amount_rub}{specialist_line}\n"
+        "После оплаты нажми «Проверить оплату» или просто подожди: бот сам увидит платеж и начислит один сеанс.",
+        reply_markup=get_ckassa_payment_keyboard(order["invoice_url"]),
+        disable_web_page_preview=True,
+    )
+
+async def offer_ckassa_payment(message: Message, user, specialist_type: str = "", specialist_id: str = "") -> None:
+    user_id = str(user.id)
+    try:
+        ckassa_client.config.validate()
+    except CkassaPaymentConfigError as e:
+        await message.answer(
+            "💳 Оплата почти подключена, но пока не настроена стоимость консультации. "
+            "Я уже передал администратору, что нужно проверить настройки.",
+            reply_markup=get_main_keyboard(),
+        )
+        await notify_admin(f"[Ckassa] Payment config error: {e}")
+        return
+
+    phone = get_user_phone(user_id)
+    if not phone:
+        WAITING_CKASSA_PHONE[user_id] = {
+            "specialist_type": specialist_type,
+            "specialist_id": specialist_id,
+        }
+        await message.answer(
+            "Для оплаты нужен номер телефона. Отправь его кнопкой ниже или напиши цифрами, например 79990000000.",
+            reply_markup=get_ckassa_phone_keyboard(),
+        )
+        return
+
+    active_order = ckassa_store.find_active_order(user_id, ckassa_client.config.amount_kopeks)
+    if active_order:
+        await _send_ckassa_invoice(message, active_order, reused=True)
+        return
+
+    try:
+        order_id = make_order_id(user_id)
+        invoice = await ckassa_client.create_invoice(
+            order_id=order_id,
+            phone=phone,
+            telegram_id=user_id,
+        )
+        order = ckassa_store.create_order(
+            order_id=invoice.order_id,
+            user_id=user_id,
+            phone=phone,
+            amount_kopeks=invoice.amount_kopeks,
+            invoice_url=invoice.pay_url,
+            best_before=invoice.best_before,
+            specialist_type=specialist_type,
+            specialist_id=specialist_id,
+        )
+        await _send_ckassa_invoice(message, order)
+    except CkassaPaymentError as e:
+        print(f"[Ckassa] create invoice failed: {e}")
+        await notify_admin(f"[Ckassa] Create invoice failed for user {user_id}: {e}")
+        await message.answer(
+            "Не получилось создать ссылку на оплату. Попробуй чуть позже, пожалуйста.",
+            reply_markup=get_main_keyboard(),
+        )
+
+async def credit_paid_order(order: dict, notify_user: bool = True) -> bool:
+    if order.get("credited"):
+        return False
+    user_id = str(order.get("user_id", ""))
+    if not user_id:
+        return False
+    paid_left = add_paid_session_credit(user_id, 1)
+    ckassa_store.mark_order_credited(order["order_id"])
+    if notify_user:
+        text = (
+            "✅ Оплата получена. Я начислил один платный сеанс.\n\n"
+            f"Доступных платных сеансов: {paid_left}."
+        )
+        receipt = order.get("receipt") or order.get("payment", {}).get("receipt")
+        if receipt:
+            text += f"\n\nЧек: {receipt}"
+        try:
+            await bot.send_message(
+                int(user_id),
+                text,
+                reply_markup=_payment_continue_keyboard(order),
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            print(f"[Ckassa] notify paid user {user_id}: {e}")
+    await notify_admin(
+        f"[Ckassa] Paid consultation credited. user_id={user_id}, "
+        f"order_id={order.get('order_id')}, regPayNum={order.get('reg_pay_num', '')}"
+    )
+    return True
+
+async def credit_uncredited_paid_orders(notify_user: bool = True) -> list[dict]:
+    credited = []
+    for order in ckassa_store.uncredited_paid_orders():
+        if await credit_paid_order(order, notify_user=notify_user):
+            credited.append(order)
+    return credited
+
+async def process_ckassa_payment_updates(notify_users: bool = True) -> list[dict]:
+    async with CKASSA_STATE_LOCK:
+        credited = []
+        payments = await ckassa_client.get_new_payments()
+        for payment in payments:
+            payment_key = payment_identity(payment)
+            order_id = extract_payment_order_id(payment)
+            state = str(payment.get("state") or "").upper()
+            if not order_id:
+                ckassa_store.mark_payment_seen(payment_key)
+                continue
+            if not ckassa_store.mark_payment_seen(payment_key):
+                continue
+            if state == "PAYED":
+                order = ckassa_store.mark_order_paid(order_id, payment)
+                if order and await credit_paid_order(order, notify_user=notify_users):
+                    credited.append(order)
+            else:
+                ckassa_store.mark_order_state(order_id, state or "unknown", payment)
+        credited.extend(await credit_uncredited_paid_orders(notify_user=notify_users))
+        return credited
+
+async def ckassa_payment_watcher():
+    try:
+        ckassa_client.config.validate()
+    except CkassaPaymentConfigError as e:
+        print(f"[Ckassa] watcher disabled: {e}")
+        return
+    while True:
+        try:
+            await process_ckassa_payment_updates(notify_users=True)
+        except Exception as e:
+            print(f"[Ckassa] watcher error: {e}")
+        await asyncio.sleep(max(15, CKASSA_POLL_INTERVAL_SEC))
 
 def save_referral_link(referrer_id: str, new_user_id: str) -> bool:
     """Сохраняет связь реферер→друг. Бонус начислится когда друг пройдёт первый сеанс."""
@@ -3644,6 +3874,36 @@ async def consultations_menu(message: Message):
         reply_markup=get_consultations_keyboard()
     )
 
+@dp.callback_query(F.data == "ckassa_check")
+async def ckassa_check_payment(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    try:
+        credited = await process_ckassa_payment_updates(notify_users=True)
+    except CkassaPaymentConfigError:
+        await callback.answer("Оплата пока не настроена.", show_alert=True)
+        return
+    except CkassaPaymentError:
+        await callback.answer("Не удалось проверить оплату. Попробуй чуть позже.", show_alert=True)
+        return
+    except Exception as e:
+        print(f"[Ckassa] manual check failed: {e}")
+        await callback.answer("Не удалось проверить оплату. Попробуй чуть позже.", show_alert=True)
+        return
+
+    if any(str(order.get("user_id")) == user_id for order in credited):
+        await callback.answer("Оплата подтверждена.")
+        return
+
+    if get_sessions_today(user_id) < get_effective_session_limit(user_id):
+        await callback.message.answer(
+            "У тебя уже есть доступный сеанс. Выбери специалиста в разделе консультаций.",
+            reply_markup=get_consultations_keyboard(),
+        )
+        await callback.answer("Сеанс доступен.")
+        return
+
+    await callback.answer("Пока не вижу подтверждение оплаты. Обычно это занимает 30-60 секунд.", show_alert=True)
+
 @dp.message(F.text.in_({"🎴 Тарологи", "🎴 Задать вопрос тарологу"}))
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
@@ -3655,17 +3915,12 @@ async def tarot_list(message: Message):
     if not is_admin and remaining == 0:
         bonus = get_bonus_sessions(user_id)
         hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
-        await message.answer(
-            "🔒 *Лимит сеансов исчерпан*\n\n"
-            "Первый бесплатный сеанс после регистрации уже использован. "
-            f"Бонусных сеансов: {bonus}.{hint}\n\n"
-            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
+        limit_note = (
+            "\n\n🔒 *Лимит сеансов исчерпан.* "
+            "Выбери специалиста, и я дам ссылку на оплату консультации. "
+            f"Бонусных сеансов: {bonus}.{hint}"
         )
-        return
-
-    if not is_admin and remaining <= effective_limit:
+    elif not is_admin and remaining <= effective_limit:
         bonus = get_bonus_sessions(user_id)
         bonus_note = f" (из них бонусных: {bonus})" if bonus > 0 else ""
         limit_note = (
@@ -3719,12 +3974,7 @@ async def ask_tarot(callback: CallbackQuery):
 
     user_id = str(callback.from_user.id)
     if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= get_effective_session_limit(user_id):
-        await callback.message.answer(
-            "🔒 *Лимит сеансов исчерпан*\n\n"
-            "🎁 Пригласи друга и получи бонусный сеанс!\n"
-            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
-            parse_mode="Markdown"
-        )
+        await offer_ckassa_payment(callback.message, callback.from_user, "tarot", tarot_id)
         await callback.answer()
         return
 
@@ -3759,17 +4009,12 @@ async def astro_list(message: Message):
     if not is_admin and remaining == 0:
         bonus = get_bonus_sessions(user_id)
         hint = "\n\n🎁 Пригласи друга и получи бонусный сеанс!" if bonus == 0 else ""
-        await message.answer(
-            "🔒 *Лимит сеансов исчерпан*\n\n"
-            "Первый бесплатный сеанс после регистрации уже использован. "
-            f"Бонусных сеансов: {bonus}.{hint}\n\n"
-            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
+        limit_note = (
+            "\n\n🔒 *Лимит сеансов исчерпан.* "
+            "Выбери специалиста, и я дам ссылку на оплату консультации. "
+            f"Бонусных сеансов: {bonus}.{hint}"
         )
-        return
-
-    if not is_admin and remaining <= effective_limit:
+    elif not is_admin and remaining <= effective_limit:
         bonus = get_bonus_sessions(user_id)
         bonus_note = f" (из них бонусных: {bonus})" if bonus > 0 else ""
         limit_note = (
@@ -3823,12 +4068,7 @@ async def ask_astro(callback: CallbackQuery):
 
     user_id = str(callback.from_user.id)
     if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= get_effective_session_limit(user_id):
-        await callback.message.answer(
-            "🔒 *Лимит сеансов исчерпан*\n\n"
-            "🎁 Пригласи друга и получи бонусный сеанс!\n"
-            "💳 Оплата консультаций скоро появится в боте — следи за обновлениями!",
-            parse_mode="Markdown"
-        )
+        await offer_ckassa_payment(callback.message, callback.from_user, "astro", astro_id)
         await callback.answer()
         return
 
@@ -3858,6 +4098,7 @@ async def cancel_tarot(message: Message):
         del WAITING_TAROT_STORY[user_id]
     if user_id in WAITING_ASTRO_STORY:
         del WAITING_ASTRO_STORY[user_id]
+    WAITING_CKASSA_PHONE.pop(user_id, None)
     msg = await message.answer("Отменено.", reply_markup=get_main_keyboard())
 
 @dp.message(F.text == "⭐ Отзывы")
@@ -4108,6 +4349,33 @@ async def change_sign(message: Message):
     WAITING_SIGN_CHANGE[str(user_id)] = True
     msg = await message.answer("Выбери новый знак зодиака:", reply_markup=get_sign_keyboard())
 
+@dp.message(F.contact)
+async def handle_ckassa_contact(message: Message):
+    user_id = str(message.from_user.id)
+    if user_id not in WAITING_CKASSA_PHONE:
+        await message.answer("Спасибо, телефон получил.", reply_markup=get_main_keyboard())
+        return
+
+    contact = message.contact
+    if contact.user_id and contact.user_id != message.from_user.id:
+        await message.answer("Для оплаты нужен твой номер телефона. Отправь свой контакт или введи номер цифрами.")
+        return
+
+    phone = normalize_phone(contact.phone_number)
+    if len(phone) < 10 or len(phone) > 12:
+        await message.answer("Номер должен быть от 10 до 12 цифр. Попробуй еще раз, пожалуйста.")
+        return
+
+    flow = WAITING_CKASSA_PHONE.pop(user_id, {})
+    save_user_phone(user_id, phone)
+    await message.answer("Телефон сохранил. Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
+    await offer_ckassa_payment(
+        message,
+        message.from_user,
+        flow.get("specialist_type", ""),
+        flow.get("specialist_id", ""),
+    )
+
 # ====== ГОЛОСОВЫЕ СООБЩЕНИЯ ======
 @dp.message(F.voice)
 async def handle_voice(message: Message):
@@ -4272,6 +4540,22 @@ async def handle_story(message: Message):
             u["full_name"] = message.from_user.full_name or ""
             users[user_id] = u
             save_users(users)
+
+    if user_id in WAITING_CKASSA_PHONE:
+        phone = normalize_phone(message.text or "")
+        if len(phone) < 10 or len(phone) > 12:
+            await message.answer("Введи номер телефона цифрами: от 10 до 12 цифр, например 79990000000.")
+            return
+        flow = WAITING_CKASSA_PHONE.pop(user_id, {})
+        save_user_phone(user_id, phone)
+        await message.answer("Телефон сохранил. Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
+        await offer_ckassa_payment(
+            message,
+            message.from_user,
+            flow.get("specialist_type", ""),
+            flow.get("specialist_id", ""),
+        )
+        return
 
     # ====== ОТВЕТ НА ЗАПРОС ОБ ОПЫТЕ КОНСУЛЬТАЦИИ (инициирован админом) ======
     feedback_entry = _load_waiting_feedback().get(user_id)
@@ -4596,7 +4880,9 @@ async def _restore_active_sessions() -> None:
 async def main():
     asyncio.create_task(scheduler())
     asyncio.create_task(heartbeat())
+    asyncio.create_task(ckassa_payment_watcher())
     await on_startup(bot)
+    await credit_uncredited_paid_orders(notify_user=True)
     await _restore_active_sessions()
     await _restore_pending_answers()
     await dp.start_polling(bot)

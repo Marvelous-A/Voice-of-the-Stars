@@ -37,6 +37,7 @@ DEPLOY_BACKUP_DIR = os.getenv("DEPLOY_BACKUP_DIR", "/root/deploy-backup")
 CODE_FILES = [
     "main.py",
     "mainAdmin.py",
+    "ckassa_payments.py",
     "max_publisher.py",
     "max_connector_server.py",
     "requirements.txt",
