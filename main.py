@@ -21,7 +21,6 @@ from ckassa_payments import (
     CkassaPaymentStore,
     extract_payment_order_id,
     make_order_id,
-    normalize_phone,
     payment_identity,
 )
 from aiogram import Bot, Dispatcher, F
@@ -60,7 +59,6 @@ CKASSA_POLL_INTERVAL_SEC = int(getenv("CKASSA_POLL_INTERVAL_SEC", "60"))
 ckassa_client = CkassaClient()
 ckassa_store = CkassaPaymentStore(CKASSA_PAYMENTS_FILE)
 CKASSA_STATE_LOCK = asyncio.Lock()
-WAITING_CKASSA_PHONE = {}
 
 PROXY_URL = getenv("PROXY_URL", "")  # socks5://... или пусто если прокси не нужен
 session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
@@ -937,24 +935,10 @@ def get_cancel_keyboard():
         is_persistent=True
     )
 
-def get_ckassa_phone_keyboard(amount_text: str = ""):
-    button_text = f"💳 Оплатить {amount_text}" if amount_text else "📱 Отправить телефон"
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=button_text, request_contact=True)],
-            [KeyboardButton(text="❌ Отменить")],
-            [KeyboardButton(text="🏠 Главное меню")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True,
-    )
-
-
 def get_ckassa_payment_keyboard(pay_url: str, amount_text: str = ""):
     pay_text = f"💳 {amount_text}" if amount_text else "💳 Оплатить"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=pay_text, url=pay_url)],
-        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data="ckassa_check")],
     ])
 
 
@@ -1099,18 +1083,6 @@ def save_users(data):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
-def get_user_phone(user_id: str) -> str:
-    users = load_users()
-    return normalize_phone(users.get(user_id, {}).get("phone", ""))
-
-def save_user_phone(user_id: str, phone: str) -> str:
-    phone = normalize_phone(phone)
-    users = load_users()
-    users.setdefault(user_id, {})
-    users[user_id]["phone"] = phone
-    save_users(users)
-    return phone
-
 def get_sessions_today(user_id: str) -> int:
     """Сколько сеансов пользователь провёл сегодня."""
     users = load_users()
@@ -1230,22 +1202,6 @@ def _payment_continue_keyboard(order: dict) -> InlineKeyboardMarkup | None:
         ])
     return None
 
-async def _request_ckassa_phone_for_payment(
-    message: Message,
-    user_id: str,
-    specialist_type: str,
-    specialist_id: str,
-) -> None:
-    amount_rub = ckassa_client.config.amount_rub_text
-    WAITING_CKASSA_PHONE[user_id] = {
-        "specialist_type": specialist_type,
-        "specialist_id": specialist_id,
-    }
-    await message.answer(
-        f"Ckassa не дала создать ссылку без телефона. Нажми кнопку ниже — после подтверждения я сразу пришлю оплату на {amount_rub}.",
-        reply_markup=get_ckassa_phone_keyboard(amount_rub),
-    )
-
 async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = False) -> None:
     prefix = "У тебя уже есть активная ссылка на оплату." if reused else "Готово, создал ссылку на оплату."
     specialist_name = _payment_specialist_name(
@@ -1257,7 +1213,7 @@ async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = Fal
     await message.answer(
         f"💳 {prefix}\n\n"
         f"Сумма: {amount_rub}{specialist_line}\n"
-        "Нажми кнопку ниже — откроется страница Ckassa. После оплаты нажми «Проверить оплату» или просто подожди: бот сам увидит платеж и начислит один сеанс.",
+        "Нажми кнопку ниже — откроется страница Ckassa. После оплаты бот сам увидит платеж и начислит один сеанс.",
         reply_markup=get_ckassa_payment_keyboard(order["invoice_url"], amount_rub),
         disable_web_page_preview=True,
     )
@@ -1281,17 +1237,14 @@ async def offer_ckassa_payment(message: Message, user, specialist_type: str = ""
         return
 
     try:
-        phone = get_user_phone(user_id)
         order_id = make_order_id(user_id)
         invoice = await ckassa_client.create_invoice(
             order_id=order_id,
             telegram_id=user_id,
-            phone=phone,
         )
         order = ckassa_store.create_order(
             order_id=invoice.order_id,
             user_id=user_id,
-            phone=phone,
             amount_kopeks=invoice.amount_kopeks,
             invoice_url=invoice.pay_url,
             best_before=invoice.best_before,
@@ -1302,11 +1255,8 @@ async def offer_ckassa_payment(message: Message, user, specialist_type: str = ""
     except CkassaPaymentAccessDenied as e:
         print(f"[Ckassa] create invoice access denied for user {user_id}: {e}")
         await notify_admin(f"[Ckassa] Create invoice access denied for user {user_id}: {e}")
-        if not get_user_phone(user_id):
-            await _request_ckassa_phone_for_payment(message, user_id, specialist_type, specialist_id)
-            return
         await message.answer(
-            "Ckassa отклонила создание ссылки на оплату. Я уже передал администратору, что нужно проверить доступы в Ckassa.",
+            "Ckassa отклонила создание ссылки на оплату. Я уже передал администратору, что нужно проверить настройки оплаты.",
             reply_markup=get_main_keyboard(),
         )
     except CkassaPaymentError as e:
@@ -4146,7 +4096,6 @@ async def cancel_tarot(message: Message):
         del WAITING_TAROT_STORY[user_id]
     if user_id in WAITING_ASTRO_STORY:
         del WAITING_ASTRO_STORY[user_id]
-    WAITING_CKASSA_PHONE.pop(user_id, None)
     msg = await message.answer("Отменено.", reply_markup=get_main_keyboard())
 
 @dp.message(F.text == "⭐ Отзывы")
@@ -4399,29 +4348,9 @@ async def change_sign(message: Message):
 
 @dp.message(F.contact)
 async def handle_ckassa_contact(message: Message):
-    user_id = str(message.from_user.id)
-    if user_id not in WAITING_CKASSA_PHONE:
-        await message.answer("Спасибо, телефон получил.", reply_markup=get_main_keyboard())
-        return
-
-    contact = message.contact
-    if contact.user_id and contact.user_id != message.from_user.id:
-        await message.answer("Для оплаты нужен твой номер телефона. Отправь свой контакт или введи номер цифрами.")
-        return
-
-    phone = normalize_phone(contact.phone_number)
-    if len(phone) < 10 or len(phone) > 12:
-        await message.answer("Номер должен быть от 10 до 12 цифр. Попробуй еще раз, пожалуйста.")
-        return
-
-    flow = WAITING_CKASSA_PHONE.pop(user_id, {})
-    save_user_phone(user_id, phone)
-    await message.answer("Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
-    await offer_ckassa_payment(
-        message,
-        message.from_user,
-        flow.get("specialist_type", ""),
-        flow.get("specialist_id", ""),
+    await message.answer(
+        "Номер телефона в боте больше не нужен. Для оплаты нажми кнопку с суммой — данные вводятся на странице Ckassa.",
+        reply_markup=get_main_keyboard(),
     )
 
 # ====== ГОЛОСОВЫЕ СООБЩЕНИЯ ======
@@ -4588,22 +4517,6 @@ async def handle_story(message: Message):
             u["full_name"] = message.from_user.full_name or ""
             users[user_id] = u
             save_users(users)
-
-    if user_id in WAITING_CKASSA_PHONE:
-        phone = normalize_phone(message.text or "")
-        if len(phone) < 10 or len(phone) > 12:
-            await message.answer("Введи номер телефона цифрами: от 10 до 12 цифр, например 79990000000.")
-            return
-        flow = WAITING_CKASSA_PHONE.pop(user_id, {})
-        save_user_phone(user_id, phone)
-        await message.answer("Создаю ссылку на оплату...", reply_markup=get_main_keyboard())
-        await offer_ckassa_payment(
-            message,
-            message.from_user,
-            flow.get("specialist_type", ""),
-            flow.get("specialist_id", ""),
-        )
-        return
 
     # ====== ОТВЕТ НА ЗАПРОС ОБ ОПЫТЕ КОНСУЛЬТАЦИИ (инициирован админом) ======
     feedback_entry = _load_waiting_feedback().get(user_id)
