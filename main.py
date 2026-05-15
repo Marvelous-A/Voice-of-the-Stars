@@ -1639,6 +1639,16 @@ def is_working_hours() -> bool:
     msk_hour = (datetime.now(timezone.utc).hour + 3) % 24
     return 9 <= msk_hour < 22
 
+WORKING_HOURS_BYPASS_USERNAMES = {"turumbos"}
+
+def can_start_consultation_now(user) -> bool:
+    username = (getattr(user, "username", "") or "").lstrip("@").lower()
+    return (
+        getattr(user, "id", None) == ADMIN_ID
+        or username in WORKING_HOURS_BYPASS_USERNAMES
+        or is_working_hours()
+    )
+
 def get_offline_message(specialist_name: str) -> str:
     hour = (datetime.now(timezone.utc).hour + 3) % 24
     if hour < 9:
@@ -4005,7 +4015,7 @@ async def ask_tarot(callback: CallbackQuery):
         await callback.answer("Таролог не найден")
         return
 
-    if callback.from_user.id != ADMIN_ID and not is_working_hours():
+    if not can_start_consultation_now(callback.from_user):
         await callback.message.answer(get_offline_message(tarologist["name"]), parse_mode="Markdown")
         await callback.answer()
         return
@@ -4099,7 +4109,7 @@ async def ask_astro(callback: CallbackQuery):
         await callback.answer("Астролог не найден")
         return
 
-    if callback.from_user.id != ADMIN_ID and not is_working_hours():
+    if not can_start_consultation_now(callback.from_user):
         await callback.message.answer(get_offline_message(astrologer["name"]), parse_mode="Markdown")
         await callback.answer()
         return
