@@ -3,6 +3,7 @@ import json
 import re
 import random
 import os
+import math
 import subprocess
 import smtplib
 import time
@@ -3004,6 +3005,29 @@ CHANNEL_TOPIC_IMAGE_HINTS = [
     ]),
 ]
 
+CHANNEL_GENERATED_IMAGE_SYMBOLS = {
+    "tarot": ["XVII", "VI", "XI", "☽", "✦", "◆"],
+    "astrology": ["☉", "☽", "☿", "♀", "♂", "♃", "♄"],
+    "zodiac": ["♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓"],
+    "moon": ["☽", "○", "◐", "●", "◑", "✦"],
+    "planets": ["☉", "☿", "♀", "♂", "♃", "♄"],
+    "numerology": ["11:11", "22:22", "7", "3", "9", "12"],
+    "crystals": ["◇", "△", "✧", "✦", "◆", "◈"],
+    "divination": ["✦", "☽", "◆", "◇", "☉", "✧"],
+    "mystic": ["✦", "☽", "◇", "✧", "☉", "◆"],
+    "default": ["✦", "☽", "◇", "✧", "☉", "◆"],
+}
+
+CHANNEL_GENERATED_IMAGE_PALETTES = [
+    {"bg": (38, 29, 48), "mid": (112, 73, 92), "accent": (230, 187, 128), "ink": (255, 246, 228)},
+    {"bg": (22, 47, 54), "mid": (51, 103, 102), "accent": (226, 183, 92), "ink": (239, 252, 247)},
+    {"bg": (55, 36, 27), "mid": (126, 82, 62), "accent": (238, 196, 136), "ink": (255, 244, 232)},
+    {"bg": (28, 37, 63), "mid": (81, 92, 132), "accent": (217, 190, 116), "ink": (244, 247, 255)},
+    {"bg": (34, 56, 42), "mid": (86, 122, 83), "accent": (222, 197, 121), "ink": (246, 250, 237)},
+]
+
+CHANNEL_GENERATED_LAYOUTS = ["chart", "cards", "journal", "moon_grid", "sigils"]
+
 # Бэкап-пул на случай если Pexels API недоступен
 UNSPLASH_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800",
@@ -3040,6 +3064,8 @@ MAX_RECENT_IMAGES = 60
 RECENT_IMAGE_QUERY_KEYS: list[str] = []
 MAX_RECENT_IMAGE_QUERIES = 24
 MAX_RECENT_PROMOS = 5
+CHANNEL_IMAGE_ASSET_DIR = "generated_channel_images"
+MAX_GENERATED_CHANNEL_IMAGES = 80
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = 8
 RECENT_CONTENT_SIGNATURES: list[str] = []
@@ -3137,6 +3163,206 @@ def _sync_recent_images_from_state() -> None:
         RECENT_IMAGE_QUERY_KEYS.pop(0)
 
 
+def _channel_image_font(size: int, bold: bool = False):
+    try:
+        from PIL import ImageFont
+    except Exception:
+        return None
+
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return ImageFont.truetype(path, size=size)
+    return ImageFont.load_default()
+
+
+def _draw_centered_text(draw, box: tuple[int, int, int, int], text: str, font, fill, spacing: int = 8) -> None:
+    import textwrap
+
+    x1, y1, x2, y2 = box
+    max_width = x2 - x1
+    words = (text or "").split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        width = draw.textbbox((0, 0), candidate, font=font)[2]
+        if width <= max_width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    if not lines:
+        lines = textwrap.wrap(text or "", width=18) or [""]
+
+    heights = [draw.textbbox((0, 0), line, font=font)[3] for line in lines]
+    total_height = sum(heights) + spacing * max(0, len(lines) - 1)
+    y = y1 + max(0, (y2 - y1 - total_height) // 2)
+    for idx, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        width = bbox[2] - bbox[0]
+        draw.text((x1 + (max_width - width) // 2, y), line, font=font, fill=fill)
+        y += heights[idx] + spacing
+
+
+def _cleanup_generated_channel_images() -> None:
+    try:
+        if not os.path.isdir(CHANNEL_IMAGE_ASSET_DIR):
+            return
+        files = [
+            os.path.join(CHANNEL_IMAGE_ASSET_DIR, name)
+            for name in os.listdir(CHANNEL_IMAGE_ASSET_DIR)
+            if name.lower().endswith(".png")
+        ]
+        files.sort(key=lambda path: os.path.getmtime(path))
+        for old_path in files[:-MAX_GENERATED_CHANNEL_IMAGES]:
+            try:
+                os.remove(old_path)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[channel_image] cleanup error: {e}")
+
+
+def _channel_image_label(category: str) -> str:
+    labels = {
+        "tarot": "ТАРО",
+        "astrology": "АСТРОЛОГИЯ",
+        "zodiac": "ЗОДИАК",
+        "moon": "ЛУННЫЙ РИТМ",
+        "planets": "ПЛАНЕТЫ",
+        "numerology": "НУМЕРОЛОГИЯ",
+        "crystals": "КРИСТАЛЛЫ",
+        "divination": "ГАДАНИЕ",
+        "karma": "КАРМА",
+        "dreams": "СНЫ",
+        "elements": "СТИХИИ",
+        "mystic": "ПРАКТИКА",
+        "meditation": "НАСТРОЙКА",
+    }
+    return labels.get(category, "ГОЛОС ЗВЕЗД")
+
+
+def generate_channel_image_asset(
+    topic_info: dict,
+    author_info: dict | None = None,
+    content_plan: dict | None = None,
+) -> str:
+    """Создает локальную PNG-карточку для Telegram, чтобы не зависеть от однотипной выдачи фотостоков."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except Exception as e:
+        print(f"[channel_image] Pillow unavailable: {e}")
+        return ""
+
+    try:
+        os.makedirs(CHANNEL_IMAGE_ASSET_DIR, exist_ok=True)
+        rng = random.Random(uuid.uuid4().hex)
+        palette = rng.choice(CHANNEL_GENERATED_IMAGE_PALETTES)
+        category = topic_info.get("category", "")
+        layout = rng.choice(CHANNEL_GENERATED_LAYOUTS)
+        symbols = CHANNEL_GENERATED_IMAGE_SYMBOLS.get(category) or CHANNEL_GENERATED_IMAGE_SYMBOLS["default"]
+
+        width = height = 1080
+        img = Image.new("RGB", (width, height), palette["bg"])
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        # Layered gradients and soft geometry give variety without relying on stock photos.
+        for y in range(height):
+            ratio = y / height
+            color = tuple(
+                int(palette["bg"][i] * (1 - ratio) + palette["mid"][i] * ratio)
+                for i in range(3)
+            )
+            draw.line([(0, y), (width, y)], fill=color + (255,))
+
+        for _ in range(22):
+            cx, cy = rng.randint(-120, width + 120), rng.randint(-120, height + 120)
+            radius = rng.randint(60, 230)
+            color = palette["accent"] + (rng.randint(18, 48),)
+            draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=color)
+        img = img.filter(ImageFilter.GaussianBlur(radius=1.2))
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        title_font = _channel_image_font(76, bold=True)
+        subtitle_font = _channel_image_font(40, bold=False)
+        symbol_font = _channel_image_font(86, bold=True)
+        small_font = _channel_image_font(30, bold=False)
+
+        title = _channel_image_label(category)
+        rubric = ((content_plan or {}).get("rubric") or {}).get("label", "")
+        author = ""
+        if author_info:
+            role = "таролог" if author_info.get("type") == "tarot" else "астролог"
+            author = f"{author_info['specialist']['name']} · {role}"
+        subtitle = rubric or author or "новый ракурс"
+
+        border = palette["accent"] + (190,)
+        ink = palette["ink"] + (255,)
+        muted = palette["ink"] + (185,)
+
+        draw.rounded_rectangle((56, 56, width - 56, height - 56), radius=42, outline=border, width=3)
+        draw.rounded_rectangle((92, 92, width - 92, height - 92), radius=30, outline=palette["accent"] + (75,), width=2)
+
+        if layout == "chart":
+            center = (width // 2, height // 2 + 40)
+            for r, alpha in ((330, 92), (245, 78), (155, 62)):
+                draw.ellipse((center[0] - r, center[1] - r, center[0] + r, center[1] + r), outline=palette["accent"] + (alpha,), width=3)
+            for i in range(12):
+                angle = i * 30
+                rad = 3.14159 * angle / 180
+                x = center[0] + int(300 * math.cos(rad))
+                y = center[1] + int(300 * math.sin(rad))
+                sym = symbols[i % len(symbols)]
+                draw.text((x - 34, y - 40), sym, font=symbol_font, fill=ink)
+        elif layout == "cards":
+            for i in range(3):
+                x = 165 + i * 255
+                y = 350 + rng.randint(-18, 18)
+                draw.rounded_rectangle((x, y, x + 205, y + 330), radius=24, fill=(255, 255, 255, 28), outline=border, width=3)
+                sym = rng.choice(symbols)
+                draw.text((x + 61, y + 106), sym, font=symbol_font, fill=ink)
+                draw.line((x + 42, y + 252, x + 163, y + 252), fill=palette["accent"] + (150,), width=2)
+        elif layout == "journal":
+            draw.rounded_rectangle((170, 300, 910, 780), radius=28, fill=(255, 250, 232, 38), outline=border, width=2)
+            for y in range(390, 720, 62):
+                draw.line((235, y, 845, y), fill=palette["accent"] + (105,), width=2)
+            for i, sym in enumerate(rng.sample(symbols * 2, k=5)):
+                draw.text((230 + i * 120, 305 + rng.randint(0, 34)), sym, font=symbol_font, fill=palette["accent"] + (175,))
+        elif layout == "moon_grid":
+            phases = ["○", "◔", "◐", "●", "◑", "◕"]
+            for i, sym in enumerate(phases):
+                x = 185 + i * 130
+                draw.text((x, 440 + (i % 2) * 28), sym, font=symbol_font, fill=ink if i % 2 else muted)
+            draw.line((170, 635, 910, 635), fill=border, width=3)
+        else:
+            for _ in range(9):
+                cx, cy = rng.randint(170, 910), rng.randint(310, 770)
+                size = rng.randint(60, 140)
+                sym = rng.choice(symbols)
+                draw.regular_polygon((cx, cy, size), n_sides=rng.choice([3, 4, 5, 6]), rotation=rng.random() * 360, outline=palette["accent"] + (105,), width=3)
+                draw.text((cx - 32, cy - 42), sym, font=symbol_font, fill=ink)
+
+        _draw_centered_text(draw, (150, 115, 930, 250), title, title_font, ink)
+        _draw_centered_text(draw, (190, 800, 890, 895), subtitle, subtitle_font, muted)
+        draw.text((width // 2 - 118, 950), "Голос Звезд", font=small_font, fill=palette["ink"] + (160,))
+
+        path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}.png")
+        img.save(path, format="PNG", optimize=True)
+        _cleanup_generated_channel_images()
+        return path
+    except Exception as e:
+        print(f"[channel_image] generation error: {e}")
+        return ""
+
+
 def _topic_key(topic_info: dict) -> str:
     return (topic_info.get("topic") or "").strip()
 
@@ -3188,6 +3414,7 @@ def _recent_content_parts() -> dict[str, set[str]]:
         "format": set(),
         "tone": set(),
         "hook": set(),
+        "layout": set(),
         "ending": set(),
     }
     for signature in RECENT_CONTENT_SIGNATURES:
@@ -3225,6 +3452,7 @@ def _select_channel_content_plan(topic_info: dict, author_info: dict | None) -> 
         "format": _pick_fresh_channel_variant(CHANNEL_POST_FORMATS, "format", recent_parts),
         "tone": _pick_fresh_channel_variant(CHANNEL_POST_TONES, "tone", recent_parts),
         "hook": _pick_fresh_channel_variant(CHANNEL_POST_HOOKS, "hook", recent_parts),
+        "layout": _pick_fresh_channel_variant(CHANNEL_TEXT_LAYOUTS, "layout", recent_parts),
         "ending": _pick_fresh_channel_variant(CHANNEL_POST_ENDINGS, "ending", recent_parts),
         "category": topic_info.get("category", ""),
     }
@@ -3235,7 +3463,7 @@ def _content_signature(content_plan: dict | None) -> str:
     if not content_plan:
         return ""
     parts = []
-    for key in ("rubric", "format", "tone", "hook", "ending"):
+    for key in ("rubric", "format", "tone", "hook", "layout", "ending"):
         value = content_plan.get(key) or {}
         value_id = value.get("id") if isinstance(value, dict) else ""
         if value_id:
@@ -3508,6 +3736,15 @@ CHANNEL_POST_HOOKS = [
     {"id": "quiet_question", "label": "тихий вопрос", "instruction": "начни с короткого вопроса, который не звучит как кликбейт"},
 ]
 
+CHANNEL_TEXT_LAYOUTS = [
+    {"id": "icon_title", "label": "иконка и заголовок", "instruction": "первая строка: 1 эмодзи и короткий <b>заголовок</b>. Потом 2 коротких абзаца"},
+    {"id": "quote_open", "label": "курсивная затравка", "instruction": "начни с отдельной строки <i>короткая атмосферная фраза</i>, затем основной текст"},
+    {"id": "signal_blocks", "label": "сигнальные блоки", "instruction": "сделай 2 мини-блока через пустую строку, каждый начинается разным эмодзи по смыслу"},
+    {"id": "spoiler_middle", "label": "спойлер в середине", "instruction": "поставь <tg-spoiler>...</tg-spoiler> отдельной короткой строкой в середине поста"},
+    {"id": "ritual_card", "label": "карточка действия", "instruction": "сначала эмодзи и действие на сегодня, потом смысл, потом вопрос"},
+    {"id": "soft_divider", "label": "мягкий разделитель", "instruction": "используй одну строку-разделитель из символов ✦ ✧ ✦ между двумя смысловыми частями"},
+]
+
 CHANNEL_POST_ENDINGS = [
     {"id": "reader_question", "label": "вопрос читателю", "instruction": "заверши одним коротким вопросом, который хочется обдумать"},
     {"id": "micro_action", "label": "микродействие", "instruction": "заверши маленьким действием на сегодня и затем коротким вопросом"},
@@ -3717,6 +3954,7 @@ def _channel_content_plan_prompt(content_plan: dict | None) -> str:
         f"{_line('Форма', content_plan.get('format') or {})}\n"
         f"{_line('Тон', content_plan.get('tone') or {})}\n"
         f"{_line('Заход', content_plan.get('hook') or {})}\n"
+        f"{_line('Визуальная раскладка текста', content_plan.get('layout') or {})}\n"
         f"{_line('Финал', content_plan.get('ending') or {})}\n"
         "Форма важнее привычного шаблона: сделай пост визуально и ритмически отличимым от обычной схемы 'наблюдение, совет, вопрос'. "
         "Следуй этому плану, но не называй рубрику, форму или тон в самом посте.\n"
@@ -3761,7 +3999,8 @@ async def generate_channel_post(
         "4. Язык русский, живой разговорный. Чередуй длину предложений, иногда короткое обрывочное. Лёгкая субъективность приветствуется.\n"
         "5. Добавь 2-4 эмодзи по смыслу (не в каждой строке, а там где к месту).\n"
         "6. В конце один короткий вопрос читателям.\n"
-        "7. Не повторяй типовой ритм прошлых постов: если обычно получается 'символ значит X, совет Y, вопрос Z', выбери другую форму из контент-плана.\n\n"
+        "7. Визуальная раскладка обязательна: используй выбранный layout, пустые строки и эмодзи-акценты так, чтобы пост отличался при беглом пролистывании.\n"
+        "8. Не повторяй типовой ритм прошлых постов: если обычно получается 'символ значит X, совет Y, вопрос Z', выбери другую форму из контент-плана.\n\n"
         "ФОРМАТИРОВАНИЕ (только Telegram HTML-теги, никакого markdown):\n"
         "- Оформление обязательно: в посте должен быть хотя бы один <b>...</b>, один <i>...</i> и один <tg-spoiler>...</tg-spoiler>.\n"
         "- <b>...</b>: выдели 1-3 самых важных слова или термина. Это должны быть ОСМЫСЛЕННЫЕ выделения: название карты Таро, имя планеты, ключевое понятие, суть совета. НЕ выделяй случайные слова, союзы, предлоги.\n"
@@ -3816,10 +4055,14 @@ async def build_channel_post() -> dict | None:
         return None
 
     text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
-    image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
+    image_path = generate_channel_image_asset(topic_info, author_info, content_plan)
+    image_url = ""
+    if "max_manual" in PUBLISH_TARGETS or "max_connector" in PUBLISH_TARGETS:
+        image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
     return {
         "text": text,
         "core_text": core_text,
+        "image_path": image_path,
         "image_url": image_url,
         "topic_info": topic_info,
         "content_plan": content_plan,
@@ -3831,10 +4074,13 @@ async def post_to_telegram_channel(post: dict) -> bool:
         return False
 
     text = post["text"]
+    image_path = post.get("image_path")
     image_url = post.get("image_url")
 
     async def _send(body: str, parse_mode: str | None):
-        if image_url:
+        if image_path and os.path.exists(image_path):
+            await bot.send_photo(CHANNEL_ID, photo=FSInputFile(image_path), caption=body, parse_mode=parse_mode)
+        elif image_url:
             await bot.send_photo(CHANNEL_ID, photo=image_url, caption=body, parse_mode=parse_mode)
         else:
             await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
@@ -3891,7 +4137,7 @@ async def publish_channel_post() -> bool:
                 f"[MSK {msk}] Channel post published "
                 f"(targets: {', '.join(sorted(PUBLISH_TARGETS))}, "
                 f"category: {topic_info.get('category', '-')}, topic: {topic_preview}, "
-                f"photo: {'yes' if post.get('image_url') else 'no'})"
+                f"photo: {'yes' if post.get('image_path') or post.get('image_url') else 'no'})"
             )
         return ok
     except Exception as e:
@@ -3915,10 +4161,13 @@ async def post_to_channel() -> bool:
 
         text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
 
+        image_path = generate_channel_image_asset(topic_info, author_info, content_plan)
         image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
 
         async def _send(body: str, parse_mode: str | None):
-            if image_url:
+            if image_path and os.path.exists(image_path):
+                await bot.send_photo(CHANNEL_ID, photo=FSInputFile(image_path), caption=body, parse_mode=parse_mode)
+            elif image_url:
                 await bot.send_photo(CHANNEL_ID, photo=image_url, caption=body, parse_mode=parse_mode)
             else:
                 await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
@@ -3937,7 +4186,7 @@ async def post_to_channel() -> bool:
         topic_preview = _topic_key(topic_info)[:80]
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
               f"(категория: {topic_info.get('category', '-')}, тема: {topic_preview}, "
-              f"фото: {'да' if image_url else 'нет'})")
+              f"фото: {'да' if image_path or image_url else 'нет'})")
         return True
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
