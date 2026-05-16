@@ -11,6 +11,7 @@ import uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import aiohttp
 from ckassa_payments import (
@@ -2951,6 +2952,10 @@ CHANNEL_IMAGE_SCENES_BY_CATEGORY = {
 MAX_RECENT_PROMOS = 5
 CHANNEL_IMAGE_ASSET_DIR = "generated_channel_images"
 MAX_GENERATED_CHANNEL_IMAGES = 80
+CHANNEL_IMAGE_PROVIDER = getenv("CHANNEL_IMAGE_PROVIDER", "pollinations").strip().lower()
+POLLINATIONS_API_KEY = getenv("POLLINATIONS_API_KEY", "")
+POLLINATIONS_IMAGE_MODEL = getenv("POLLINATIONS_IMAGE_MODEL", "flux")
+POLLINATIONS_IMAGE_TIMEOUT = int(getenv("POLLINATIONS_IMAGE_TIMEOUT", "90"))
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = 8
 RECENT_CONTENT_SIGNATURES: list[str] = []
@@ -3031,7 +3036,7 @@ def _cleanup_generated_channel_images() -> None:
         files = [
             os.path.join(CHANNEL_IMAGE_ASSET_DIR, name)
             for name in os.listdir(CHANNEL_IMAGE_ASSET_DIR)
-            if name.lower().endswith(".png")
+            if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
         ]
         files.sort(key=lambda path: os.path.getmtime(path))
         for old_path in files[:-MAX_GENERATED_CHANNEL_IMAGES]:
@@ -3402,12 +3407,12 @@ def _draw_brand_mark(draw, width: int, height: int, palette: dict, font) -> None
     draw.text((x, y), text, font=font, fill=_rgba(palette["ink"], 170))
 
 
-def generate_channel_image_asset(
+def _generate_local_channel_image_asset(
     topic_info: dict,
     author_info: dict | None = None,
     content_plan: dict | None = None,
 ) -> str:
-    """Создает локальную PNG-иллюстрацию с конкретным предметным сюжетом для Telegram."""
+    """Резервная локальная PNG-иллюстрация, если внешний генератор недоступен."""
     try:
         from PIL import Image, ImageDraw
     except Exception as e:
@@ -3479,6 +3484,205 @@ def generate_channel_image_asset(
     except Exception as e:
         print(f"[channel_image] generation error: {e}")
         return ""
+
+
+def _select_ai_image_scene(topic_info: dict, author_info: dict | None = None) -> str:
+    rng = random.Random(uuid.uuid4().hex)
+    category = topic_info.get("category", "")
+    topic_text = (topic_info.get("topic") or "").lower()
+    scene_pool = list(_channel_image_scene_options(category))
+
+    if author_info:
+        if author_info.get("type") == "tarot":
+            scene_pool.extend(["tarot_spread", "crystal_ball", "pendulum_map", "tarot_deck_box"])
+        elif author_info.get("type") == "astro":
+            scene_pool.extend(["natal_chart", "astrolabe", "telescope_starmap", "moon_window"])
+
+    keyword_scenes = [
+        (("луна", "лунн", "сон", "сновид"), ["moon_window", "telescope_starmap", "dream_journal"]),
+        (("наталь", "зодиак", "планет", "астро", "созвезд"), ["natal_chart", "astrolabe", "telescope_starmap"]),
+        (("таро", "гадани", "расклад", "оракул", "карты"), ["tarot_spread", "tarot_deck_box", "crystal_ball", "pendulum_map"]),
+        (("числ", "нумер", "матриц"), ["number_journal", "pocket_watch"]),
+        (("кристалл", "камн", "минерал"), ["crystal_altar", "crystal_ball"]),
+        (("стихи", "огонь", "вода", "земля", "воздух"), ["four_elements"]),
+        (("медитац", "дыхани", "практик"), ["singing_bowl", "incense_altar", "crystal_altar"]),
+        (("карма", "выбор", "решени"), ["thread_and_scales", "pendulum_map", "pocket_watch"]),
+    ]
+    for needles, scenes in keyword_scenes:
+        if any(needle in topic_text for needle in needles):
+            scene_pool.extend(scenes * 3)
+    return rng.choice(scene_pool or CHANNEL_IMAGE_SCENES_BY_CATEGORY["default"])
+
+
+def _build_ai_channel_image_prompt(
+    scene: str,
+    topic_info: dict,
+    author_info: dict | None = None,
+    content_plan: dict | None = None,
+) -> str:
+    rng = random.Random(uuid.uuid4().hex)
+    scene_variants = {
+        "tarot_spread": [
+            "three worn tarot cards spread on a dark walnut table, a velvet cloth underneath, a beeswax candle with melted wax, a small quartz point, an old deck box half open",
+            "a Celtic-cross style tarot spread on linen fabric, brass candle holder, smoky quartz, dried lavender, a real wooden table with scratches and warm shadows",
+            "two tarot cards face up and one card turned over, a black ceramic cup, candlelight, small moonstone, folded cloth, close tabletop still life",
+        ],
+        "tarot_deck_box": [
+            "an old tarot deck box open on a wooden table, several illustrated cards sliding out, wax seal, candle stump, linen pouch and tiny brass key",
+            "a compact tarot deck tied with a ribbon, one card peeking out, a ceramic candle holder, quartz crystal and worn notebook beside it",
+        ],
+        "crystal_ball": [
+            "a real crystal ball on a brass stand, reflections of a crescent moon in the glass, tarot cards and a candle around it, dark wooden table",
+            "glass divination sphere on velvet cloth, tiny bubbles and reflections inside the glass, pendulum chain nearby, candle glow and quartz pieces",
+        ],
+        "pendulum_map": [
+            "a brass pendulum hanging over a hand drawn star map on parchment, constellation dots, candle wax, compass, dark table, soft dramatic light",
+            "silver pendulum resting on an old astrological chart, chain curled naturally, small stones, fountain pen, realistic paper texture",
+        ],
+        "natal_chart": [
+            "a printed natal chart with zodiac wheel on cream paper, brass compass, fountain pen, candle, coffee cup, real desk surface, astrology workspace",
+            "an astrologer's desk with a natal chart sheet, ephemeris book, magnifying glass, brass ruler, small candle, textured paper and shadows",
+        ],
+        "astrolabe": [
+            "a brass astrolabe lying on dark fabric, star map partially underneath, small telescope lens, candlelight, engraved metal texture",
+            "antique astrolabe and compass on a wooden desk, folded constellation map, warm lamp light, tiny scratches on brass",
+        ],
+        "telescope_starmap": [
+            "small brass telescope on a windowsill, open constellation map on the table, night sky visible through the window, a few stars and moonlight",
+            "folded star atlas beside a compact telescope, ceramic mug, pencil, moonlight across a real wooden desk, quiet night atmosphere",
+        ],
+        "moon_window": [
+            "crescent moon visible through a window, moonlight falling onto a table with a candle, tarot deck, silver pendant and open notebook",
+            "night window with moonlight, a real desk holding a small candle, moonstone, folded paper star map and a cup of tea",
+        ],
+        "moon_calendar": [
+            "open notebook with hand drawn moon phases, not a poster, the notebook lies on a wooden table with a candle, pen, moonstone and fabric bookmark",
+            "paper lunar calendar in a real notebook, pen marks and smudges, candle, crystal, warm desk light, close still life",
+        ],
+        "number_journal": [
+            "open numerology notebook with handwritten numbers and dates, fountain pen, old pocket watch, candle, textured paper, real tabletop",
+            "small journal page filled with a few numerology notes, brass ruler, watch, coffee cup, candle glow, realistic paper and ink",
+        ],
+        "pocket_watch": [
+            "antique pocket watch beside an open notebook and tarot card, brass chain, candlelight, wooden table, tactile realistic still life",
+            "old pocket watch on dark cloth, handwritten numbers on paper, fountain pen, small crystal, warm shadows",
+        ],
+        "crystal_altar": [
+            "small crystal altar on a wooden shelf, amethyst cluster, clear quartz, candle, ceramic bowl, dried herbs, realistic objects and soft light",
+            "cluster of crystals arranged on linen cloth with a candle, tiny dish of salt, brass spoon, dried flowers, tangible tabletop scene",
+        ],
+        "four_elements": [
+            "four small ritual bowls on a table: a candle flame, water bowl, stone with moss, feather, arranged naturally on linen cloth",
+            "earth water fire and air represented by real objects: candle, glass bowl of water, smooth stone, feather, wooden table, soft shadows",
+        ],
+        "dream_journal": [
+            "dream journal open beside a bed window, moonlight, pencil, lavender, small crystal, cup of tea, quiet realistic night scene",
+            "notebook on bedside table with a crescent moon charm, candle, pillow edge, moonlit window, soft painterly realism",
+        ],
+        "singing_bowl": [
+            "bronze singing bowl on a folded cloth, wooden striker, candle, mala beads, incense smoke, real tabletop, warm shadows",
+            "meditation setup with singing bowl, beads, incense holder, candle and small stone, close still life with tactile textures",
+        ],
+        "thread_and_scales": [
+            "small brass balance scales on a desk, red thread, old letter, candle, tarot card corner, realistic symbolic still life",
+            "two brass scales with a red thread crossing the table, notebook, candle, small stone, moody realistic arrangement",
+        ],
+        "incense_altar": [
+            "ceramic incense holder with thin smoke, candle, smooth stones, dried herbs and small notebook on dark wooden table",
+            "incense stick burning near a candle, crystal, folded cloth, brass tray, warm atmospheric tabletop still life",
+        ],
+    }
+
+    scene_text = rng.choice(scene_variants.get(scene) or scene_variants["crystal_ball"])
+    style = rng.choice([
+        "semi realistic editorial illustration, painterly but grounded, real objects with believable perspective",
+        "soft realistic digital painting, tactile materials, natural shadows, not photorealistic but physically believable",
+        "warm cinematic still life, slightly stylized realism, detailed textures, real tabletop composition",
+        "minimal painterly realism, clear real objects, calm mystical mood, no flat icon style",
+    ])
+    lighting = rng.choice([
+        "warm candlelight and subtle moonlight",
+        "soft side light, deep but gentle shadows",
+        "quiet evening light, amber and blue contrast",
+        "low lamp light with small highlights on glass and metal",
+    ])
+    camera = rng.choice([
+        "square 1:1 composition, close view, object focused",
+        "square composition, 50mm still life view, shallow depth of field",
+        "square crop, slightly top down tabletop angle, balanced negative space",
+        "square image, intimate desk scene, clear main subject",
+    ])
+    topic_hint = (topic_info.get("topic") or "").replace("\n", " ")[:180]
+    role_hint = ""
+    if author_info:
+        role_hint = "tarot reader atmosphere" if author_info.get("type") == "tarot" else "astrologer workspace atmosphere"
+
+    return (
+        f"{scene_text}. {style}. {lighting}. {camera}. "
+        f"Theme hint: {topic_hint}. {role_hint}. "
+        "No text, no readable words, no letters, no logo, no watermark, no poster, no infographic, no list layout, "
+        "no UI card, no flat vector icons, no abstract geometric symbols, no decorative template border."
+    ).strip()
+
+
+async def _generate_pollinations_channel_image(prompt: str) -> str:
+    if CHANNEL_IMAGE_PROVIDER in {"local", "pillow", "off", "none"}:
+        return ""
+
+    try:
+        os.makedirs(CHANNEL_IMAGE_ASSET_DIR, exist_ok=True)
+        encoded_prompt = quote(prompt, safe="")
+        url = f"https://gen.pollinations.ai/image/{encoded_prompt}"
+        params = {
+            "width": "1080",
+            "height": "1080",
+            "model": POLLINATIONS_IMAGE_MODEL,
+            "seed": str(random.randint(1, 2_147_483_647)),
+            "nologo": "true",
+            "safe": "true",
+            "private": "true",
+        }
+        headers = {"Accept": "image/jpeg,image/png,image/webp"}
+        if POLLINATIONS_API_KEY:
+            headers["Authorization"] = f"Bearer {POLLINATIONS_API_KEY}"
+
+        timeout = aiohttp.ClientTimeout(total=POLLINATIONS_IMAGE_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as image_session:
+            async with image_session.get(url, params=params, headers=headers) as response:
+                content_type = response.headers.get("Content-Type", "").lower()
+                data = await response.read()
+                if response.status != 200:
+                    preview = data[:220].decode("utf-8", errors="ignore")
+                    print(f"[channel_image] Pollinations status {response.status}: {preview}")
+                    return ""
+                if not content_type.startswith("image/") or len(data) < 10_000:
+                    preview = data[:220].decode("utf-8", errors="ignore")
+                    print(f"[channel_image] Pollinations returned non-image: {content_type} {preview}")
+                    return ""
+
+        ext = ".png" if "png" in content_type else ".webp" if "webp" in content_type else ".jpg"
+        path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}{ext}")
+        with open(path, "wb") as f:
+            f.write(data)
+        _cleanup_generated_channel_images()
+        return path
+    except Exception as e:
+        print(f"[channel_image] Pollinations generation error: {e}")
+        return ""
+
+
+async def generate_channel_image_asset(
+    topic_info: dict,
+    author_info: dict | None = None,
+    content_plan: dict | None = None,
+) -> str:
+    """Генерирует предметную картинку: внешний AI-сервис основной, локальная отрисовка только fallback."""
+    scene = _select_ai_image_scene(topic_info, author_info)
+    prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan)
+    image_path = await _generate_pollinations_channel_image(prompt)
+    if image_path:
+        return image_path
+    return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
 
 
 def _topic_key(topic_info: dict) -> str:
@@ -4104,7 +4308,7 @@ async def build_channel_post() -> dict | None:
         return None
 
     text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
-    image_path = generate_channel_image_asset(topic_info, author_info, content_plan)
+    image_path = await generate_channel_image_asset(topic_info, author_info, content_plan)
     return {
         "text": text,
         "core_text": core_text,
@@ -4190,7 +4394,7 @@ async def post_to_channel() -> bool:
 
         text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
 
-        image_path = generate_channel_image_asset(topic_info, author_info, content_plan)
+        image_path = await generate_channel_image_asset(topic_info, author_info, content_plan)
 
         async def _send(body: str, parse_mode: str | None):
             if image_path and os.path.exists(image_path):
