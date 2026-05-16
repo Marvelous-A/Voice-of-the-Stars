@@ -13,7 +13,6 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
-import max_publisher
 from ckassa_payments import (
     CkassaClient,
     CkassaPaymentAccessDenied,
@@ -48,11 +47,6 @@ CHANNEL_ID = getenv("CHANNEL_ID", "")        # ID или @username канала 
 CHANNEL_URL = f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID and CHANNEL_ID.startswith("@") else ""
 MAIN_BOT_USERNAME = getenv("MAIN_BOT_USERNAME", "VoiceOfTheStarsBot").lstrip("@")
 MAIN_BOT_URL = f"https://t.me/{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "https://t.me/VoiceOfTheStarsBot"
-PUBLISH_TARGETS = {
-    target.strip()
-    for target in getenv("PUBLISH_TARGETS", "telegram").split(",")
-    if target.strip()
-}
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 CKASSA_PAYMENTS_FILE = "ckassa_payments.json"
@@ -2916,95 +2910,6 @@ CHANNEL_POST_TOPICS.extend(
 
 CHANNEL_POST_INTERVAL = 85  # интервал постинга в минутах (1 час 25 минут)
 CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
-PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
-
-# Поисковые запросы Pexels под каждую категорию поста (подбор картинки по смыслу)
-CHANNEL_IMAGE_QUERIES = {
-    "dreams": [
-        "dream journal candle", "bedside journal moon", "surreal water reflection",
-        "misty window night", "sleep diary stars", "foggy forest path", "blue silk fabric moon"
-    ],
-    "zodiac": [
-        "zodiac wheel close up", "astrology symbols paper", "horoscope chart desk",
-        "zodiac necklace", "astrology calendar", "zodiac sign illustration", "astrology book table"
-    ],
-    "moon": [
-        "moon phase calendar", "lunar calendar journal", "moon tarot table",
-        "crescent moon jewelry", "full moon window", "moon phases wall art", "candle moon ritual"
-    ],
-    "tarot": [
-        "tarot cards table", "tarot spread hands", "tarot deck candle",
-        "major arcana cards", "tarot reader table", "oracle cards close up", "tarot journal"
-    ],
-    "crystals": [
-        "crystals candles table", "amethyst tarot cards", "rose quartz journal",
-        "crystal grid", "healing stones close up", "crystal bowl candle", "gemstones astrology"
-    ],
-    "planets": [
-        "astrology planets chart", "planet symbols astrology", "mercury retrograde astrology",
-        "ephemeris book", "solar system model", "astrological clock", "planetarium instrument"
-    ],
-    "elements": [
-        "candle water bowl", "earth air fire water ritual", "four elements altar",
-        "fire candle close up", "water glass candle", "stones feather candle", "element symbols"
-    ],
-    "numerology": [
-        "numerology chart notebook", "numbers candle table", "sacred geometry paper",
-        "tarot numerology journal", "antique clock numbers", "handwriting numbers", "birth date notebook"
-    ],
-    "karma": [
-        "old family photos candle", "ancestry journal", "spiritual path candle",
-        "meditation beads close up", "karma wheel", "vintage letters candle", "incense notebook"
-    ],
-    "astrology": [
-        "astrology chart close up", "natal chart desk", "astrological map paper",
-        "zodiac wheel book", "astrolabe instrument", "ephemeris astrology", "birth chart notebook"
-    ],
-    "mystic": [
-        "esoteric altar candles", "mystic table objects", "incense candle book",
-        "ritual candle close up", "occult symbols paper", "magic herbs table", "spiritual tools"
-    ],
-    "divination": [
-        "oracle cards table", "runes candle", "palm reading hand",
-        "coffee cup fortune telling", "pendulum divination", "tea leaves cup", "crystal ball table"
-    ],
-    "meditation": [
-        "meditation candle room", "journaling meditation", "zen stones candle",
-        "singing bowl close up", "incense meditation", "quiet room candle", "mindfulness notebook"
-    ],
-}
-
-# Универсальные запросы на случай, если категория пустая или не дала результата
-UNIVERSAL_IMAGE_QUERIES = [
-    "astrology desk", "tarot table candles", "zodiac wheel book", "natal chart paper",
-    "mystic journal candle", "oracle cards table", "crystals candles", "ephemeris book",
-    "astrolabe instrument", "moon phase calendar", "incense notebook", "spiritual tools table",
-]
-
-CHANNEL_TOPIC_IMAGE_HINTS = [
-    (("наталь", "дом", "аспект", "синастр", "транзит", "прогрес", "соляр"), [
-        "natal chart paper", "astrology chart desk", "birth chart notebook", "ephemeris astrology"
-    ]),
-    (("меркур", "венер", "марс", "юпитер", "сатурн", "планет", "ретроград"), [
-        "planet symbols astrology", "astrology planets chart", "ephemeris book", "astrological clock"
-    ]),
-    (("луна", "лунн", "новолун", "полнолун", "лилит"), [
-        "moon phase calendar", "lunar calendar journal", "moon phases wall art", "candle moon ritual"
-    ]),
-    (("таро", "карта", "аркан", "расклад", "оракул"), [
-        "tarot spread hands", "major arcana cards", "oracle cards close up", "tarot journal"
-    ]),
-    (("числ", "нумер", "11:11", "22:22", "дата"), [
-        "numerology chart notebook", "birth date notebook", "antique clock numbers", "handwriting numbers"
-    ]),
-    (("сон", "сны", "сновид", "вода", "полёт", "полет"), [
-        "dream journal candle", "bedside journal moon", "misty window night", "surreal water reflection"
-    ]),
-    (("кристалл", "камн", "аметист", "кварц", "талисман", "амулет"), [
-        "crystals candles table", "crystal grid", "amethyst tarot cards", "healing stones close up"
-    ]),
-]
-
 CHANNEL_GENERATED_IMAGE_SYMBOLS = {
     "tarot": ["XVII", "VI", "XI", "☽", "✦", "◆"],
     "astrology": ["☉", "☽", "☿", "♀", "♂", "♃", "♄"],
@@ -3028,41 +2933,6 @@ CHANNEL_GENERATED_IMAGE_PALETTES = [
 
 CHANNEL_GENERATED_LAYOUTS = ["chart", "cards", "journal", "moon_grid", "sigils"]
 
-# Бэкап-пул на случай если Pexels API недоступен
-UNSPLASH_FALLBACK_IMAGES = [
-    "https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800",
-    "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800",
-    "https://images.unsplash.com/photo-1507400492013-162706c8c05e?w=800",
-    "https://images.unsplash.com/photo-1444703686981-a3abbc4d4fe3?w=800",
-    "https://images.unsplash.com/photo-1462331940025-496dfbfc7564?w=800",
-    "https://images.unsplash.com/photo-1475274047050-1d0c55b7b10c?w=800",
-    "https://images.unsplash.com/photo-1532693322450-2cb5c511067d?w=800",
-    "https://images.unsplash.com/photo-1504333638930-c8787321eee0?w=800",
-    "https://images.unsplash.com/photo-1543722530-d2c3201371e7?w=800",
-    "https://images.unsplash.com/photo-1516339901601-2e1b62dc0c45?w=800",
-    "https://images.unsplash.com/photo-1505506874110-6a7a69069a08?w=800",
-    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800",
-    "https://images.unsplash.com/photo-1470813740244-df37b8c1edcb?w=800",
-    "https://images.unsplash.com/photo-1468276311594-df7cb65d8df6?w=800",
-    "https://images.unsplash.com/photo-1509773896068-7fd415d91e2e?w=800",
-    "https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?w=800",
-    "https://images.unsplash.com/photo-1507272931001-fc06c17e4f43?w=800",
-    "https://images.unsplash.com/photo-1536599018102-9f803c140fc1?w=800",
-    "https://images.unsplash.com/photo-1489549132488-d00b7eee80f1?w=800",
-    "https://images.unsplash.com/photo-1538370965046-79c0d6907d47?w=800",
-    "https://images.unsplash.com/photo-1528722828814-77b9b83aafb2?w=800",
-    "https://images.unsplash.com/photo-1518141532615-4305c9f914c9?w=800",
-    "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800",
-    "https://images.unsplash.com/photo-1595246135406-803418233494?w=800",
-    "https://images.unsplash.com/photo-1571942676516-bcab84649e44?w=800",
-]
-
-# Память недавно использованных картинок, чтобы не было двух одинаковых подряд.
-# Персистится в CHANNEL_STATE_FILE, чтобы переживать перезапуски.
-RECENT_IMAGE_URLS: list[str] = []
-MAX_RECENT_IMAGES = 60
-RECENT_IMAGE_QUERY_KEYS: list[str] = []
-MAX_RECENT_IMAGE_QUERIES = 24
 MAX_RECENT_PROMOS = 5
 CHANNEL_IMAGE_ASSET_DIR = "generated_channel_images"
 MAX_GENERATED_CHANNEL_IMAGES = 80
@@ -3072,14 +2942,6 @@ RECENT_CONTENT_SIGNATURES: list[str] = []
 MAX_RECENT_CONTENT_SIGNATURES = 14
 RECENT_CHANNEL_POST_SAMPLES: list[str] = []
 MAX_RECENT_CHANNEL_POST_SAMPLES = 6
-
-
-def _normalize_image_url(url: str) -> str:
-    """Убирает query-параметры из URL: у Pexels одна и та же фотка может приходить
-    с разными ?auto=compress&w=... — без нормализации дедуп их не поймает."""
-    if not url:
-        return ""
-    return url.split("?", 1)[0]
 
 
 def load_channel_state() -> dict:
@@ -3096,71 +2958,6 @@ def save_channel_state(state: dict) -> None:
             json.dump(state, f, ensure_ascii=False)
     except Exception as e:
         print(f"[channel_state] save error: {e}")
-
-
-async def pexels_search(query: str, per_page: int = 30, page: int = 1) -> list[str]:
-    """Ищет картинки в Pexels по запросу, возвращает список URL."""
-    if not PEXELS_API_KEY:
-        return []
-    url = f"https://api.pexels.com/v1/search?query={query}&per_page={per_page}&page={page}&orientation=square"
-    headers = {"Authorization": PEXELS_API_KEY}
-    try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as http:
-            async with http.get(url, headers=headers) as resp:
-                if resp.status != 200:
-                    print(f"[Pexels] status={resp.status} для '{query}', page={page}")
-                    return []
-                data = await resp.json(content_type=None)
-        photos = data.get("photos", []) or []
-        urls: list[str] = []
-        for p in photos:
-            src = p.get("src") or {}
-            u = src.get("large") or src.get("medium") or src.get("original")
-            if u:
-                urls.append(u)
-        return urls
-    except Exception as e:
-        print(f"[Pexels] Ошибка поиска '{query}': {e}")
-        return []
-
-
-def _remember_image(url: str, query: str = "") -> None:
-    key = _normalize_image_url(url)
-    RECENT_IMAGE_URLS.append(key)
-    while len(RECENT_IMAGE_URLS) > MAX_RECENT_IMAGES:
-        RECENT_IMAGE_URLS.pop(0)
-    query_key = query.strip().lower()
-    if query_key:
-        if query_key in RECENT_IMAGE_QUERY_KEYS:
-            RECENT_IMAGE_QUERY_KEYS.remove(query_key)
-        RECENT_IMAGE_QUERY_KEYS.append(query_key)
-        while len(RECENT_IMAGE_QUERY_KEYS) > MAX_RECENT_IMAGE_QUERIES:
-            RECENT_IMAGE_QUERY_KEYS.pop(0)
-    state = load_channel_state()
-    state["recent_images"] = RECENT_IMAGE_URLS
-    state["recent_image_queries"] = RECENT_IMAGE_QUERY_KEYS
-    save_channel_state(state)
-
-
-def _is_fresh_image(url: str) -> bool:
-    return bool(url) and _normalize_image_url(url) not in RECENT_IMAGE_URLS
-
-
-def _sync_recent_images_from_state() -> None:
-    state = load_channel_state()
-    RECENT_IMAGE_URLS.clear()
-    for u in state.get("recent_images", []) or []:
-        RECENT_IMAGE_URLS.append(u)
-    while len(RECENT_IMAGE_URLS) > MAX_RECENT_IMAGES:
-        RECENT_IMAGE_URLS.pop(0)
-
-    RECENT_IMAGE_QUERY_KEYS.clear()
-    for q in state.get("recent_image_queries", []) or []:
-        if isinstance(q, str) and q.strip():
-            RECENT_IMAGE_QUERY_KEYS.append(q.strip().lower())
-    while len(RECENT_IMAGE_QUERY_KEYS) > MAX_RECENT_IMAGE_QUERIES:
-        RECENT_IMAGE_QUERY_KEYS.pop(0)
 
 
 def _channel_image_font(size: int, bold: bool = False):
@@ -3517,74 +3314,6 @@ def _select_channel_topic() -> dict:
         if _topic_key(topic_info) == oldest_key
     ]
     return random.choice(fallback_topics or CHANNEL_POST_TOPICS)
-
-
-def _dedupe_preserve_order(items: list[str]) -> list[str]:
-    seen = set()
-    result = []
-    for item in items:
-        key = item.strip().lower()
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        result.append(item)
-    return result
-
-
-def _topic_image_queries(topic: str) -> list[str]:
-    topic_lower = (topic or "").lower()
-    queries: list[str] = []
-    for keywords, hint_queries in CHANNEL_TOPIC_IMAGE_HINTS:
-        if any(keyword in topic_lower for keyword in keywords):
-            queries.extend(hint_queries)
-    return _dedupe_preserve_order(queries)
-
-
-async def get_channel_image(category: str = "", topic: str = "") -> str:
-    """Подбирает тематическую картинку под категорию поста. Избегает недавних URL и однотипных запросов."""
-    priority_queries = _topic_image_queries(topic)
-    category_queries = list(CHANNEL_IMAGE_QUERIES.get(category, []))
-    # Добавляем универсальные предметные запросы как подстраховку, без перекоса в один только космос.
-    universal_sample = random.sample(UNIVERSAL_IMAGE_QUERIES, k=min(4, len(UNIVERSAL_IMAGE_QUERIES)))
-    random.shuffle(category_queries)
-    random.shuffle(universal_sample)
-    queries = _dedupe_preserve_order(priority_queries + category_queries + universal_sample)
-    fresh_queries = [q for q in queries if q.strip().lower() not in RECENT_IMAGE_QUERY_KEYS]
-    if fresh_queries:
-        queries = fresh_queries
-
-    # Несколько попыток разными запросами и страницами: верх выдачи Pexels часто повторяется неделями.
-    seen_pexels_urls: list[str] = []
-    for q in queries[:8]:
-        pages = random.sample(range(1, 7), k=3)
-        if 1 not in pages:
-            pages.append(1)
-        for page in pages:
-            urls = await pexels_search(q, page=page)
-            seen_pexels_urls.extend(urls)
-            fresh = [u for u in urls if _is_fresh_image(u)]
-            if fresh:
-                img = random.choice(fresh)
-                _remember_image(img, q)
-                return img
-
-    if PEXELS_API_KEY:
-        # Если свежих URL не нашлось, всё равно отдаём тематичную картинку, но логируем ослабление дедупа.
-        candidates = _dedupe_preserve_order(seen_pexels_urls)
-        if candidates:
-            img = random.choice(candidates)
-            _remember_image(img, "pexels_relaxed")
-            print(f"[Pexels] свежей картинки не нашлось, использую повторно допустимую: category={category}")
-            return img
-        print(f"[Pexels] не нашёл картинку для category={category}, topic={topic[:80]}, использую fallback")
-
-    # Крайний фоллбек: картинка должна быть всегда, даже если Pexels временно пустой или недоступен.
-    fallback = [u for u in UNSPLASH_FALLBACK_IMAGES if _is_fresh_image(u)]
-    if not fallback:
-        fallback = UNSPLASH_FALLBACK_IMAGES
-    img = random.choice(fallback)
-    _remember_image(img, "unsplash_fallback")
-    return img
 
 
 def clean_markdown(text: str) -> str:
@@ -4045,7 +3774,6 @@ def _get_last_channel_post_from_state():
 
 async def build_channel_post() -> dict | None:
     """Generates a post once so different publishing adapters can use it."""
-    _sync_recent_images_from_state()
     topic_info = _select_channel_topic()
     author_info = _select_channel_author(topic_info)
     content_plan = _select_channel_content_plan(topic_info, author_info)
@@ -4056,14 +3784,10 @@ async def build_channel_post() -> dict | None:
 
     text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
     image_path = generate_channel_image_asset(topic_info, author_info, content_plan)
-    image_url = ""
-    if "max_manual" in PUBLISH_TARGETS or "max_connector" in PUBLISH_TARGETS:
-        image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
     return {
         "text": text,
         "core_text": core_text,
         "image_path": image_path,
-        "image_url": image_url,
         "topic_info": topic_info,
         "content_plan": content_plan,
     }
@@ -4075,13 +3799,10 @@ async def post_to_telegram_channel(post: dict) -> bool:
 
     text = post["text"]
     image_path = post.get("image_path")
-    image_url = post.get("image_url")
 
     async def _send(body: str, parse_mode: str | None):
         if image_path and os.path.exists(image_path):
             await bot.send_photo(CHANNEL_ID, photo=FSInputFile(image_path), caption=body, parse_mode=parse_mode)
-        elif image_url:
-            await bot.send_photo(CHANNEL_ID, photo=image_url, caption=body, parse_mode=parse_mode)
         else:
             await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
 
@@ -4100,13 +3821,7 @@ async def post_to_telegram_channel(post: dict) -> bool:
 
 
 def has_configured_publish_target() -> bool:
-    if "telegram" in PUBLISH_TARGETS and CHANNEL_ID:
-        return True
-    if "max_manual" in PUBLISH_TARGETS and admin_bot and ADMIN_ID:
-        return True
-    if "max_connector" in PUBLISH_TARGETS and getenv("MAX_CONNECTOR_URL", ""):
-        return True
-    return False
+    return bool(CHANNEL_ID)
 
 
 async def publish_channel_post() -> bool:
@@ -4120,12 +3835,7 @@ async def publish_channel_post() -> bool:
             return False
 
         ok = False
-        if "telegram" in PUBLISH_TARGETS:
-            ok = await post_to_telegram_channel(post) or ok
-        if "max_manual" in PUBLISH_TARGETS:
-            ok = await max_publisher.send_manual_preview(admin_bot, ADMIN_ID, post) or ok
-        if "max_connector" in PUBLISH_TARGETS:
-            ok = await max_publisher.post_to_connector(post) or ok
+        ok = await post_to_telegram_channel(post)
 
         if ok:
             msk = _msk_now()
@@ -4135,9 +3845,8 @@ async def publish_channel_post() -> bool:
             topic_preview = _topic_key(topic_info)[:80]
             print(
                 f"[MSK {msk}] Channel post published "
-                f"(targets: {', '.join(sorted(PUBLISH_TARGETS))}, "
-                f"category: {topic_info.get('category', '-')}, topic: {topic_preview}, "
-                f"photo: {'yes' if post.get('image_path') or post.get('image_url') else 'no'})"
+                f"(target: telegram, category: {topic_info.get('category', '-')}, "
+                f"topic: {topic_preview}, photo: {'yes' if post.get('image_path') else 'no'})"
             )
         return ok
     except Exception as e:
@@ -4150,7 +3859,6 @@ async def post_to_channel() -> bool:
     if not CHANNEL_ID:
         return False
     try:
-        _sync_recent_images_from_state()
         topic_info = _select_channel_topic()
         author_info = _select_channel_author(topic_info)
         content_plan = _select_channel_content_plan(topic_info, author_info)
@@ -4162,13 +3870,10 @@ async def post_to_channel() -> bool:
         text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
 
         image_path = generate_channel_image_asset(topic_info, author_info, content_plan)
-        image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
 
         async def _send(body: str, parse_mode: str | None):
             if image_path and os.path.exists(image_path):
                 await bot.send_photo(CHANNEL_ID, photo=FSInputFile(image_path), caption=body, parse_mode=parse_mode)
-            elif image_url:
-                await bot.send_photo(CHANNEL_ID, photo=image_url, caption=body, parse_mode=parse_mode)
             else:
                 await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
 
@@ -4186,7 +3891,7 @@ async def post_to_channel() -> bool:
         topic_preview = _topic_key(topic_info)[:80]
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
               f"(категория: {topic_info.get('category', '-')}, тема: {topic_preview}, "
-              f"фото: {'да' if image_path or image_url else 'нет'})")
+              f"фото: {'да' if image_path else 'нет'})")
         return True
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
@@ -4206,10 +3911,8 @@ async def scheduler():
     morning_sent_date = None
 
     # Восстанавливаем состояние автопостинга после возможного рестарта:
-    # recent_images — чтобы не повторить недавнюю картинку,
     # recent_topics — чтобы не повторить недавнюю тему,
     # last_post — чтобы не слать пост сразу после перезапуска.
-    _sync_recent_images_from_state()
     _sync_recent_topics_from_state()
     last_channel_post = _get_last_channel_post_from_state()
 

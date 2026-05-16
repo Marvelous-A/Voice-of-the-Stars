@@ -86,10 +86,9 @@ mkdir -p /home/bot
 cp /root/Voice-of-the-Stars/main.py /home/bot/main.py
 cp /root/Voice-of-the-Stars/mainAdmin.py /home/bot/mainAdmin.py
 cp /root/Voice-of-the-Stars/ckassa_payments.py /home/bot/ckassa_payments.py
-cp /root/Voice-of-the-Stars/max_publisher.py /home/bot/max_publisher.py
-cp /root/Voice-of-the-Stars/max_connector_server.py /home/bot/max_connector_server.py
 cp /root/Voice-of-the-Stars/requirements.txt /home/bot/requirements.txt
 cp /root/Voice-of-the-Stars/descriptions.json /home/bot/descriptions.json 2>/dev/null || true
+rm -f /home/bot/max_publisher.py /home/bot/max_connector_server.py
 
 echo "=== Перезагружаем systemd и запускаем сервисы ==="
 systemctl daemon-reload

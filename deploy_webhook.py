@@ -39,10 +39,12 @@ CODE_FILES = [
     "main.py",
     "mainAdmin.py",
     "ckassa_payments.py",
-    "max_publisher.py",
-    "max_connector_server.py",
     "requirements.txt",
     "descriptions.json",
+]
+REMOVED_FILES = [
+    "max_publisher.py",
+    "max_connector_server.py",
 ]
 RUNTIME_SEED_FILES = [
     ".env",
@@ -230,6 +232,12 @@ def deploy():
             if os.path.exists(src):
                 shutil.copy2(src, dst)
                 print(f"Copied {fname} -> {BOT_DIR}", flush=True)
+
+        for fname in REMOVED_FILES:
+            legacy_path = os.path.join(BOT_DIR, fname)
+            if os.path.exists(legacy_path):
+                os.remove(legacy_path)
+                print(f"Removed legacy file {legacy_path}", flush=True)
 
     # restart bots via systemd
     subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)

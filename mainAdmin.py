@@ -36,7 +36,6 @@ PROXY_URL = getenv("PROXY_URL", "")
 MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
 CHANNEL_ID = getenv("CHANNEL_ID", "")  # напр. "@VoiceOfTheStarsInfo"
 MAIN_BOT_URL = getenv("MAIN_BOT_URL", "")
-MAX_QUEUE_URL = getenv("MAX_QUEUE_URL", "http://155.212.138.205/max-queue/")
 
 if not ADMIN_BOT_TOKEN:
     raise SystemExit("ADMIN_BOT_TOKEN не задан в .env — создайте бота в @BotFather и пропишите токен.")
@@ -131,10 +130,6 @@ def build_links_markup() -> InlineKeyboardMarkup | None:
             text="📢 Открыть канал",
             url=f"https://t.me/{clean}",
         )])
-    rows.append([InlineKeyboardButton(
-        text="🌐 Сайт MAX",
-        url=MAX_QUEUE_URL,
-    )])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
@@ -911,7 +906,7 @@ async def handle_stats(message: Message):
 async def handle_channel_post(message: Message):
     _reset_input_state(message.from_user.id)
     if not main_app.has_configured_publish_target():
-        await message.answer("⚠️ Не настроена ни одна цель публикации. Проверь PUBLISH_TARGETS, CHANNEL_ID или MAX_CONNECTOR_URL в .env.")
+        await message.answer("⚠️ Не настроен Telegram-канал для публикации. Проверь CHANNEL_ID в .env.")
         return
 
     if CHANNEL_POST_LOCK.locked():
