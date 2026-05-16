@@ -3326,30 +3326,34 @@ async def get_channel_image(category: str = "", topic: str = "") -> str:
         queries = fresh_queries
 
     # Несколько попыток разными запросами и страницами: верх выдачи Pexels часто повторяется неделями.
+    seen_pexels_urls: list[str] = []
     for q in queries[:8]:
         pages = random.sample(range(1, 7), k=3)
         if 1 not in pages:
             pages.append(1)
-        urls = []
         for page in pages:
             urls = await pexels_search(q, page=page)
-            if urls:
-                break
-        fresh = [u for u in urls if _is_fresh_image(u)]
-        if fresh:
-            img = random.choice(fresh)
-            _remember_image(img, q)
-            return img
+            seen_pexels_urls.extend(urls)
+            fresh = [u for u in urls if _is_fresh_image(u)]
+            if fresh:
+                img = random.choice(fresh)
+                _remember_image(img, q)
+                return img
 
     if PEXELS_API_KEY:
-        print(f"[Pexels] не нашёл свежую картинку для category={category}, topic={topic[:80]}")
-        return ""
+        # Если свежих URL не нашлось, всё равно отдаём тематичную картинку, но логируем ослабление дедупа.
+        candidates = _dedupe_preserve_order(seen_pexels_urls)
+        if candidates:
+            img = random.choice(candidates)
+            _remember_image(img, "pexels_relaxed")
+            print(f"[Pexels] свежей картинки не нашлось, использую повторно допустимую: category={category}")
+            return img
+        print(f"[Pexels] не нашёл картинку для category={category}, topic={topic[:80]}, использую fallback")
 
-    # Фоллбек для окружений без Pexels API. Лучше редкая статичная картинка, чем падение постинга.
+    # Крайний фоллбек: картинка должна быть всегда, даже если Pexels временно пустой или недоступен.
     fallback = [u for u in UNSPLASH_FALLBACK_IMAGES if _is_fresh_image(u)]
     if not fallback:
-        print("[image_fallback] статический пул картинок исчерпан")
-        return ""
+        fallback = UNSPLASH_FALLBACK_IMAGES
     img = random.choice(fallback)
     _remember_image(img, "unsplash_fallback")
     return img
