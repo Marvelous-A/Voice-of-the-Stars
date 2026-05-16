@@ -2919,26 +2919,65 @@ PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
 
 # Поисковые запросы Pexels под каждую категорию поста (подбор картинки по смыслу)
 CHANNEL_IMAGE_QUERIES = {
-    "dreams":     ["dreamy night sky", "surreal water", "ocean moonlight", "misty forest night", "foggy clouds", "sleeping stars"],
-    "zodiac":     ["zodiac constellation", "astrology signs", "horoscope night", "constellation stars", "zodiac symbols"],
-    "moon":       ["full moon", "crescent moon", "moon night", "lunar sky", "moon clouds", "moonlight sea"],
-    "tarot":      ["tarot cards", "tarot reading", "mystic cards", "occult cards", "fortune teller cards", "tarot deck candle"],
-    "crystals":   ["amethyst crystals", "healing crystals", "quartz stones", "gemstones mystic", "crystal cluster", "rose quartz"],
-    "planets":    ["planet space", "solar system", "planet orbit", "cosmic planet", "jupiter saturn", "retrograde mercury"],
-    "elements":   ["four elements", "fire and water", "candle flame", "water ripple", "earth air nature", "elemental magic"],
-    "numerology": ["mystical numbers", "sacred geometry", "numerology clock", "cosmic numbers", "ancient numbers"],
-    "karma":      ["spiritual path", "silhouette sunset", "meditation journey", "destiny road", "soul light"],
-    "astrology":  ["astrology chart", "zodiac wheel", "natal chart", "astrological map", "astrology book"],
-    "mystic":     ["mystical fog", "witchcraft altar", "esoteric symbols", "magic aura", "occult ritual"],
-    "divination": ["coffee cup reading", "tea leaves reading", "palm reading", "fortune telling", "crystal ball"],
-    "meditation": ["meditation silhouette", "yoga sunset", "mindfulness", "zen stones", "temple candle"],
+    "dreams": [
+        "dream journal candle", "bedside journal moon", "surreal water reflection",
+        "misty window night", "sleep diary stars", "foggy forest path", "blue silk fabric moon"
+    ],
+    "zodiac": [
+        "zodiac wheel close up", "astrology symbols paper", "horoscope chart desk",
+        "zodiac necklace", "astrology calendar", "zodiac sign illustration", "astrology book table"
+    ],
+    "moon": [
+        "moon phase calendar", "lunar calendar journal", "moon tarot table",
+        "crescent moon jewelry", "full moon window", "moon phases wall art", "candle moon ritual"
+    ],
+    "tarot": [
+        "tarot cards table", "tarot spread hands", "tarot deck candle",
+        "major arcana cards", "tarot reader table", "oracle cards close up", "tarot journal"
+    ],
+    "crystals": [
+        "crystals candles table", "amethyst tarot cards", "rose quartz journal",
+        "crystal grid", "healing stones close up", "crystal bowl candle", "gemstones astrology"
+    ],
+    "planets": [
+        "astrology planets chart", "planet symbols astrology", "mercury retrograde astrology",
+        "ephemeris book", "solar system model", "astrological clock", "planetarium instrument"
+    ],
+    "elements": [
+        "candle water bowl", "earth air fire water ritual", "four elements altar",
+        "fire candle close up", "water glass candle", "stones feather candle", "element symbols"
+    ],
+    "numerology": [
+        "numerology chart notebook", "numbers candle table", "sacred geometry paper",
+        "tarot numerology journal", "antique clock numbers", "handwriting numbers", "birth date notebook"
+    ],
+    "karma": [
+        "old family photos candle", "ancestry journal", "spiritual path candle",
+        "meditation beads close up", "karma wheel", "vintage letters candle", "incense notebook"
+    ],
+    "astrology": [
+        "astrology chart close up", "natal chart desk", "astrological map paper",
+        "zodiac wheel book", "astrolabe instrument", "ephemeris astrology", "birth chart notebook"
+    ],
+    "mystic": [
+        "esoteric altar candles", "mystic table objects", "incense candle book",
+        "ritual candle close up", "occult symbols paper", "magic herbs table", "spiritual tools"
+    ],
+    "divination": [
+        "oracle cards table", "runes candle", "palm reading hand",
+        "coffee cup fortune telling", "pendulum divination", "tea leaves cup", "crystal ball table"
+    ],
+    "meditation": [
+        "meditation candle room", "journaling meditation", "zen stones candle",
+        "singing bowl close up", "incense meditation", "quiet room candle", "mindfulness notebook"
+    ],
 }
 
 # Универсальные запросы на случай, если категория пустая или не дала результата
 UNIVERSAL_IMAGE_QUERIES = [
-    "galaxy nebula", "starry night", "cosmic universe", "aurora borealis",
-    "mystical sky", "night sky stars", "moonlight magic", "esoteric mood",
-    "milky way", "astral dust",
+    "astrology desk", "tarot table candles", "zodiac wheel book", "natal chart paper",
+    "mystic journal candle", "oracle cards table", "crystals candles", "ephemeris book",
+    "astrolabe instrument", "moon phase calendar", "incense notebook", "spiritual tools table",
 ]
 
 # Бэкап-пул на случай если Pexels API недоступен
@@ -2973,7 +3012,9 @@ UNSPLASH_FALLBACK_IMAGES = [
 # Память недавно использованных картинок, чтобы не было двух одинаковых подряд.
 # Персистится в CHANNEL_STATE_FILE, чтобы переживать перезапуски.
 RECENT_IMAGE_URLS: list[str] = []
-MAX_RECENT_IMAGES = 12
+MAX_RECENT_IMAGES = 60
+RECENT_IMAGE_QUERY_KEYS: list[str] = []
+MAX_RECENT_IMAGE_QUERIES = 24
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = 8
 RECENT_CONTENT_SIGNATURES: list[str] = []
@@ -3006,7 +3047,7 @@ def save_channel_state(state: dict) -> None:
         print(f"[channel_state] save error: {e}")
 
 
-async def pexels_search(query: str, per_page: int = 15) -> list[str]:
+async def pexels_search(query: str, per_page: int = 30) -> list[str]:
     """Ищет картинки в Pexels по запросу, возвращает список URL."""
     if not PEXELS_API_KEY:
         return []
@@ -3032,13 +3073,21 @@ async def pexels_search(query: str, per_page: int = 15) -> list[str]:
         return []
 
 
-def _remember_image(url: str) -> None:
+def _remember_image(url: str, query: str = "") -> None:
     key = _normalize_image_url(url)
     RECENT_IMAGE_URLS.append(key)
     while len(RECENT_IMAGE_URLS) > MAX_RECENT_IMAGES:
         RECENT_IMAGE_URLS.pop(0)
+    query_key = query.strip().lower()
+    if query_key:
+        if query_key in RECENT_IMAGE_QUERY_KEYS:
+            RECENT_IMAGE_QUERY_KEYS.remove(query_key)
+        RECENT_IMAGE_QUERY_KEYS.append(query_key)
+        while len(RECENT_IMAGE_QUERY_KEYS) > MAX_RECENT_IMAGE_QUERIES:
+            RECENT_IMAGE_QUERY_KEYS.pop(0)
     state = load_channel_state()
     state["recent_images"] = RECENT_IMAGE_URLS
+    state["recent_image_queries"] = RECENT_IMAGE_QUERY_KEYS
     save_channel_state(state)
 
 
@@ -3047,9 +3096,19 @@ def _is_fresh_image(url: str) -> bool:
 
 
 def _sync_recent_images_from_state() -> None:
+    state = load_channel_state()
     RECENT_IMAGE_URLS.clear()
-    for u in load_channel_state().get("recent_images", []) or []:
+    for u in state.get("recent_images", []) or []:
         RECENT_IMAGE_URLS.append(u)
+    while len(RECENT_IMAGE_URLS) > MAX_RECENT_IMAGES:
+        RECENT_IMAGE_URLS.pop(0)
+
+    RECENT_IMAGE_QUERY_KEYS.clear()
+    for q in state.get("recent_image_queries", []) or []:
+        if isinstance(q, str) and q.strip():
+            RECENT_IMAGE_QUERY_KEYS.append(q.strip().lower())
+    while len(RECENT_IMAGE_QUERY_KEYS) > MAX_RECENT_IMAGE_QUERIES:
+        RECENT_IMAGE_QUERY_KEYS.pop(0)
 
 
 def _topic_key(topic_info: dict) -> str:
@@ -3207,20 +3266,23 @@ def _select_channel_topic() -> dict:
 
 
 async def get_channel_image(category: str = "") -> str:
-    """Подбирает тематическую картинку под категорию поста. Избегает недавно использованных."""
+    """Подбирает тематическую картинку под категорию поста. Избегает недавних URL и однотипных запросов."""
     queries = list(CHANNEL_IMAGE_QUERIES.get(category, []))
-    # Добавляем пару универсальных запросов как подстраховку
-    universal_sample = random.sample(UNIVERSAL_IMAGE_QUERIES, k=min(2, len(UNIVERSAL_IMAGE_QUERIES)))
+    # Добавляем универсальные предметные запросы как подстраховку, без перекоса в один только космос.
+    universal_sample = random.sample(UNIVERSAL_IMAGE_QUERIES, k=min(4, len(UNIVERSAL_IMAGE_QUERIES)))
     queries += universal_sample
     random.shuffle(queries)
+    fresh_queries = [q for q in queries if q.strip().lower() not in RECENT_IMAGE_QUERY_KEYS]
+    if fresh_queries:
+        queries = fresh_queries
 
-    # До трёх попыток разными запросами
-    for q in queries[:3]:
+    # Несколько попыток разными запросами: Pexels часто возвращает одни и те же топовые фото.
+    for q in queries[:6]:
         urls = await pexels_search(q)
         fresh = [u for u in urls if _is_fresh_image(u)]
         if fresh:
             img = random.choice(fresh)
-            _remember_image(img)
+            _remember_image(img, q)
             return img
 
     # Фоллбек: статический список Unsplash (тоже без повторов)
@@ -3228,19 +3290,20 @@ async def get_channel_image(category: str = "") -> str:
     if not fallback:
         fallback = UNSPLASH_FALLBACK_IMAGES
     img = random.choice(fallback)
-    _remember_image(img)
+    _remember_image(img, "unsplash_fallback")
     return img
 
 
 def clean_markdown(text: str) -> str:
-    """Убирает markdown-разметку, сохраняет HTML-теги, заменяет длинные тире на дефис."""
+    """Конвертирует простую markdown-разметку в Telegram HTML и заменяет длинные тире на дефис."""
     text = re.sub(r'#{1,6}\s*', '', text)            # ### заголовки
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)     # **жирный**
-    text = re.sub(r'__(.+?)__', r'\1', text)         # __жирный__
-    text = re.sub(r'\*(.+?)\*', r'\1', text)         # *курсив*
-    text = re.sub(r'_(.+?)_', r'\1', text)           # _курсив_
+    text = re.sub(r'\|\|(.+?)\|\|', r'<tg-spoiler>\1</tg-spoiler>', text)  # ||спойлер||
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)     # **жирный**
+    text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)         # __жирный__
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)         # *курсив*
+    text = re.sub(r'_(.+?)_', r'<i>\1</i>', text)           # _курсив_
     text = re.sub(r'`(.+?)`', r'\1', text)           # `код`
-    text = re.sub(r'~~(.+?)~~', r'\1', text)         # ~~зачёркнутый~~
+    text = re.sub(r'~~(.+?)~~', r'<s>\1</s>', text)  # ~~зачёркнутый~~
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # [ссылка](url)
     text = re.sub(r'^[-•]\s', '- ', text, flags=re.MULTILINE)
     # Длинные и средние тире на обычный дефис (анти-ИИ правка)
@@ -3367,6 +3430,14 @@ def _channel_bot_promo_offer() -> str:
     )
 
 
+def _channel_bot_promo_offer_short() -> str:
+    bot_label = f"@{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "бот"
+    return (
+        "<b>Голос Звёзд</b>: прогнозы, совместимость и личные консультации тарологов и астрологов.\n"
+        f"Бот: {bot_label}"
+    )
+
+
 def _specialist_gender(specialist: dict) -> str:
     personality = (specialist.get("personality") or "").lower()
     if "мужчина" in personality:
@@ -3488,9 +3559,20 @@ def with_channel_bot_promo(text: str, final_suffix: str = "") -> str:
     if len(full_text) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
         return full_text
 
+    compact_suffix = "\n\n" + _channel_bot_promo_offer_short() + final_block
+    if len(compact_suffix) < len(suffix):
+        compact_full_text = f"{text}{compact_suffix}"
+        if len(compact_full_text) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
+            return compact_full_text
+        suffix = compact_suffix
+
+    signature_only = f"{text}{final_block}"
+    if final_block and len(signature_only) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
+        return signature_only
+
     available = TELEGRAM_PHOTO_CAPTION_LIMIT - len(suffix) - 3
     if available <= 0:
-        fallback = f"{promo}{final_block}".strip()
+        fallback = suffix.strip()
         if len(fallback) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
             return fallback
         return final_suffix[:TELEGRAM_PHOTO_CAPTION_LIMIT] if final_suffix else fallback[:TELEGRAM_PHOTO_CAPTION_LIMIT]
@@ -3560,10 +3642,11 @@ async def generate_channel_post(
         "5. Добавь 2-4 эмодзи по смыслу (не в каждой строке, а там где к месту).\n"
         "6. В конце один короткий вопрос читателям.\n\n"
         "ФОРМАТИРОВАНИЕ (только Telegram HTML-теги, никакого markdown):\n"
+        "- Оформление обязательно: в посте должен быть хотя бы один <b>...</b>, один <i>...</i> и один <tg-spoiler>...</tg-spoiler>.\n"
         "- <b>...</b>: выдели 1-3 самых важных слова или термина. Это должны быть ОСМЫСЛЕННЫЕ выделения: название карты Таро, имя планеты, ключевое понятие, суть совета. НЕ выделяй случайные слова, союзы, предлоги.\n"
-        "- <i>...</i>: используй 1-2 раза для атмосферной фразы, метафоры или цитаты.\n"
-        "- <tg-spoiler>...</tg-spoiler>: один раз, для интригующего откровения или 'тайной' фразы, чтобы читатель захотел её открыть (например, неожиданное послание карты или тайный совет).\n"
-        "- Если выделение неуместно, просто не используй тег. Лучше ни одного, чем случайное.\n\n"
+        "- <i>...</i>: используй 1-2 раза для атмосферной фразы, метафоры или короткого внутреннего наблюдения.\n"
+        "- <tg-spoiler>...</tg-spoiler>: используй один раз, для интригующего откровения или 'тайной' фразы, чтобы читатель захотел её открыть (например, неожиданное послание карты или тайный совет).\n"
+        "- Не ставь теги вокруг целых абзацев. Оформление должно помогать читать, а не выглядеть как случайная разметка.\n\n"
         "ЗАПРЕЩЕНО:\n"
         "- Хештеги, ссылки, упоминания аккаунтов.\n"
         "- Markdown-разметка (**, ##, *, _, `, ~~). Только HTML-теги выше.\n"
