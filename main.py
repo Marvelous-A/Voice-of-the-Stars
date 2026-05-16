@@ -2931,7 +2931,22 @@ CHANNEL_GENERATED_IMAGE_PALETTES = [
     {"bg": (34, 56, 42), "mid": (86, 122, 83), "accent": (222, 197, 121), "ink": (246, 250, 237)},
 ]
 
-CHANNEL_GENERATED_LAYOUTS = ["chart", "cards", "journal", "moon_grid", "sigils"]
+CHANNEL_IMAGE_SCENES_BY_CATEGORY = {
+    "tarot": ["tarot_spread", "crystal_ball", "pendulum_map"],
+    "divination": ["crystal_ball", "tarot_spread", "pendulum_map"],
+    "astrology": ["natal_chart", "astrolabe", "moon_window"],
+    "zodiac": ["natal_chart", "astrolabe"],
+    "planets": ["natal_chart", "astrolabe", "moon_window"],
+    "moon": ["moon_window", "moon_window", "moon_calendar", "crystal_ball"],
+    "numerology": ["number_journal", "pocket_watch"],
+    "crystals": ["crystal_altar", "crystal_ball"],
+    "dreams": ["dream_journal", "moon_window"],
+    "elements": ["four_elements", "crystal_altar"],
+    "karma": ["thread_and_scales", "pendulum_map"],
+    "meditation": ["singing_bowl", "moon_window"],
+    "mystic": ["singing_bowl", "crystal_ball", "tarot_spread", "crystal_altar", "pendulum_map"],
+    "default": ["crystal_ball", "tarot_spread", "natal_chart", "moon_window"],
+}
 
 MAX_RECENT_PROMOS = 5
 CHANNEL_IMAGE_ASSET_DIR = "generated_channel_images"
@@ -3047,14 +3062,354 @@ def _channel_image_label(category: str) -> str:
     return labels.get(category, "ГОЛОС ЗВЕЗД")
 
 
+def _channel_image_scene_options(category: str) -> list[str]:
+    return CHANNEL_IMAGE_SCENES_BY_CATEGORY.get(category) or CHANNEL_IMAGE_SCENES_BY_CATEGORY["default"]
+
+
+def _blend_rgb(a: tuple[int, int, int], b: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
+    ratio = max(0, min(1, ratio))
+    return tuple(int(a[i] * (1 - ratio) + b[i] * ratio) for i in range(3))
+
+
+def _adjust_rgb(color: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
+    if amount >= 0:
+        return _blend_rgb(color, (255, 255, 255), amount)
+    return _blend_rgb(color, (0, 0, 0), abs(amount))
+
+
+def _rgba(color: tuple[int, int, int], alpha: int) -> tuple[int, int, int, int]:
+    return color + (max(0, min(255, alpha)),)
+
+
+def _draw_shadowed_round(draw, box, radius: int, fill, outline=None, width: int = 2, shadow: int = 70) -> None:
+    x1, y1, x2, y2 = box
+    draw.rounded_rectangle((x1 + 12, y1 + 14, x2 + 12, y2 + 14), radius=radius, fill=(0, 0, 0, shadow))
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+
+def _draw_scene_background(draw, width: int, height: int, palette: dict, rng) -> None:
+    top = _adjust_rgb(palette["bg"], rng.uniform(-0.08, 0.08))
+    bottom = _adjust_rgb(palette["mid"], rng.uniform(-0.02, 0.12))
+    for y in range(height):
+        draw.line([(0, y), (width, y)], fill=_rgba(_blend_rgb(top, bottom, y / height), 255))
+
+    horizon = rng.randint(600, 700)
+    table = _adjust_rgb(palette["mid"], -0.12)
+    draw.polygon([(0, horizon), (width, horizon - rng.randint(15, 55)), (width, height), (0, height)], fill=_rgba(table, 235))
+    for offset in range(-width, width * 2, 145):
+        draw.line((offset, horizon + 10, offset + 260, height), fill=_rgba(palette["accent"], 35), width=2)
+    for y in range(horizon + 110, height, 110):
+        draw.line((0, y, width, y - 22), fill=(255, 255, 255, 18), width=2)
+
+
+def _draw_small_star(draw, x: int, y: int, radius: int, color) -> None:
+    draw.line((x - radius, y, x + radius, y), fill=color, width=max(1, radius // 5))
+    draw.line((x, y - radius, x, y + radius), fill=color, width=max(1, radius // 5))
+    draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=color)
+
+
+def _draw_constellation(draw, rng, box, palette: dict, count: int = 7) -> None:
+    x1, y1, x2, y2 = box
+    points = [(rng.randint(x1, x2), rng.randint(y1, y2)) for _ in range(count)]
+    points.sort()
+    for a, b in zip(points, points[1:]):
+        draw.line((a[0], a[1], b[0], b[1]), fill=_rgba(palette["ink"], 90), width=2)
+    for x, y in points:
+        r = rng.randint(3, 7)
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=_rgba(palette["ink"], 210))
+
+
+def _draw_candle(draw, x: int, y: int, scale: float, palette: dict, rng) -> None:
+    w = int(62 * scale)
+    h = int(165 * scale)
+    wax = _blend_rgb(palette["ink"], (250, 231, 195), 0.55)
+    draw.ellipse((x - w, y + h - 15, x + w, y + h + 22), fill=(0, 0, 0, 45))
+    draw.rounded_rectangle((x - w // 2, y, x + w // 2, y + h), radius=max(8, w // 5), fill=_rgba(wax, 235), outline=_rgba(palette["accent"], 190), width=2)
+    draw.ellipse((x - w // 2, y - 9, x + w // 2, y + 17), fill=_rgba(_adjust_rgb(wax, 0.15), 245), outline=_rgba(palette["accent"], 170), width=2)
+    for drip in range(rng.randint(1, 3)):
+        dx = rng.randint(-w // 3, w // 3)
+        drip_h = rng.randint(24, 55)
+        draw.rounded_rectangle((x + dx - 5, y + 8, x + dx + 5, y + 8 + drip_h), radius=5, fill=_rgba(_adjust_rgb(wax, 0.08), 205))
+    draw.line((x, y - 2, x, y - 25), fill=(55, 38, 30, 210), width=3)
+    flame_outer = [(x, y - int(86 * scale)), (x - int(30 * scale), y - int(28 * scale)), (x, y - int(8 * scale)), (x + int(30 * scale), y - int(28 * scale))]
+    draw.polygon(flame_outer, fill=(239, 150, 59, 210))
+    flame_inner = [(x, y - int(62 * scale)), (x - int(14 * scale), y - int(28 * scale)), (x, y - int(14 * scale)), (x + int(14 * scale), y - int(28 * scale))]
+    draw.polygon(flame_inner, fill=(255, 236, 158, 235))
+
+
+def _draw_crystal_cluster(draw, x: int, y: int, scale: float, palette: dict, rng) -> None:
+    colors = [
+        _blend_rgb(palette["accent"], palette["ink"], 0.35),
+        _adjust_rgb(palette["accent"], 0.16),
+        _blend_rgb(palette["mid"], palette["ink"], 0.36),
+    ]
+    for i in range(5):
+        base = int((48 + i * 10) * scale)
+        height = int(rng.randint(95, 175) * scale)
+        cx = x + int((i - 2) * 42 * scale) + rng.randint(-8, 8)
+        color = colors[i % len(colors)]
+        points = [
+            (cx, y - height),
+            (cx - base // 2, y - int(18 * scale)),
+            (cx - base // 3, y + int(18 * scale)),
+            (cx + base // 3, y + int(18 * scale)),
+            (cx + base // 2, y - int(18 * scale)),
+        ]
+        draw.polygon(points, fill=_rgba(color, 215), outline=_rgba(palette["ink"], 110))
+        draw.line((cx, y - height, cx, y + int(14 * scale)), fill=_rgba(palette["ink"], 75), width=2)
+        draw.line((cx, y - int(height * 0.58), cx + base // 2, y - int(18 * scale)), fill=_rgba(palette["ink"], 55), width=2)
+    draw.ellipse((x - int(150 * scale), y + int(5 * scale), x + int(150 * scale), y + int(45 * scale)), fill=(0, 0, 0, 50))
+
+
+def _draw_tarot_card(draw, box, palette: dict, symbol: str, font, rng, fill_alpha: int = 235) -> None:
+    x1, y1, x2, y2 = box
+    card_fill = _blend_rgb(palette["ink"], (244, 218, 183), 0.62)
+    _draw_shadowed_round(draw, box, 24, _rgba(card_fill, fill_alpha), _rgba(palette["accent"], 210), width=3, shadow=52)
+    draw.rounded_rectangle((x1 + 18, y1 + 18, x2 - 18, y2 - 18), radius=16, outline=_rgba(palette["mid"], 130), width=2)
+    draw.text((x1 + 24, y1 + 18), symbol, font=font, fill=_rgba(palette["bg"], 190))
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2
+    draw.ellipse((cx - 46, cy - 46, cx + 46, cy + 46), outline=_rgba(palette["accent"], 185), width=4)
+    if rng.random() < 0.5:
+        draw.arc((cx - 31, cy - 38, cx + 35, cy + 38), 78, 282, fill=_rgba(palette["bg"], 170), width=8)
+    else:
+        _draw_small_star(draw, cx, cy, 43, _rgba(palette["bg"], 165))
+    draw.line((x1 + 48, y2 - 56, x2 - 48, y2 - 56), fill=_rgba(palette["mid"], 110), width=2)
+
+
+def _draw_tarot_spread_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    symbols = rng.sample((CHANNEL_GENERATED_IMAGE_SYMBOLS["tarot"] * 3), 3)
+    card_w, card_h = 205, 330
+    positions = [(236, 326), (440, 292), (642, 342)]
+    for (x, y), symbol in zip(positions, symbols):
+        _draw_tarot_card(draw, (x, y, x + card_w, y + card_h), palette, symbol, symbol_font, rng)
+    _draw_candle(draw, 205, 655, 1.0, palette, rng)
+    _draw_crystal_cluster(draw, 848, 710, 0.74, palette, rng)
+    draw.rounded_rectangle((430, 724, 665, 805), radius=20, fill=_rgba(_adjust_rgb(palette["bg"], 0.12), 210), outline=_rgba(palette["accent"], 155), width=3)
+    for i in range(4):
+        draw.line((455 + i * 42, 740, 455 + i * 42, 790), fill=_rgba(palette["accent"], 120), width=2)
+    _draw_constellation(draw, rng, (710, 170, 940, 285), palette, 6)
+
+
+def _draw_crystal_ball_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    cx, cy, r = 540, 490, 225
+    draw.ellipse((cx - r + 18, cy - r + 28, cx + r + 18, cy + r + 28), fill=(0, 0, 0, 65))
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=_rgba(_blend_rgb(palette["mid"], palette["ink"], 0.28), 155), outline=_rgba(palette["ink"], 170), width=4)
+    draw.ellipse((cx - 150, cy - 176, cx - 40, cy - 60), fill=(255, 255, 255, 45))
+    draw.arc((cx - 90, cy - 105, cx + 90, cy + 105), 70, 290, fill=_rgba(palette["ink"], 155), width=11)
+    _draw_constellation(draw, rng, (cx - 110, cy - 55, cx + 125, cy + 100), palette, 8)
+    draw.rounded_rectangle((cx - 175, cy + r - 5, cx + 175, cy + r + 70), radius=34, fill=_rgba(_adjust_rgb(palette["accent"], -0.1), 215), outline=_rgba(palette["ink"], 120), width=3)
+    draw.ellipse((cx - 240, cy + r + 50, cx + 240, cy + r + 110), fill=(0, 0, 0, 60))
+    _draw_candle(draw, 210, 655, 0.9, palette, rng)
+    _draw_tarot_card(draw, (725, 655, 890, 905), palette, rng.choice(CHANNEL_GENERATED_IMAGE_SYMBOLS["tarot"]), symbol_font, rng, fill_alpha=220)
+
+
+def _draw_pendulum_map_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    paper = (175, 255, 905, 820)
+    parchment = _blend_rgb(palette["ink"], (229, 200, 154), 0.54)
+    _draw_shadowed_round(draw, paper, 28, _rgba(parchment, 232), _rgba(palette["accent"], 170), width=3, shadow=62)
+    for _ in range(5):
+        x1 = rng.randint(230, 770)
+        y1 = rng.randint(325, 720)
+        x2 = x1 + rng.randint(-110, 130)
+        y2 = y1 + rng.randint(-95, 115)
+        draw.line((x1, y1, x2, y2), fill=_rgba(palette["mid"], 105), width=4)
+        draw.ellipse((x1 - 8, y1 - 8, x1 + 8, y1 + 8), fill=_rgba(palette["accent"], 155))
+    draw.ellipse((405, 420, 675, 690), outline=_rgba(palette["bg"], 145), width=4)
+    for angle in range(0, 360, 45):
+        rad = math.radians(angle)
+        draw.line((540, 555, 540 + int(122 * math.cos(rad)), 555 + int(122 * math.sin(rad))), fill=_rgba(palette["bg"], 80), width=2)
+    draw.line((540, 120, 540, 370), fill=_rgba(palette["ink"], 160), width=3)
+    draw.polygon([(540, 370), (494, 475), (540, 540), (586, 475)], fill=_rgba(_adjust_rgb(palette["accent"], 0.12), 225), outline=_rgba(palette["ink"], 140))
+    _draw_candle(draw, 840, 650, 0.75, palette, rng)
+
+
+def _draw_chart_wheel(draw, cx: int, cy: int, radius: int, palette: dict, rng, symbol_font) -> None:
+    for r, alpha in ((radius, 185), (int(radius * 0.72), 135), (int(radius * 0.42), 95)):
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=_rgba(palette["accent"], alpha), width=3)
+    zodiac = CHANNEL_GENERATED_IMAGE_SYMBOLS["zodiac"]
+    planets = CHANNEL_GENERATED_IMAGE_SYMBOLS["planets"]
+    for i in range(12):
+        angle = math.radians(i * 30 - 90)
+        x = cx + int(radius * math.cos(angle))
+        y = cy + int(radius * math.sin(angle))
+        draw.line((cx, cy, x, y), fill=_rgba(palette["mid"], 105), width=2)
+        tx = cx + int((radius + 38) * math.cos(angle)) - 17
+        ty = cy + int((radius + 38) * math.sin(angle)) - 23
+        draw.text((tx, ty), zodiac[i], font=symbol_font, fill=_rgba(palette["bg"], 180))
+    for i in range(7):
+        a = math.radians(rng.randint(0, 359))
+        dist = rng.randint(int(radius * 0.2), int(radius * 0.68))
+        x = cx + int(dist * math.cos(a))
+        y = cy + int(dist * math.sin(a))
+        draw.text((x - 13, y - 17), planets[i % len(planets)], font=symbol_font, fill=_rgba(palette["accent"], 190))
+
+
+def _draw_natal_chart_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    paper = (190, 170, 890, 890)
+    parchment = _blend_rgb(palette["ink"], (241, 224, 190), 0.55)
+    _draw_shadowed_round(draw, paper, 34, _rgba(parchment, 232), _rgba(palette["accent"], 180), width=3, shadow=70)
+    _draw_chart_wheel(draw, 540, 530, 270, palette, rng, symbol_font)
+    draw.line((750, 770, 910, 920), fill=_rgba(_adjust_rgb(palette["bg"], 0.05), 210), width=18)
+    draw.polygon([(895, 902), (940, 948), (878, 925)], fill=_rgba(palette["accent"], 220))
+    _draw_candle(draw, 153, 645, 0.82, palette, rng)
+
+
+def _draw_astrolabe_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    cx, cy = 540, 535
+    draw.ellipse((220, 220, 860, 860), fill=(0, 0, 0, 48))
+    for r, alpha in ((310, 220), (250, 175), (180, 135), (95, 115)):
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=_rgba(palette["accent"], alpha), width=5 if r == 310 else 3)
+    for angle in range(0, 360, 15):
+        rad = math.radians(angle)
+        outer = 310
+        inner = 282 if angle % 45 else 260
+        draw.line((cx + int(inner * math.cos(rad)), cy + int(inner * math.sin(rad)), cx + int(outer * math.cos(rad)), cy + int(outer * math.sin(rad))), fill=_rgba(palette["ink"], 120), width=2)
+    pointer_angle = math.radians(rng.choice([25, 70, 118, 205, 294]))
+    draw.line((cx - int(250 * math.cos(pointer_angle)), cy - int(250 * math.sin(pointer_angle)), cx + int(250 * math.cos(pointer_angle)), cy + int(250 * math.sin(pointer_angle))), fill=_rgba(palette["ink"], 180), width=6)
+    draw.ellipse((cx - 18, cy - 18, cx + 18, cy + 18), fill=_rgba(palette["accent"], 240))
+    _draw_constellation(draw, rng, (140, 145, 360, 315), palette, 7)
+    _draw_crystal_cluster(draw, 835, 825, 0.55, palette, rng)
+
+
+def _draw_moon_window_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    frame = _adjust_rgb(palette["bg"], -0.04)
+    draw.rounded_rectangle((180, 120, 900, 690), radius=38, fill=_rgba(frame, 235), outline=_rgba(palette["accent"], 140), width=4)
+    draw.rounded_rectangle((225, 165, 855, 635), radius=26, fill=_rgba((16, 24, 46), 230), outline=_rgba(palette["ink"], 75), width=2)
+    draw.line((540, 165, 540, 635), fill=_rgba(palette["accent"], 85), width=3)
+    draw.line((225, 400, 855, 400), fill=_rgba(palette["accent"], 85), width=3)
+    moon_x, moon_y = rng.choice([(350, 270), (710, 285), (610, 235)])
+    draw.ellipse((moon_x - 70, moon_y - 70, moon_x + 70, moon_y + 70), fill=_rgba((242, 229, 188), 220))
+    draw.ellipse((moon_x - 35, moon_y - 82, moon_x + 95, moon_y + 58), fill=_rgba((16, 24, 46), 235))
+    _draw_constellation(draw, rng, (280, 210, 805, 565), palette, 10)
+    draw.rounded_rectangle((260, 730, 660, 930), radius=24, fill=_rgba(_blend_rgb(palette["ink"], (235, 210, 176), 0.55), 230), outline=_rgba(palette["accent"], 165), width=3)
+    phases = ["○", "◔", "◐", "●", "◑", "◕"]
+    for i, phase in enumerate(phases):
+        draw.text((300 + i * 56, 770), phase, font=symbol_font, fill=_rgba(palette["bg"], 180))
+        draw.line((300 + i * 56, 842, 330 + i * 56, 842), fill=_rgba(palette["mid"], 90), width=2)
+    _draw_candle(draw, 790, 745, 0.82, palette, rng)
+
+
+def _draw_moon_calendar_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    draw.rounded_rectangle((190, 200, 890, 860), radius=34, fill=_rgba(_blend_rgb(palette["ink"], (238, 219, 184), 0.5), 232), outline=_rgba(palette["accent"], 185), width=3)
+    for y in range(345, 785, 95):
+        draw.line((260, y, 820, y), fill=_rgba(palette["mid"], 95), width=2)
+    phases = ["○", "◔", "◐", "●", "◑", "◕", "○", "●"]
+    for i, phase in enumerate(phases):
+        x = 285 + (i % 4) * 138
+        y = 245 + (i // 4) * 210
+        draw.text((x, y), phase, font=symbol_font, fill=_rgba(palette["bg"], 188))
+        draw.rounded_rectangle((x - 20, y + 82, x + 90, y + 112), radius=12, fill=_rgba(palette["accent"], 70))
+    _draw_crystal_cluster(draw, 790, 890, 0.5, palette, rng)
+    _draw_candle(draw, 195, 735, 0.72, palette, rng)
+
+
+def _draw_number_journal_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    page = _blend_rgb(palette["ink"], (240, 222, 188), 0.55)
+    _draw_shadowed_round(draw, (170, 240, 910, 820), 28, _rgba(page, 235), _rgba(palette["accent"], 170), width=3, shadow=70)
+    draw.line((540, 260, 540, 805), fill=_rgba(palette["mid"], 95), width=3)
+    values = ["11:11", "22", "7", "3", "9", "12"]
+    for i, value in enumerate(rng.sample(values, 4)):
+        x = 250 + (i % 2) * 340
+        y = 330 + (i // 2) * 190
+        draw.text((x, y), value, font=symbol_font, fill=_rgba(palette["bg"], 180))
+        draw.line((x, y + 82, x + 215, y + 82), fill=_rgba(palette["mid"], 105), width=2)
+        draw.line((x, y + 128, x + 180, y + 128), fill=_rgba(palette["mid"], 80), width=2)
+    draw.ellipse((715, 680, 875, 840), fill=_rgba(_adjust_rgb(palette["accent"], -0.05), 210), outline=_rgba(palette["ink"], 150), width=4)
+    draw.ellipse((752, 717, 838, 803), outline=_rgba(palette["ink"], 145), width=3)
+    draw.line((795, 760, 795, 728), fill=_rgba(palette["ink"], 150), width=3)
+    draw.line((795, 760, 824, 780), fill=_rgba(palette["ink"], 150), width=3)
+
+
+def _draw_pocket_watch_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    _draw_number_journal_scene(draw, width, height, palette, rng, symbol_font, small_font)
+    draw.arc((410, 110, 800, 500), 195, 350, fill=_rgba(palette["accent"], 145), width=5)
+    for i in range(6):
+        draw.ellipse((620 + i * 18, 120 + i * 9, 632 + i * 18, 132 + i * 9), outline=_rgba(palette["accent"], 145), width=2)
+
+
+def _draw_crystal_altar_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    draw.rounded_rectangle((195, 685, 885, 870), radius=36, fill=_rgba(_adjust_rgb(palette["bg"], 0.08), 210), outline=_rgba(palette["accent"], 130), width=3)
+    _draw_crystal_cluster(draw, 540, 690, 1.25, palette, rng)
+    _draw_candle(draw, 260, 575, 0.92, palette, rng)
+    draw.ellipse((700, 610, 875, 765), fill=_rgba(_adjust_rgb(palette["mid"], 0.1), 220), outline=_rgba(palette["accent"], 150), width=3)
+    draw.ellipse((725, 630, 850, 735), fill=_rgba(_blend_rgb(palette["ink"], palette["mid"], 0.32), 190))
+    for i in range(5):
+        _draw_small_star(draw, 340 + i * 95, 270 + rng.randint(-30, 45), rng.randint(14, 28), _rgba(palette["ink"], 145))
+
+
+def _draw_four_elements_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    spots = [(310, 385), (735, 385), (310, 740), (735, 740)]
+    for x, y in spots:
+        draw.ellipse((x - 145, y - 80, x + 145, y + 88), fill=(0, 0, 0, 52))
+        draw.ellipse((x - 125, y - 75, x + 125, y + 75), fill=_rgba(_blend_rgb(palette["ink"], palette["mid"], 0.38), 220), outline=_rgba(palette["accent"], 160), width=3)
+    _draw_candle(draw, 310, 325, 0.65, palette, rng)
+    draw.arc((675, 325, 795, 445), 15, 165, fill=_rgba((105, 192, 219), 205), width=10)
+    draw.arc((690, 350, 815, 475), 15, 165, fill=_rgba((105, 192, 219), 160), width=8)
+    draw.polygon([(260, 730), (315, 650), (370, 730), (337, 805), (283, 805)], fill=_rgba(_adjust_rgb(palette["accent"], -0.05), 225), outline=_rgba(palette["ink"], 135))
+    draw.line((682, 780, 790, 675), fill=_rgba(palette["ink"], 180), width=5)
+    for i in range(5):
+        draw.arc((650 + i * 18, 650 + i * 8, 790 + i * 16, 800 + i * 10), 205, 330, fill=_rgba(palette["ink"], 115), width=3)
+
+
+def _draw_dream_journal_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    _draw_moon_window_scene(draw, width, height, palette, rng, symbol_font, small_font)
+    pillow = (200, 790, 480, 940)
+    draw.rounded_rectangle(pillow, radius=42, fill=_rgba(_blend_rgb(palette["ink"], palette["mid"], 0.35), 225), outline=_rgba(palette["accent"], 120), width=2)
+    draw.rounded_rectangle((510, 760, 840, 935), radius=28, fill=_rgba(_blend_rgb(palette["ink"], (238, 219, 184), 0.55), 232), outline=_rgba(palette["accent"], 160), width=3)
+    draw.arc((610, 800, 720, 910), 75, 280, fill=_rgba(palette["bg"], 170), width=8)
+    draw.line((560, 890, 790, 890), fill=_rgba(palette["mid"], 85), width=2)
+
+
+def _draw_singing_bowl_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    draw.ellipse((295, 665, 785, 805), fill=(0, 0, 0, 60))
+    draw.ellipse((320, 530, 760, 790), fill=_rgba(_adjust_rgb(palette["accent"], -0.08), 230), outline=_rgba(palette["ink"], 140), width=4)
+    draw.ellipse((370, 535, 710, 665), fill=_rgba(_blend_rgb(palette["ink"], palette["mid"], 0.3), 190), outline=_rgba(palette["ink"], 100), width=2)
+    draw.rounded_rectangle((710, 475, 925, 500), radius=13, fill=_rgba(_adjust_rgb(palette["ink"], -0.05), 230), outline=_rgba(palette["accent"], 140), width=2)
+    for i in range(4):
+        x = 250 + i * 110
+        draw.arc((x, 235 - i * 22, x + 210, 580 - i * 12), 210, 320, fill=_rgba(palette["ink"], 68), width=4)
+    for i in range(18):
+        angle = math.radians(i * 20)
+        x = 540 + int(320 * math.cos(angle))
+        y = 850 + int(72 * math.sin(angle))
+        draw.ellipse((x - 12, y - 12, x + 12, y + 12), fill=_rgba(_adjust_rgb(palette["accent"], 0.08), 210))
+    _draw_candle(draw, 210, 610, 0.8, palette, rng)
+
+
+def _draw_thread_and_scales_scene(draw, width: int, height: int, palette: dict, rng, symbol_font, small_font) -> None:
+    draw.line((540, 210, 540, 410), fill=_rgba(palette["ink"], 170), width=5)
+    draw.polygon([(500, 410), (580, 410), (540, 360)], fill=_rgba(_adjust_rgb(palette["accent"], -0.04), 225), outline=_rgba(palette["ink"], 130))
+    draw.line((335, 450, 745, 450), fill=_rgba(palette["ink"], 170), width=6)
+    for x in (365, 715):
+        draw.line((x, 450, x - 70, 620), fill=_rgba(palette["ink"], 135), width=3)
+        draw.line((x, 450, x + 70, 620), fill=_rgba(palette["ink"], 135), width=3)
+        draw.ellipse((x - 105, 605, x + 105, 710), fill=_rgba(_adjust_rgb(palette["accent"], -0.1), 218), outline=_rgba(palette["ink"], 125), width=3)
+    draw.arc((220, 720, 880, 955), 190, 350, fill=(188, 47, 61, 205), width=8)
+    draw.ellipse((210, 805, 350, 945), fill=_rgba(_adjust_rgb(palette["mid"], 0.08), 230), outline=_rgba(palette["accent"], 155), width=3)
+    draw.ellipse((725, 805, 865, 945), fill=_rgba(_adjust_rgb(palette["mid"], 0.08), 230), outline=_rgba(palette["accent"], 155), width=3)
+    _draw_constellation(draw, rng, (420, 140, 765, 285), palette, 6)
+
+
+def _draw_brand_mark(draw, width: int, height: int, palette: dict, font) -> None:
+    text = "Голос Звезд"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    x = width - tw - 58
+    y = height - th - 48
+    draw.rounded_rectangle((x - 22, y - 13, width - 34, height - 31), radius=18, fill=(0, 0, 0, 45), outline=_rgba(palette["accent"], 70), width=1)
+    draw.text((x, y), text, font=font, fill=_rgba(palette["ink"], 170))
+
+
 def generate_channel_image_asset(
     topic_info: dict,
     author_info: dict | None = None,
     content_plan: dict | None = None,
 ) -> str:
-    """Создает локальную PNG-карточку для Telegram, чтобы не зависеть от однотипной выдачи фотостоков."""
+    """Создает локальную PNG-иллюстрацию с конкретным предметным сюжетом для Telegram."""
     try:
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image, ImageDraw
     except Exception as e:
         print(f"[channel_image] Pillow unavailable: {e}")
         return ""
@@ -3064,92 +3419,58 @@ def generate_channel_image_asset(
         rng = random.Random(uuid.uuid4().hex)
         palette = rng.choice(CHANNEL_GENERATED_IMAGE_PALETTES)
         category = topic_info.get("category", "")
-        layout = rng.choice(CHANNEL_GENERATED_LAYOUTS)
-        symbols = CHANNEL_GENERATED_IMAGE_SYMBOLS.get(category) or CHANNEL_GENERATED_IMAGE_SYMBOLS["default"]
+        topic_text = (topic_info.get("topic") or "").lower()
+        scene_pool = list(_channel_image_scene_options(category))
+
+        if author_info:
+            if author_info.get("type") == "tarot":
+                scene_pool.extend(["tarot_spread", "crystal_ball", "pendulum_map"])
+            elif author_info.get("type") == "astro":
+                scene_pool.extend(["natal_chart", "astrolabe", "moon_window"])
+
+        keyword_scenes = [
+            (("луна", "лунн", "сон", "сновид"), ["moon_window", "moon_calendar", "dream_journal"]),
+            (("наталь", "зодиак", "планет", "астро"), ["natal_chart", "astrolabe"]),
+            (("таро", "гадани", "расклад", "оракул"), ["tarot_spread", "crystal_ball", "pendulum_map"]),
+            (("числ", "нумер", "матриц"), ["number_journal", "pocket_watch"]),
+            (("кристалл", "камн", "минерал"), ["crystal_altar", "crystal_ball"]),
+            (("стихи", "огонь", "вода", "земля", "воздух"), ["four_elements"]),
+            (("медитац", "дыхани", "практик"), ["singing_bowl", "crystal_altar", "four_elements"]),
+        ]
+        for needles, scenes in keyword_scenes:
+            if any(needle in topic_text for needle in needles):
+                scene_pool.extend(scenes * 2)
+
+        scene = rng.choice(scene_pool or CHANNEL_IMAGE_SCENES_BY_CATEGORY["default"])
 
         width = height = 1080
         img = Image.new("RGB", (width, height), palette["bg"])
         draw = ImageDraw.Draw(img, "RGBA")
 
-        # Layered gradients and soft geometry give variety without relying on stock photos.
-        for y in range(height):
-            ratio = y / height
-            color = tuple(
-                int(palette["bg"][i] * (1 - ratio) + palette["mid"][i] * ratio)
-                for i in range(3)
-            )
-            draw.line([(0, y), (width, y)], fill=color + (255,))
+        _draw_scene_background(draw, width, height, palette, rng)
 
-        for _ in range(22):
-            cx, cy = rng.randint(-120, width + 120), rng.randint(-120, height + 120)
-            radius = rng.randint(60, 230)
-            color = palette["accent"] + (rng.randint(18, 48),)
-            draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=color)
-        img = img.filter(ImageFilter.GaussianBlur(radius=1.2))
-        draw = ImageDraw.Draw(img, "RGBA")
-
-        title_font = _channel_image_font(76, bold=True)
-        subtitle_font = _channel_image_font(40, bold=False)
-        symbol_font = _channel_image_font(86, bold=True)
+        symbol_font = _channel_image_font(46, bold=True)
         small_font = _channel_image_font(30, bold=False)
+        scene_drawers = {
+            "tarot_spread": _draw_tarot_spread_scene,
+            "crystal_ball": _draw_crystal_ball_scene,
+            "pendulum_map": _draw_pendulum_map_scene,
+            "natal_chart": _draw_natal_chart_scene,
+            "astrolabe": _draw_astrolabe_scene,
+            "moon_window": _draw_moon_window_scene,
+            "moon_calendar": _draw_moon_calendar_scene,
+            "number_journal": _draw_number_journal_scene,
+            "pocket_watch": _draw_pocket_watch_scene,
+            "crystal_altar": _draw_crystal_altar_scene,
+            "four_elements": _draw_four_elements_scene,
+            "dream_journal": _draw_dream_journal_scene,
+            "singing_bowl": _draw_singing_bowl_scene,
+            "thread_and_scales": _draw_thread_and_scales_scene,
+        }
+        scene_drawers.get(scene, _draw_crystal_ball_scene)(draw, width, height, palette, rng, symbol_font, small_font)
 
-        title = _channel_image_label(category)
-        rubric = ((content_plan or {}).get("rubric") or {}).get("label", "")
-        author = ""
-        if author_info:
-            role = "таролог" if author_info.get("type") == "tarot" else "астролог"
-            author = f"{author_info['specialist']['name']} · {role}"
-        subtitle = rubric or author or "новый ракурс"
-
-        border = palette["accent"] + (190,)
-        ink = palette["ink"] + (255,)
-        muted = palette["ink"] + (185,)
-
-        draw.rounded_rectangle((56, 56, width - 56, height - 56), radius=42, outline=border, width=3)
-        draw.rounded_rectangle((92, 92, width - 92, height - 92), radius=30, outline=palette["accent"] + (75,), width=2)
-
-        if layout == "chart":
-            center = (width // 2, height // 2 + 40)
-            for r, alpha in ((330, 92), (245, 78), (155, 62)):
-                draw.ellipse((center[0] - r, center[1] - r, center[0] + r, center[1] + r), outline=palette["accent"] + (alpha,), width=3)
-            for i in range(12):
-                angle = i * 30
-                rad = 3.14159 * angle / 180
-                x = center[0] + int(300 * math.cos(rad))
-                y = center[1] + int(300 * math.sin(rad))
-                sym = symbols[i % len(symbols)]
-                draw.text((x - 34, y - 40), sym, font=symbol_font, fill=ink)
-        elif layout == "cards":
-            for i in range(3):
-                x = 165 + i * 255
-                y = 350 + rng.randint(-18, 18)
-                draw.rounded_rectangle((x, y, x + 205, y + 330), radius=24, fill=(255, 255, 255, 28), outline=border, width=3)
-                sym = rng.choice(symbols)
-                draw.text((x + 61, y + 106), sym, font=symbol_font, fill=ink)
-                draw.line((x + 42, y + 252, x + 163, y + 252), fill=palette["accent"] + (150,), width=2)
-        elif layout == "journal":
-            draw.rounded_rectangle((170, 300, 910, 780), radius=28, fill=(255, 250, 232, 38), outline=border, width=2)
-            for y in range(390, 720, 62):
-                draw.line((235, y, 845, y), fill=palette["accent"] + (105,), width=2)
-            for i, sym in enumerate(rng.sample(symbols * 2, k=5)):
-                draw.text((230 + i * 120, 305 + rng.randint(0, 34)), sym, font=symbol_font, fill=palette["accent"] + (175,))
-        elif layout == "moon_grid":
-            phases = ["○", "◔", "◐", "●", "◑", "◕"]
-            for i, sym in enumerate(phases):
-                x = 185 + i * 130
-                draw.text((x, 440 + (i % 2) * 28), sym, font=symbol_font, fill=ink if i % 2 else muted)
-            draw.line((170, 635, 910, 635), fill=border, width=3)
-        else:
-            for _ in range(9):
-                cx, cy = rng.randint(170, 910), rng.randint(310, 770)
-                size = rng.randint(60, 140)
-                sym = rng.choice(symbols)
-                draw.regular_polygon((cx, cy, size), n_sides=rng.choice([3, 4, 5, 6]), rotation=rng.random() * 360, outline=palette["accent"] + (105,), width=3)
-                draw.text((cx - 32, cy - 42), sym, font=symbol_font, fill=ink)
-
-        _draw_centered_text(draw, (150, 115, 930, 250), title, title_font, ink)
-        _draw_centered_text(draw, (190, 800, 890, 895), subtitle, subtitle_font, muted)
-        draw.text((width // 2 - 118, 950), "Голос Звезд", font=small_font, fill=palette["ink"] + (160,))
+        draw.rounded_rectangle((42, 42, width - 42, height - 42), radius=46, outline=_rgba(palette["accent"], 100), width=2)
+        _draw_brand_mark(draw, width, height, palette, small_font)
 
         path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}.png")
         img.save(path, format="PNG", optimize=True)
