@@ -2976,6 +2976,10 @@ RECENT_IMAGE_URLS: list[str] = []
 MAX_RECENT_IMAGES = 12
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = 8
+RECENT_CONTENT_SIGNATURES: list[str] = []
+MAX_RECENT_CONTENT_SIGNATURES = 14
+RECENT_CHANNEL_POST_SAMPLES: list[str] = []
+MAX_RECENT_CHANNEL_POST_SAMPLES = 6
 
 
 def _normalize_image_url(url: str) -> str:
@@ -3076,6 +3080,114 @@ def _remember_channel_topic(topic_info: dict) -> None:
     save_channel_state(state)
 
 
+def _sync_recent_content_from_state() -> None:
+    state = load_channel_state()
+    RECENT_CONTENT_SIGNATURES.clear()
+    for signature in state.get("recent_content_signatures", []) or []:
+        if isinstance(signature, str) and signature.strip():
+            RECENT_CONTENT_SIGNATURES.append(signature.strip())
+    while len(RECENT_CONTENT_SIGNATURES) > MAX_RECENT_CONTENT_SIGNATURES:
+        RECENT_CONTENT_SIGNATURES.pop(0)
+
+    RECENT_CHANNEL_POST_SAMPLES.clear()
+    for sample in state.get("recent_post_samples", []) or []:
+        if isinstance(sample, str) and sample.strip():
+            RECENT_CHANNEL_POST_SAMPLES.append(sample.strip())
+    while len(RECENT_CHANNEL_POST_SAMPLES) > MAX_RECENT_CHANNEL_POST_SAMPLES:
+        RECENT_CHANNEL_POST_SAMPLES.pop(0)
+
+
+def _recent_content_parts() -> dict[str, set[str]]:
+    parts = {
+        "rubric": set(),
+        "format": set(),
+        "tone": set(),
+        "hook": set(),
+        "ending": set(),
+    }
+    for signature in RECENT_CONTENT_SIGNATURES:
+        for chunk in signature.split("|"):
+            if ":" not in chunk:
+                continue
+            key, value = chunk.split(":", 1)
+            if key in parts and value:
+                parts[key].add(value)
+    return parts
+
+
+def _pick_fresh_channel_variant(options: list[dict], part: str, recent_parts: dict[str, set[str]]) -> dict:
+    if not options:
+        return {}
+    fresh = [item for item in options if item.get("id") not in recent_parts.get(part, set())]
+    return random.choice(fresh or options)
+
+
+def _channel_rubrics_for(author_info: dict | None) -> list[dict]:
+    if not author_info:
+        return CHANNEL_UNIVERSAL_RUBRICS
+    if author_info.get("type") == "tarot":
+        return CHANNEL_TAROT_RUBRICS + CHANNEL_UNIVERSAL_RUBRICS
+    if author_info.get("type") == "astro":
+        return CHANNEL_ASTRO_RUBRICS + CHANNEL_UNIVERSAL_RUBRICS
+    return CHANNEL_UNIVERSAL_RUBRICS
+
+
+def _select_channel_content_plan(topic_info: dict, author_info: dict | None) -> dict:
+    _sync_recent_content_from_state()
+    recent_parts = _recent_content_parts()
+    plan = {
+        "rubric": _pick_fresh_channel_variant(_channel_rubrics_for(author_info), "rubric", recent_parts),
+        "format": _pick_fresh_channel_variant(CHANNEL_POST_FORMATS, "format", recent_parts),
+        "tone": _pick_fresh_channel_variant(CHANNEL_POST_TONES, "tone", recent_parts),
+        "hook": _pick_fresh_channel_variant(CHANNEL_POST_HOOKS, "hook", recent_parts),
+        "ending": _pick_fresh_channel_variant(CHANNEL_POST_ENDINGS, "ending", recent_parts),
+        "category": topic_info.get("category", ""),
+    }
+    return plan
+
+
+def _content_signature(content_plan: dict | None) -> str:
+    if not content_plan:
+        return ""
+    parts = []
+    for key in ("rubric", "format", "tone", "hook", "ending"):
+        value = content_plan.get(key) or {}
+        value_id = value.get("id") if isinstance(value, dict) else ""
+        if value_id:
+            parts.append(f"{key}:{value_id}")
+    return "|".join(parts)
+
+
+def _channel_post_sample(text: str) -> str:
+    text = re.sub(r'</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>', '', text or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:220]
+
+
+def _remember_channel_content(content_plan: dict | None, text: str) -> None:
+    _sync_recent_content_from_state()
+    signature = _content_signature(content_plan)
+    if signature:
+        if signature in RECENT_CONTENT_SIGNATURES:
+            RECENT_CONTENT_SIGNATURES.remove(signature)
+        RECENT_CONTENT_SIGNATURES.append(signature)
+        while len(RECENT_CONTENT_SIGNATURES) > MAX_RECENT_CONTENT_SIGNATURES:
+            RECENT_CONTENT_SIGNATURES.pop(0)
+
+    sample = _channel_post_sample(text)
+    if sample:
+        if sample in RECENT_CHANNEL_POST_SAMPLES:
+            RECENT_CHANNEL_POST_SAMPLES.remove(sample)
+        RECENT_CHANNEL_POST_SAMPLES.append(sample)
+        while len(RECENT_CHANNEL_POST_SAMPLES) > MAX_RECENT_CHANNEL_POST_SAMPLES:
+            RECENT_CHANNEL_POST_SAMPLES.pop(0)
+
+    state = load_channel_state()
+    state["recent_content_signatures"] = RECENT_CONTENT_SIGNATURES
+    state["recent_post_samples"] = RECENT_CHANNEL_POST_SAMPLES
+    save_channel_state(state)
+
+
 def _select_channel_topic() -> dict:
     _sync_recent_topics_from_state()
     fresh_topics = [
@@ -3140,8 +3252,14 @@ def clean_markdown(text: str) -> str:
 # Разрешённые теги Telegram HTML (которые мы хотим видеть в постах)
 _ALLOWED_HTML_TAGS = {"a", "b", "i", "u", "s", "tg-spoiler"}
 TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
-CHANNEL_TAROT_AUTHOR_CATEGORIES = {"tarot"}
-CHANNEL_ASTRO_AUTHOR_CATEGORIES = {"astrology", "zodiac", "moon", "planets", "elements"}
+CHANNEL_TAROT_AUTHOR_CATEGORIES = {"tarot", "divination", "numerology"}
+CHANNEL_ASTRO_AUTHOR_CATEGORIES = {
+    "astrology", "zodiac", "moon", "planets", "elements", "karma", "dreams", "crystals"
+}
+CHANNEL_CATEGORY_AUTHOR_IDS = {
+    "numerology": {"tarot": {"vadim"}},
+    "karma": {"astro": {"georgiy"}},
+}
 CHANNEL_BOT_PROMO_INTROS = [
     "Если хочется понять, как это проявляется именно в твоей ситуации, можно прийти за личным разбором.\n\n",
     "Иногда общий знак только намекает, а личная консультация показывает, где именно сейчас точка выбора.\n\n",
@@ -3150,6 +3268,90 @@ CHANNEL_BOT_PROMO_INTROS = [
     "Если чувствуешь, что это про тебя, можно задать вопрос и получить более точный разбор.\n\n",
     "Общий пост даёт направление, а личный расклад или астрологический разбор помогает увидеть детали.\n\n",
 ]
+
+CHANNEL_AUTHOR_PUBLIC_VOICES = {
+    "maya": "теплая, наблюдательная, сильна в отношениях и семейных сценариях, может сказать прямо, но без грубости",
+    "boris": "собранный и деловой, любит короткую конкретику, карьерные и финансовые примеры, без лишней романтики",
+    "alina": "живая, энергичная, работает с Таро Тота, замечает неожиданные детали и говорит честно",
+    "vadim": "неторопливый, связывает Таро с нумерологией, видит несколько слоев и любит бытовые совпадения",
+    "svetlana": "зрелая, весомая, марсельская традиция, говорит спокойно и с достоинством",
+    "dasha": "молодая, быстрая, искренняя, хорошо чувствует современные ситуации и не прячет прямоту",
+    "timur": "образный, восточная традиция, иногда мыслит притчей, но умеет быстро вернуться к сути",
+    "vera": "мягкая, духовная, старомодная, говорит бережно и не торопит читателя",
+    "inna": "строгая западная астрология, транзиты, прогрессии, аспекты, дома, точность важнее утешений",
+    "georgiy": "ведическая астрология, джйотиш, карма, даши, накшатры, спокойная глубина без суеты",
+    "kira": "психологическая астрология, синастрии, живой тон, быстро видит эмоциональный паттерн",
+    "stanislav": "мунданная и деловая астрология, сухая конкретика, сроки, циклы, практичный вывод",
+    "zhanna": "хорарная астрология, точность момента вопроса, загадочность, Луна и дома как главные маркеры",
+}
+
+CHANNEL_UNIVERSAL_RUBRICS = [
+    {"id": "symbol_detail", "label": "символическая деталь", "instruction": "раскрой один символ или образ, без энциклопедии, через живое наблюдение"},
+    {"id": "daily_energy", "label": "энергия дня", "instruction": "дай ощущение текущей энергии и один практичный способ прожить ее мягче"},
+    {"id": "small_practice", "label": "мини-практика", "instruction": "предложи короткое действие на 2-5 минут, без обещаний чудес"},
+    {"id": "myth_reframe", "label": "миф и реальность", "instruction": "разбери популярное заблуждение и покажи более тонкий взгляд"},
+    {"id": "reader_mirror", "label": "зеркало читателя", "instruction": "свяжи тему с узнаваемой бытовой ситуацией читателя"},
+    {"id": "soft_warning", "label": "мягкое предупреждение", "instruction": "аккуратно покажи риск и сразу дай экологичный выход"},
+]
+
+CHANNEL_TAROT_RUBRICS = [
+    {"id": "tarot_card_lens", "label": "карта как линза", "instruction": "выбери одну карту или аркан и смотри на тему через ее образ"},
+    {"id": "spread_fragment", "label": "фрагмент расклада", "instruction": "пиши так, будто видишь один фрагмент расклада и объясняешь его смысл"},
+    {"id": "shadow_card", "label": "теневая сторона карты", "instruction": "покажи не только красивое значение, но и где человек сам себе мешает"},
+    {"id": "choice_advice", "label": "совет на выбор", "instruction": "сфокусируйся на моменте выбора, что карта просит заметить перед решением"},
+    {"id": "relationship_signal", "label": "сигнал в отношениях", "instruction": "сделай акцент на чувствах, границах или честном разговоре, если тема позволяет"},
+]
+
+CHANNEL_ASTRO_RUBRICS = [
+    {"id": "planet_focus", "label": "фокус планеты", "instruction": "выбери планету, аспект, дом или знак и объясни, как это проявляется в жизни"},
+    {"id": "transit_mood", "label": "транзитное настроение", "instruction": "пиши как астролог, который видит фон периода и дает осторожный совет"},
+    {"id": "zodiac_behavior", "label": "знак в быту", "instruction": "покажи, как астрологическая тема проявляется в поведении, общении или выборе"},
+    {"id": "synastry_hint", "label": "синастрический намек", "instruction": "если тема связана с людьми, добавь взгляд на совместимость или динамику пары"},
+    {"id": "moon_rhythm", "label": "лунный ритм", "instruction": "свяжи тему с эмоциональным ритмом, телесностью или сменой внутреннего состояния"},
+]
+
+CHANNEL_POST_FORMATS = [
+    {"id": "micro_story", "label": "мини-история", "instruction": "начни с маленькой сцены или наблюдения, затем выведи смысл"},
+    {"id": "question_then_answer", "label": "вопрос и ответ", "instruction": "первый абзац вопросительный, второй отвечает мягко и конкретно"},
+    {"id": "warning_then_care", "label": "предупреждение и опора", "instruction": "сначала назови риск, потом дай спокойный способ не провалиться в него"},
+    {"id": "one_detail", "label": "одна деталь", "instruction": "держи весь пост вокруг одной детали, без расползания на несколько тем"},
+    {"id": "inner_dialogue", "label": "внутренний диалог", "instruction": "пиши как короткий разговор с читателем, но без театральности"},
+    {"id": "note_from_practice", "label": "заметка из практики", "instruction": "пиши как наблюдение специалиста из практики, без раскрытия чужих историй"},
+    {"id": "contrast", "label": "контраст", "instruction": "сопоставь внешнее впечатление и то, что на самом деле стоит за темой"},
+]
+
+CHANNEL_POST_TONES = [
+    {"id": "warm", "label": "теплый", "instruction": "поддерживающий, без сахара и пустых обещаний"},
+    {"id": "precise", "label": "точный", "instruction": "профессиональный, с одним термином по делу и ясным выводом"},
+    {"id": "mystic", "label": "мистический", "instruction": "атмосферный, но не туманный, символы должны вести к смыслу"},
+    {"id": "direct", "label": "прямой", "instruction": "честный и немного острый, но без давления на читателя"},
+    {"id": "practical", "label": "практичный", "instruction": "земной, с маленьким действием, которое можно сделать сегодня"},
+    {"id": "diary", "label": "дневниковый", "instruction": "личное наблюдение, будто короткая запись после консультаций"},
+    {"id": "light_irony", "label": "легкая ирония", "instruction": "чуть улыбающийся тон, но тема остается уважительной"},
+]
+
+CHANNEL_POST_HOOKS = [
+    {"id": "sensory", "label": "сенсорная деталь", "instruction": "начни с предмета, жеста, ощущения или маленькой сцены"},
+    {"id": "unexpected", "label": "неожиданный поворот", "instruction": "начни с мысли, которая чуть спорит с привычным взглядом"},
+    {"id": "reader_state", "label": "состояние читателя", "instruction": "начни с узнаваемого состояния: усталость, ожидание, сомнение, резкий импульс"},
+    {"id": "specialist_observation", "label": "наблюдение специалиста", "instruction": "начни с фразы о том, что автор часто замечает в практике"},
+    {"id": "quiet_question", "label": "тихий вопрос", "instruction": "начни с короткого вопроса, который не звучит как кликбейт"},
+]
+
+CHANNEL_POST_ENDINGS = [
+    {"id": "reader_question", "label": "вопрос читателю", "instruction": "заверши одним коротким вопросом, который хочется обдумать"},
+    {"id": "micro_action", "label": "микродействие", "instruction": "заверши маленьким действием на сегодня и затем коротким вопросом"},
+    {"id": "choice_point", "label": "точка выбора", "instruction": "заверши мыслью о выборе и вопросом к читателю"},
+    {"id": "soft_reflection", "label": "мягкое отражение", "instruction": "заверши спокойной фразой и вопросом без давления"},
+]
+
+CHANNEL_POST_QUALITY_RULES = (
+    "Качество важнее оригинальности любой ценой: не придумывай сомнительные факты, не обещай гарантированных событий, "
+    "не запугивай, не делай медицинских, юридических или финансовых советов. "
+    "Пост должен быть цельным: одна тема, один главный вывод, один вопрос в конце."
+)
+
+
 def _channel_bot_promo_offer() -> str:
     bot_label = f"@{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "бот"
     return (
@@ -3176,16 +3378,21 @@ def _specialist_gender(specialist: dict) -> str:
 
 def _select_channel_author(topic_info: dict) -> dict | None:
     category = topic_info.get("category", "")
+    category_author_ids = CHANNEL_CATEGORY_AUTHOR_IDS.get(category, {})
     if category in CHANNEL_TAROT_AUTHOR_CATEGORIES and TAROLOGISTS:
-        specialist = random.choice(TAROLOGISTS)
+        allowed_ids = category_author_ids.get("tarot")
+        candidates = [t for t in TAROLOGISTS if not allowed_ids or t.get("id") in allowed_ids]
+        specialist = random.choice(candidates or TAROLOGISTS)
         return {"type": "tarot", "specialist": specialist, "gender": _specialist_gender(specialist)}
     if category in CHANNEL_ASTRO_AUTHOR_CATEGORIES and ASTROLOGERS:
-        specialist = random.choice(ASTROLOGERS)
+        allowed_ids = category_author_ids.get("astro")
+        candidates = [a for a in ASTROLOGERS if not allowed_ids or a.get("id") in allowed_ids]
+        specialist = random.choice(candidates or ASTROLOGERS)
         return {"type": "astro", "specialist": specialist, "gender": _specialist_gender(specialist)}
     return None
 
 
-def _channel_author_prompt(author_info: dict | None) -> str:
+def _channel_author_prompt(author_info: dict | None, content_plan: dict | None = None) -> str:
     if not author_info:
         return (
             "Автор поста: администратор канала. Пиши нейтрально от лица админа, как раньше, "
@@ -3196,14 +3403,23 @@ def _channel_author_prompt(author_info: dict | None) -> str:
     is_tarot = author_info["type"] == "tarot"
     specialist_label = "таролог" if is_tarot else "астролог"
     topic_focus = "тарологии и карт Таро" if is_tarot else "астрологии, планет, домов, аспектов или знаков зодиака"
+    public_voice = CHANNEL_AUTHOR_PUBLIC_VOICES.get(specialist.get("id", ""), "")
+    tone_label = ((content_plan or {}).get("tone") or {}).get("label", "")
     gender_rule = (
         "Пиши от лица мужчины и используй формы мужского рода: заметил, видел, понял, советовал."
         if author_info["gender"] == "male"
         else "Пиши от лица женщины и используй формы женского рода: замечала, видела, поняла, советовала."
     )
+    voice_rule = (
+        f"Публичная манера автора: {public_voice}. " if public_voice else ""
+    )
+    tone_rule = (
+        f"Подстрой этот голос под тон выпуска: {tone_label}. " if tone_label else ""
+    )
     return (
         f"Автор поста: {specialist['name']}, {specialist_label} из базы бота. "
-        f"{gender_rule} Тематика поста должна быть строго о {topic_focus}. "
+        f"{gender_rule} {voice_rule}{tone_rule}Тематика поста должна быть строго о {topic_focus}. "
+        "Это публичный пост канала, поэтому стиль чище, чем личная переписка: без намеренных ошибок, без грубости, без хаоса, с ясной мыслью. "
         "Не называй автора в самом тексте и не добавляй подпись: подпись будет добавлена автоматически.\n"
     )
 
@@ -3285,12 +3501,57 @@ def with_channel_bot_promo(text: str, final_suffix: str = "") -> str:
     return f"{trimmed}...{suffix}"
 
 
-async def generate_channel_post(topic: str, author_info: dict | None = None) -> str:
+def _channel_content_plan_prompt(content_plan: dict | None) -> str:
+    if not content_plan:
+        return ""
+
+    def _line(title: str, item: dict) -> str:
+        label = item.get("label", "")
+        instruction = item.get("instruction", "")
+        return f"{title}: {label}. {instruction}"
+
+    return (
+        "КОНТЕНТ-ПЛАН ЭТОГО ПОСТА:\n"
+        f"{_line('Рубрика', content_plan.get('rubric') or {})}\n"
+        f"{_line('Форма', content_plan.get('format') or {})}\n"
+        f"{_line('Тон', content_plan.get('tone') or {})}\n"
+        f"{_line('Заход', content_plan.get('hook') or {})}\n"
+        f"{_line('Финал', content_plan.get('ending') or {})}\n"
+        "Следуй этому плану, но не называй рубрику, форму или тон в самом посте.\n"
+    )
+
+
+def _recent_channel_posts_prompt() -> str:
+    _sync_recent_content_from_state()
+    samples = RECENT_CHANNEL_POST_SAMPLES[-3:]
+    if not samples:
+        return ""
+    lines = "\n".join(f"{idx + 1}. {sample}" for idx, sample in enumerate(samples))
+    return (
+        "ПАМЯТЬ КАНАЛА:\n"
+        f"Последние посты начинались или звучали примерно так:\n{lines}\n"
+        "Не повторяй их начало, главную метафору, структуру и финальный вопрос. "
+        "Разнообразие нужно через новый ракурс, а не через ухудшение смысла.\n"
+    )
+
+
+async def generate_channel_post(
+    topic: str,
+    author_info: dict | None = None,
+    content_plan: dict | None = None,
+) -> str:
     """Генерирует пост для канала через ИИ по заданной теме."""
-    author_prompt = _channel_author_prompt(author_info)
+    if content_plan is None:
+        content_plan = _select_channel_content_plan({"category": "", "topic": topic}, author_info)
+    author_prompt = _channel_author_prompt(author_info, content_plan)
+    plan_prompt = _channel_content_plan_prompt(content_plan)
+    recent_posts_prompt = _recent_channel_posts_prompt()
     prompt = (
-        f"{topic}\n\n"
+        f"ТЕМА ПОСТА:\n{topic}\n\n"
+        f"{plan_prompt}\n"
         f"{author_prompt}\n"
+        f"{recent_posts_prompt}\n"
+        f"ОБЩЕЕ ПРАВИЛО КАЧЕСТВА:\n{CHANNEL_POST_QUALITY_RULES}\n\n"
         "СТРОГИЕ ТРЕБОВАНИЯ К ПОСТУ:\n"
         "1. Длина 300-700 символов. Это короткий пост для Telegram-канала, не статья.\n"
         "2. Пиши от первого лица в роде автора, как живой человек, увлечённый темой. Допустимы обороты 'я однажды заметил/заметила', 'у меня как-то было', 'мне кажется', 'честно'.\n"
@@ -3344,17 +3605,20 @@ async def build_channel_post() -> dict | None:
     _sync_recent_images_from_state()
     topic_info = _select_channel_topic()
     author_info = _select_channel_author(topic_info)
-    text = await generate_channel_post(topic_info["topic"], author_info)
-    if not text:
+    content_plan = _select_channel_content_plan(topic_info, author_info)
+    core_text = await generate_channel_post(topic_info["topic"], author_info, content_plan)
+    if not core_text:
         print("[autoposting] AI returned empty post text, skipping")
         return None
 
-    text = with_channel_bot_promo(text, _channel_author_signature(author_info))
+    text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
     image_url = await get_channel_image(topic_info.get("category", ""))
     return {
         "text": text,
+        "core_text": core_text,
         "image_url": image_url,
         "topic_info": topic_info,
+        "content_plan": content_plan,
     }
 
 
@@ -3417,6 +3681,7 @@ async def publish_channel_post() -> bool:
             msk = _msk_now()
             topic_info = post["topic_info"]
             _remember_channel_topic(topic_info)
+            _remember_channel_content(post.get("content_plan"), post.get("core_text", post.get("text", "")))
             topic_preview = _topic_key(topic_info)[:80]
             print(
                 f"[MSK {msk}] Channel post published "
@@ -3438,12 +3703,13 @@ async def post_to_channel() -> bool:
         _sync_recent_images_from_state()
         topic_info = _select_channel_topic()
         author_info = _select_channel_author(topic_info)
-        text = await generate_channel_post(topic_info["topic"], author_info)
-        if not text:
+        content_plan = _select_channel_content_plan(topic_info, author_info)
+        core_text = await generate_channel_post(topic_info["topic"], author_info, content_plan)
+        if not core_text:
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
             return False
 
-        text = with_channel_bot_promo(text, _channel_author_signature(author_info))
+        text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
 
         image_url = await get_channel_image(topic_info.get("category", ""))
 
@@ -3463,6 +3729,7 @@ async def post_to_channel() -> bool:
 
         msk = _msk_now()
         _remember_channel_topic(topic_info)
+        _remember_channel_content(content_plan, core_text)
         topic_preview = _topic_key(topic_info)[:80]
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
               f"(категория: {topic_info.get('category', '-')}, тема: {topic_preview}, "
