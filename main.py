@@ -2952,7 +2952,17 @@ CHANNEL_IMAGE_SCENES_BY_CATEGORY = {
 MAX_RECENT_PROMOS = 5
 CHANNEL_IMAGE_ASSET_DIR = "generated_channel_images"
 MAX_GENERATED_CHANNEL_IMAGES = 80
-CHANNEL_IMAGE_PROVIDER = getenv("CHANNEL_IMAGE_PROVIDER", "pollinations").strip().lower()
+CHANNEL_IMAGE_PROVIDER = getenv("CHANNEL_IMAGE_PROVIDER", "stock").strip().lower()
+PEXELS_API_KEY = getenv("PEXELS_API_KEY", "")
+UNSPLASH_ACCESS_KEY = getenv("UNSPLASH_ACCESS_KEY", getenv("UNSPLASH_API_KEY", ""))
+CHANNEL_STOCK_IMAGE_TIMEOUT = int(getenv("CHANNEL_STOCK_IMAGE_TIMEOUT", "35"))
+CHANNEL_STOCK_IMAGE_PAGE_SIZE = int(getenv("CHANNEL_STOCK_IMAGE_PAGE_SIZE", "20"))
+CHANNEL_STOCK_IMAGE_MAX_PAGE = int(getenv("CHANNEL_STOCK_IMAGE_MAX_PAGE", "18"))
+CHANNEL_STOCK_IMAGE_POOL_TARGET = int(getenv("CHANNEL_STOCK_IMAGE_POOL_TARGET", "18"))
+CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS = int(getenv("CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS", "4"))
+CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "9500000"))
+CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
+MAX_RECENT_CHANNEL_IMAGE_KEYS = int(getenv("MAX_RECENT_CHANNEL_IMAGE_KEYS", "700"))
 POLLINATIONS_API_KEY = getenv("POLLINATIONS_API_KEY", "")
 POLLINATIONS_IMAGE_MODEL = getenv("POLLINATIONS_IMAGE_MODEL", "flux")
 POLLINATIONS_IMAGE_TIMEOUT = int(getenv("POLLINATIONS_IMAGE_TIMEOUT", "90"))
@@ -3069,6 +3079,524 @@ def _channel_image_label(category: str) -> str:
 
 def _channel_image_scene_options(category: str) -> list[str]:
     return CHANNEL_IMAGE_SCENES_BY_CATEGORY.get(category) or CHANNEL_IMAGE_SCENES_BY_CATEGORY["default"]
+
+
+CHANNEL_STOCK_IMAGE_QUERIES = {
+    "tarot": [
+        "tarot cards candle",
+        "tarot deck table",
+        "fortune telling cards",
+        "divination cards candle",
+        "mystic cards still life",
+    ],
+    "astrology": [
+        "astrology chart",
+        "constellation map",
+        "night sky stars",
+        "telescope stars",
+        "astronomy chart",
+    ],
+    "zodiac": [
+        "zodiac constellation",
+        "star constellation",
+        "night sky stars",
+        "astronomy chart",
+        "celestial map",
+    ],
+    "moon": [
+        "moon night sky",
+        "crescent moon",
+        "full moon",
+        "moon phases",
+        "lunar eclipse",
+    ],
+    "planets": [
+        "planet space",
+        "solar system",
+        "telescope observatory",
+        "astronomy space",
+        "mercury planet",
+    ],
+    "numerology": [
+        "numbers notebook",
+        "old notebook numbers",
+        "pocket watch notebook",
+        "handwritten notes desk",
+        "calendar numbers",
+    ],
+    "crystals": [
+        "amethyst crystal",
+        "quartz crystal",
+        "crystals close up",
+        "crystal stones",
+        "minerals still life",
+    ],
+    "divination": [
+        "pendulum divination",
+        "crystal ball candle",
+        "mystic table candle",
+        "old map candle",
+        "fortune telling table",
+    ],
+    "dreams": [
+        "moon bedroom window",
+        "dream journal",
+        "night window moon",
+        "misty lake night",
+        "sleep notebook",
+    ],
+    "elements": [
+        "fire water earth air",
+        "candle water stone feather",
+        "natural elements still life",
+        "candle and water",
+        "stone feather candle",
+    ],
+    "karma": [
+        "old letters candle",
+        "balance scales",
+        "red thread hands",
+        "vintage clock",
+        "crossroads path",
+    ],
+    "meditation": [
+        "meditation candle",
+        "singing bowl",
+        "incense candle",
+        "calm room candle",
+        "meditation stones",
+    ],
+    "mystic": [
+        "mystic candle",
+        "spiritual practice candle",
+        "incense smoke candle",
+        "crystal ball candle",
+        "moonlight candle",
+    ],
+    "default": [
+        "moon night sky",
+        "candle notebook",
+        "stars sky",
+        "mystic table candle",
+        "crystals candle",
+    ],
+}
+
+CHANNEL_SPACE_IMAGE_CATEGORIES = {"astrology", "zodiac", "moon", "planets"}
+OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
+PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
+UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
+NASA_IMAGE_SEARCH_URL = "https://images-api.nasa.gov/search"
+CHANNEL_IMAGE_USER_AGENT = f"VoiceOfTheStarsBot/1.0 ({MAIN_BOT_URL})"
+
+
+def _channel_stock_image_queries(topic_info: dict, provider: str) -> list[str]:
+    category = topic_info.get("category", "")
+    queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
+    if provider in {"nasa", "wikimedia"}:
+        if category == "moon":
+            queries = ["moon surface", "lunar eclipse", "crescent moon", "full moon", "moon night sky"]
+        elif category == "planets":
+            queries = ["planet space", "solar system", "mercury planet", "mars planet", "saturn planet"]
+        elif category in {"astrology", "zodiac"}:
+            queries = ["constellation", "night sky stars", "astronomy chart", "celestial map", "telescope stars"]
+    random.shuffle(queries)
+    return queries
+
+
+def _is_space_image_topic(topic_info: dict) -> bool:
+    return topic_info.get("category") in CHANNEL_SPACE_IMAGE_CATEGORIES
+
+
+def _channel_stock_provider_order(topic_info: dict) -> list[str]:
+    provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
+    if provider in {"openverse", "pexels", "unsplash", "nasa", "wikimedia"}:
+        return [provider]
+    if provider not in {"stock", "photo", "photos", "auto", "all"}:
+        return []
+
+    providers = ["openverse"]
+    if _is_space_image_topic(topic_info):
+        providers.extend(["nasa", "wikimedia"])
+    providers.extend(["pexels", "unsplash"])
+    return providers
+
+
+def _recent_channel_image_keys() -> set[str]:
+    state = load_channel_state()
+    keys = state.get("recent_image_keys", []) or []
+    return {str(key) for key in keys if str(key).strip()}
+
+
+def _stock_image_key(candidate: dict) -> str:
+    source = str(candidate.get("source") or "unknown").strip().lower()
+    raw_key = (
+        candidate.get("dedupe_key")
+        or candidate.get("id")
+        or candidate.get("page_url")
+        or candidate.get("download_url")
+        or uuid.uuid4().hex
+    )
+    return f"{source}:{str(raw_key).strip()}"
+
+
+def _remember_channel_image(candidate: dict) -> None:
+    key = _stock_image_key(candidate)
+    if not key:
+        return
+    state = load_channel_state()
+    recent = [
+        str(item)
+        for item in state.get("recent_image_keys", []) or []
+        if str(item).strip() and str(item) != key
+    ]
+    recent.append(key)
+    state["recent_image_keys"] = recent[-MAX_RECENT_CHANNEL_IMAGE_KEYS:]
+    save_channel_state(state)
+
+
+def _stock_image_ext(content_type: str, url: str) -> str:
+    content_type = (content_type or "").lower()
+    if "png" in content_type:
+        return ".png"
+    if "webp" in content_type:
+        return ".webp"
+    if "jpeg" in content_type or "jpg" in content_type:
+        return ".jpg"
+    path = url.split("?", 1)[0].lower()
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        if path.endswith(ext):
+            return ".jpg" if ext == ".jpeg" else ext
+    return ".jpg"
+
+
+def _stock_json_headers(provider: str) -> dict:
+    headers = {"Accept": "application/json", "User-Agent": CHANNEL_IMAGE_USER_AGENT}
+    if provider == "pexels" and PEXELS_API_KEY:
+        headers["Authorization"] = PEXELS_API_KEY
+    if provider == "unsplash" and UNSPLASH_ACCESS_KEY:
+        headers["Authorization"] = f"Client-ID {UNSPLASH_ACCESS_KEY}"
+        headers["Accept-Version"] = "v1"
+    return headers
+
+
+async def _get_stock_json(
+    session: aiohttp.ClientSession,
+    provider: str,
+    url: str,
+    params: dict | None = None,
+) -> dict | list | None:
+    try:
+        async with session.get(
+            url,
+            params=params,
+            headers=_stock_json_headers(provider),
+            proxy=PROXY_URL or None,
+        ) as response:
+            if response.status != 200:
+                preview = (await response.text())[:180]
+                print(f"[channel_image] {provider} status {response.status}: {preview}")
+                return None
+            return await response.json(content_type=None)
+    except Exception as e:
+        print(f"[channel_image] {provider} json error: {e}")
+        return None
+
+
+def _dedupe_stock_candidates(candidates: list[dict]) -> list[dict]:
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        key = _stock_image_key(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _openverse_candidates(data: dict, source_label: str) -> list[dict]:
+    candidates = []
+    for item in data.get("results", []) or []:
+        if not isinstance(item, dict):
+            continue
+        extension = str(item.get("extension") or "").lower()
+        if extension and extension not in {"jpg", "jpeg", "png", "webp"}:
+            continue
+        download_url = item.get("url") or item.get("thumbnail")
+        if not download_url:
+            continue
+        image_source = source_label if source_label != "openverse-wikimedia" else "wikimedia"
+        candidates.append({
+            "source": image_source,
+            "id": item.get("id"),
+            "dedupe_key": item.get("id") or download_url,
+            "download_url": download_url,
+            "fallback_urls": [url for url in [item.get("thumbnail")] if url and url != download_url],
+            "page_url": item.get("foreign_landing_url") or item.get("url"),
+            "title": item.get("title") or "",
+            "license": item.get("license") or "",
+        })
+    return candidates
+
+
+async def _query_openverse_images(
+    session: aiohttp.ClientSession,
+    query: str,
+    page: int,
+    source: str | None = None,
+) -> list[dict]:
+    page_size = max(5, min(CHANNEL_STOCK_IMAGE_PAGE_SIZE, 20))
+    params = {
+        "q": query,
+        "page": page,
+        "page_size": page_size,
+        "size": "large",
+        "license": "cc0,pdm",
+        "mature": "false",
+    }
+    if source:
+        params["source"] = source
+    data = await _get_stock_json(session, "openverse", OPENVERSE_IMAGES_URL, params)
+    if not isinstance(data, dict):
+        return []
+    return _openverse_candidates(data, "openverse-wikimedia" if source == "wikimedia" else "openverse")
+
+
+async def _query_pexels_images(session: aiohttp.ClientSession, query: str, page: int) -> list[dict]:
+    if not PEXELS_API_KEY:
+        return []
+    page_size = max(5, min(CHANNEL_STOCK_IMAGE_PAGE_SIZE, 80))
+    params = {"query": query, "page": page, "per_page": page_size, "orientation": "square"}
+    data = await _get_stock_json(session, "pexels", PEXELS_SEARCH_URL, params)
+    if not isinstance(data, dict):
+        return []
+
+    candidates = []
+    for item in data.get("photos", []) or []:
+        src = item.get("src") or {}
+        download_url = src.get("large2x") or src.get("large") or src.get("original")
+        if not download_url:
+            continue
+        fallbacks = [url for url in [src.get("large"), src.get("original"), src.get("medium")] if url and url != download_url]
+        candidates.append({
+            "source": "pexels",
+            "id": item.get("id"),
+            "dedupe_key": item.get("id") or download_url,
+            "download_url": download_url,
+            "fallback_urls": fallbacks,
+            "page_url": item.get("url") or "",
+            "title": item.get("alt") or "",
+        })
+    return candidates
+
+
+async def _query_unsplash_images(session: aiohttp.ClientSession, query: str, page: int) -> list[dict]:
+    if not UNSPLASH_ACCESS_KEY:
+        return []
+    page_size = max(5, min(CHANNEL_STOCK_IMAGE_PAGE_SIZE, 30))
+    params = {
+        "query": query,
+        "page": page,
+        "per_page": page_size,
+        "orientation": "squarish",
+        "content_filter": "high",
+    }
+    data = await _get_stock_json(session, "unsplash", UNSPLASH_SEARCH_URL, params)
+    if not isinstance(data, dict):
+        return []
+
+    candidates = []
+    for item in data.get("results", []) or []:
+        urls = item.get("urls") or {}
+        links = item.get("links") or {}
+        download_url = urls.get("regular") or urls.get("full") or urls.get("small")
+        if not download_url:
+            continue
+        fallbacks = [url for url in [urls.get("full"), urls.get("small"), urls.get("thumb")] if url and url != download_url]
+        candidates.append({
+            "source": "unsplash",
+            "id": item.get("id"),
+            "dedupe_key": item.get("id") or download_url,
+            "download_url": download_url,
+            "fallback_urls": fallbacks,
+            "page_url": links.get("html") or "",
+            "download_location": links.get("download_location") or "",
+            "title": item.get("alt_description") or item.get("description") or "",
+        })
+    return candidates
+
+
+async def _query_nasa_images(session: aiohttp.ClientSession, query: str, page: int) -> list[dict]:
+    page_size = max(5, min(CHANNEL_STOCK_IMAGE_PAGE_SIZE, 100))
+    params = {"q": query, "media_type": "image", "page": page, "page_size": page_size}
+    data = await _get_stock_json(session, "nasa", NASA_IMAGE_SEARCH_URL, params)
+    if not isinstance(data, dict):
+        return []
+
+    candidates = []
+    for item in ((data.get("collection") or {}).get("items") or []):
+        data_items = item.get("data") or []
+        meta = data_items[0] if data_items and isinstance(data_items[0], dict) else {}
+        links = item.get("links") or []
+        image_links = [
+            link.get("href")
+            for link in links
+            if isinstance(link, dict) and link.get("href") and link.get("render") == "image"
+        ]
+        download_url = image_links[0] if image_links else ""
+        if not download_url:
+            continue
+        candidates.append({
+            "source": "nasa",
+            "id": meta.get("nasa_id"),
+            "dedupe_key": meta.get("nasa_id") or download_url,
+            "download_url": download_url,
+            "fallback_urls": image_links[1:],
+            "asset_manifest_url": item.get("href") or "",
+            "page_url": f"https://images.nasa.gov/details/{meta.get('nasa_id')}" if meta.get("nasa_id") else "",
+            "title": meta.get("title") or "",
+        })
+    return candidates
+
+
+async def _query_stock_provider(
+    session: aiohttp.ClientSession,
+    provider: str,
+    topic_info: dict,
+) -> list[dict]:
+    queries = _channel_stock_image_queries(topic_info, provider)
+    candidates = []
+    max_page = max(1, CHANNEL_STOCK_IMAGE_MAX_PAGE)
+    attempts = max(1, min(CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS, len(queries)))
+
+    for query in queries[:attempts]:
+        page = random.randint(1, max_page)
+        if provider == "openverse":
+            batch = await _query_openverse_images(session, query, page)
+        elif provider == "wikimedia":
+            batch = await _query_openverse_images(session, query, page, source="wikimedia")
+        elif provider == "pexels":
+            batch = await _query_pexels_images(session, query, page)
+        elif provider == "unsplash":
+            batch = await _query_unsplash_images(session, query, page)
+        elif provider == "nasa":
+            batch = await _query_nasa_images(session, query, page)
+        else:
+            batch = []
+        candidates.extend(batch)
+        if len(candidates) >= CHANNEL_STOCK_IMAGE_POOL_TARGET:
+            break
+
+    return _dedupe_stock_candidates(candidates)
+
+
+async def _nasa_asset_urls(session: aiohttp.ClientSession, candidate: dict) -> list[str]:
+    manifest_url = candidate.get("asset_manifest_url")
+    if not manifest_url:
+        return []
+    data = await _get_stock_json(session, "nasa", manifest_url)
+    if not isinstance(data, list):
+        return []
+    image_urls = [
+        url for url in data
+        if isinstance(url, str) and url.lower().split("?", 1)[0].endswith((".jpg", ".jpeg", ".png", ".webp"))
+    ]
+    image_urls.sort(key=lambda url: (
+        0 if "~orig" in url.lower() else
+        1 if "~large" in url.lower() else
+        2 if "~medium" in url.lower() else
+        3 if "~small" in url.lower() else
+        4
+    ))
+    return image_urls[:4]
+
+
+async def _notify_unsplash_download(session: aiohttp.ClientSession, candidate: dict) -> None:
+    download_location = candidate.get("download_location")
+    if not download_location or not UNSPLASH_ACCESS_KEY:
+        return
+    try:
+        async with session.get(
+            download_location,
+            headers=_stock_json_headers("unsplash"),
+            proxy=PROXY_URL or None,
+        ) as response:
+            await response.read()
+    except Exception as e:
+        print(f"[channel_image] unsplash download notice error: {e}")
+
+
+async def _download_stock_image_candidate(
+    session: aiohttp.ClientSession,
+    candidate: dict,
+) -> str:
+    os.makedirs(CHANNEL_IMAGE_ASSET_DIR, exist_ok=True)
+    urls = []
+    if candidate.get("source") == "nasa":
+        urls.extend(await _nasa_asset_urls(session, candidate))
+    urls.append(candidate.get("download_url"))
+    urls.extend(candidate.get("fallback_urls") or [])
+    urls = [url for url in urls if isinstance(url, str) and url.strip()]
+
+    if candidate.get("source") == "unsplash":
+        await _notify_unsplash_download(session, candidate)
+
+    headers = {
+        "Accept": "image/jpeg,image/png,image/webp,*/*",
+        "User-Agent": CHANNEL_IMAGE_USER_AGENT,
+    }
+    for url in urls[:5]:
+        try:
+            async with session.get(url, headers=headers, proxy=PROXY_URL or None) as response:
+                content_type = response.headers.get("Content-Type", "").lower()
+                content_length = int(response.headers.get("Content-Length") or 0)
+                if response.status != 200:
+                    continue
+                if content_length and content_length > CHANNEL_STOCK_IMAGE_MAX_BYTES:
+                    continue
+                data = await response.read()
+                if len(data) < CHANNEL_STOCK_IMAGE_MIN_BYTES or len(data) > CHANNEL_STOCK_IMAGE_MAX_BYTES:
+                    continue
+                if content_type and not content_type.startswith("image/"):
+                    continue
+                ext = _stock_image_ext(content_type, url)
+                path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}{ext}")
+                with open(path, "wb") as f:
+                    f.write(data)
+                _cleanup_generated_channel_images()
+                return path
+        except Exception as e:
+            print(f"[channel_image] download error from {candidate.get('source')}: {e}")
+    return ""
+
+
+async def _generate_stock_channel_image_asset(
+    topic_info: dict,
+    author_info: dict | None = None,
+    content_plan: dict | None = None,
+) -> str:
+    providers = _channel_stock_provider_order(topic_info)
+    if not providers:
+        return ""
+
+    used_keys = _recent_channel_image_keys()
+    timeout = aiohttp.ClientTimeout(total=CHANNEL_STOCK_IMAGE_TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as image_session:
+        for provider in providers:
+            pool = await _query_stock_provider(image_session, provider, topic_info)
+            unused_pool = [candidate for candidate in pool if _stock_image_key(candidate) not in used_keys]
+            random.shuffle(unused_pool)
+            for candidate in unused_pool[:8]:
+                image_path = await _download_stock_image_candidate(image_session, candidate)
+                if image_path:
+                    _remember_channel_image(candidate)
+                    print(
+                        f"[channel_image] selected {candidate.get('source')} image "
+                        f"{candidate.get('id') or candidate.get('page_url') or ''}"
+                    )
+                    return image_path
+    return ""
 
 
 def _blend_rgb(a: tuple[int, int, int], b: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
@@ -3676,12 +4204,20 @@ async def generate_channel_image_asset(
     author_info: dict | None = None,
     content_plan: dict | None = None,
 ) -> str:
-    """Генерирует предметную картинку: внешний AI-сервис основной, локальная отрисовка только fallback."""
-    scene = _select_ai_image_scene(topic_info, author_info)
-    prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan)
-    image_path = await _generate_pollinations_channel_image(prompt)
-    if image_path:
-        return image_path
+    """Pick a real stock/open image first; AI/local rendering is only a fallback."""
+    provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
+    if provider not in {"local", "pillow", "off", "none", "pollinations", "ai"}:
+        image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan)
+        if image_path:
+            return image_path
+
+    if provider in {"pollinations", "ai", "all"}:
+        scene = _select_ai_image_scene(topic_info, author_info)
+        prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan)
+        image_path = await _generate_pollinations_channel_image(prompt)
+        if image_path:
+            return image_path
+
     return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
 
 
