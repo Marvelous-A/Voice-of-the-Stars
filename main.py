@@ -2980,6 +2980,30 @@ UNIVERSAL_IMAGE_QUERIES = [
     "astrolabe instrument", "moon phase calendar", "incense notebook", "spiritual tools table",
 ]
 
+CHANNEL_TOPIC_IMAGE_HINTS = [
+    (("наталь", "дом", "аспект", "синастр", "транзит", "прогрес", "соляр"), [
+        "natal chart paper", "astrology chart desk", "birth chart notebook", "ephemeris astrology"
+    ]),
+    (("меркур", "венер", "марс", "юпитер", "сатурн", "планет", "ретроград"), [
+        "planet symbols astrology", "astrology planets chart", "ephemeris book", "astrological clock"
+    ]),
+    (("луна", "лунн", "новолун", "полнолун", "лилит"), [
+        "moon phase calendar", "lunar calendar journal", "moon phases wall art", "candle moon ritual"
+    ]),
+    (("таро", "карта", "аркан", "расклад", "оракул"), [
+        "tarot spread hands", "major arcana cards", "oracle cards close up", "tarot journal"
+    ]),
+    (("числ", "нумер", "11:11", "22:22", "дата"), [
+        "numerology chart notebook", "birth date notebook", "antique clock numbers", "handwriting numbers"
+    ]),
+    (("сон", "сны", "сновид", "вода", "полёт", "полет"), [
+        "dream journal candle", "bedside journal moon", "misty window night", "surreal water reflection"
+    ]),
+    (("кристалл", "камн", "аметист", "кварц", "талисман", "амулет"), [
+        "crystals candles table", "crystal grid", "amethyst tarot cards", "healing stones close up"
+    ]),
+]
+
 # Бэкап-пул на случай если Pexels API недоступен
 UNSPLASH_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800",
@@ -3015,6 +3039,7 @@ RECENT_IMAGE_URLS: list[str] = []
 MAX_RECENT_IMAGES = 60
 RECENT_IMAGE_QUERY_KEYS: list[str] = []
 MAX_RECENT_IMAGE_QUERIES = 24
+MAX_RECENT_PROMOS = 5
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = 8
 RECENT_CONTENT_SIGNATURES: list[str] = []
@@ -3047,17 +3072,18 @@ def save_channel_state(state: dict) -> None:
         print(f"[channel_state] save error: {e}")
 
 
-async def pexels_search(query: str, per_page: int = 30) -> list[str]:
+async def pexels_search(query: str, per_page: int = 30, page: int = 1) -> list[str]:
     """Ищет картинки в Pexels по запросу, возвращает список URL."""
     if not PEXELS_API_KEY:
         return []
-    url = f"https://api.pexels.com/v1/search?query={query}&per_page={per_page}&orientation=square"
+    url = f"https://api.pexels.com/v1/search?query={query}&per_page={per_page}&page={page}&orientation=square"
     headers = {"Authorization": PEXELS_API_KEY}
     try:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as http:
             async with http.get(url, headers=headers) as resp:
                 if resp.status != 200:
+                    print(f"[Pexels] status={resp.status} для '{query}', page={page}")
                     return []
                 data = await resp.json(content_type=None)
         photos = data.get("photos", []) or []
@@ -3265,30 +3291,65 @@ def _select_channel_topic() -> dict:
     return random.choice(fallback_topics or CHANNEL_POST_TOPICS)
 
 
-async def get_channel_image(category: str = "") -> str:
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        key = item.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _topic_image_queries(topic: str) -> list[str]:
+    topic_lower = (topic or "").lower()
+    queries: list[str] = []
+    for keywords, hint_queries in CHANNEL_TOPIC_IMAGE_HINTS:
+        if any(keyword in topic_lower for keyword in keywords):
+            queries.extend(hint_queries)
+    return _dedupe_preserve_order(queries)
+
+
+async def get_channel_image(category: str = "", topic: str = "") -> str:
     """Подбирает тематическую картинку под категорию поста. Избегает недавних URL и однотипных запросов."""
-    queries = list(CHANNEL_IMAGE_QUERIES.get(category, []))
+    priority_queries = _topic_image_queries(topic)
+    category_queries = list(CHANNEL_IMAGE_QUERIES.get(category, []))
     # Добавляем универсальные предметные запросы как подстраховку, без перекоса в один только космос.
     universal_sample = random.sample(UNIVERSAL_IMAGE_QUERIES, k=min(4, len(UNIVERSAL_IMAGE_QUERIES)))
-    queries += universal_sample
-    random.shuffle(queries)
+    random.shuffle(category_queries)
+    random.shuffle(universal_sample)
+    queries = _dedupe_preserve_order(priority_queries + category_queries + universal_sample)
     fresh_queries = [q for q in queries if q.strip().lower() not in RECENT_IMAGE_QUERY_KEYS]
     if fresh_queries:
         queries = fresh_queries
 
-    # Несколько попыток разными запросами: Pexels часто возвращает одни и те же топовые фото.
-    for q in queries[:6]:
-        urls = await pexels_search(q)
+    # Несколько попыток разными запросами и страницами: верх выдачи Pexels часто повторяется неделями.
+    for q in queries[:8]:
+        pages = random.sample(range(1, 7), k=3)
+        if 1 not in pages:
+            pages.append(1)
+        urls = []
+        for page in pages:
+            urls = await pexels_search(q, page=page)
+            if urls:
+                break
         fresh = [u for u in urls if _is_fresh_image(u)]
         if fresh:
             img = random.choice(fresh)
             _remember_image(img, q)
             return img
 
-    # Фоллбек: статический список Unsplash (тоже без повторов)
+    if PEXELS_API_KEY:
+        print(f"[Pexels] не нашёл свежую картинку для category={category}, topic={topic[:80]}")
+        return ""
+
+    # Фоллбек для окружений без Pexels API. Лучше редкая статичная картинка, чем падение постинга.
     fallback = [u for u in UNSPLASH_FALLBACK_IMAGES if _is_fresh_image(u)]
     if not fallback:
-        fallback = UNSPLASH_FALLBACK_IMAGES
+        print("[image_fallback] статический пул картинок исчерпан")
+        return ""
     img = random.choice(fallback)
     _remember_image(img, "unsplash_fallback")
     return img
@@ -3330,6 +3391,46 @@ CHANNEL_BOT_PROMO_INTROS = [
     "Когда тема цепляет не случайно, лучше смотреть её не в общем прогнозе, а через твою ситуацию.\n\n",
     "Если чувствуешь, что это про тебя, можно задать вопрос и получить более точный разбор.\n\n",
     "Общий пост даёт направление, а личный расклад или астрологический разбор помогает увидеть детали.\n\n",
+]
+
+CHANNEL_BOT_PROMO_OFFERS = [
+    {
+        "id": "compact_services",
+        "text": (
+            "<b>Голос Звёзд</b>: ежедневные прогнозы, совместимость и личные консультации тарологов и астрологов.\n"
+            "Первый сеанс после регистрации бесплатный.\n"
+            "Бот: {bot_label}"
+        ),
+    },
+    {
+        "id": "question_route",
+        "text": (
+            "В боте <b>Голос Звёзд</b> можно задать свой вопрос тарологу или астрологу и получить личный разбор.\n"
+            "Консультация специалиста: 150 руб., первый сеанс бесплатный.\n"
+            "Бот: {bot_label}"
+        ),
+    },
+    {
+        "id": "astro_tarot_menu",
+        "text": (
+            "<b>Голос Звёзд</b> внутри Telegram: прогноз по знаку, совместимость, описания знаков, Таро и астрологи.\n"
+            "Бот: {bot_label}"
+        ),
+    },
+    {
+        "id": "short_personal",
+        "text": (
+            "Хочешь посмотреть тему лично? В <b>Голосе Звёзд</b> есть тарологи и астрологи для точного разбора.\n"
+            "Бот: {bot_label}"
+        ),
+    },
+    {
+        "id": "soft_invite",
+        "text": (
+            "<b>Голос Звёзд</b> помогает смотреть глубже: прогнозы, совместимость и личные консультации специалистов.\n"
+            "Бот: {bot_label}"
+        ),
+    },
 ]
 
 CHANNEL_AUTHOR_PUBLIC_VOICES = {
@@ -3374,13 +3475,15 @@ CHANNEL_ASTRO_RUBRICS = [
 ]
 
 CHANNEL_POST_FORMATS = [
-    {"id": "micro_story", "label": "мини-история", "instruction": "начни с маленькой сцены или наблюдения, затем выведи смысл"},
-    {"id": "question_then_answer", "label": "вопрос и ответ", "instruction": "первый абзац вопросительный, второй отвечает мягко и конкретно"},
-    {"id": "warning_then_care", "label": "предупреждение и опора", "instruction": "сначала назови риск, потом дай спокойный способ не провалиться в него"},
-    {"id": "one_detail", "label": "одна деталь", "instruction": "держи весь пост вокруг одной детали, без расползания на несколько тем"},
-    {"id": "inner_dialogue", "label": "внутренний диалог", "instruction": "пиши как короткий разговор с читателем, но без театральности"},
-    {"id": "note_from_practice", "label": "заметка из практики", "instruction": "пиши как наблюдение специалиста из практики, без раскрытия чужих историй"},
-    {"id": "contrast", "label": "контраст", "instruction": "сопоставь внешнее впечатление и то, что на самом деле стоит за темой"},
+    {"id": "micro_story", "label": "мини-история", "instruction": "2 абзаца: сначала маленькая сцена или наблюдение, затем смысл и вопрос. Не начинай с термина"},
+    {"id": "question_then_answer", "label": "вопрос и ответ", "instruction": "начни с короткого вопроса отдельной строкой, потом дай ответ в 3-4 предложениях"},
+    {"id": "warning_then_care", "label": "предупреждение и опора", "instruction": "1 абзац про риск, 1 абзац про мягкий выход. Без морализаторства"},
+    {"id": "one_detail", "label": "одна деталь", "instruction": "один плотный абзац вокруг одной детали. Не перечисляй несколько признаков"},
+    {"id": "inner_dialogue", "label": "внутренний диалог", "instruction": "пиши как короткий разговор с читателем: вопрос, ответ, честное уточнение. Без театральности"},
+    {"id": "note_from_practice", "label": "заметка из практики", "instruction": "начни с 'В практике часто видно...' или близкой по смыслу фразы, но не раскрывай чужие истории"},
+    {"id": "contrast", "label": "контраст", "instruction": "построй текст на противопоставлении: как кажется снаружи и что на самом деле показывает тема"},
+    {"id": "micro_ritual", "label": "микро-ритуал", "instruction": "дай одно короткое действие на сегодня, затем объясни его символический смысл и задай вопрос"},
+    {"id": "myth_break", "label": "разбор мифа", "instruction": "начни с фразы 'Есть миф, что...', затем мягко разверни более точный взгляд"},
 ]
 
 CHANNEL_POST_TONES = [
@@ -3415,27 +3518,39 @@ CHANNEL_POST_QUALITY_RULES = (
 )
 
 
-def _channel_bot_promo_offer() -> str:
+def _select_channel_promo_offer(short: bool = False) -> str:
+    state = load_channel_state()
+    recent = [
+        key for key in state.get("recent_promo_keys", []) or []
+        if isinstance(key, str) and key.strip()
+    ]
+    while len(recent) > MAX_RECENT_PROMOS:
+        recent.pop(0)
+
     bot_label = f"@{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "бот"
-    return (
-        "<b>Голос Звёзд</b> - твой мистический помощник в Telegram\n\n"
-        "Внутри бота:\n"
-        "• ежедневный прогноз по знаку зодиака\n"
-        "• подробное описание твоего знака\n"
-        "• совместимость знаков в любви и общении\n"
-        "• личные консультации тарологов и астрологов\n"
-        "• отзывы пользователей и бонусы за друзей\n\n"
-        "Консультация специалиста - 150 руб., первый сеанс после регистрации бесплатный.\n"
-        f"Бот: {bot_label}"
-    )
+    offers = CHANNEL_BOT_PROMO_OFFERS
+    if short:
+        offers = [offer for offer in offers if offer["id"] in {"short_personal", "soft_invite", "astro_tarot_menu"}]
+    fresh = [offer for offer in offers if offer["id"] not in recent]
+    offer = random.choice(fresh or offers)
+
+    key = offer["id"]
+    if key in recent:
+        recent.remove(key)
+    recent.append(key)
+    while len(recent) > MAX_RECENT_PROMOS:
+        recent.pop(0)
+    state["recent_promo_keys"] = recent
+    save_channel_state(state)
+    return offer["text"].format(bot_label=bot_label)
 
 
 def _channel_bot_promo_offer_short() -> str:
-    bot_label = f"@{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "бот"
-    return (
-        "<b>Голос Звёзд</b>: прогнозы, совместимость и личные консультации тарологов и астрологов.\n"
-        f"Бот: {bot_label}"
-    )
+    return _select_channel_promo_offer(short=True)
+
+
+def _channel_bot_promo_offer() -> str:
+    return _select_channel_promo_offer()
 
 
 def _specialist_gender(specialist: dict) -> str:
@@ -3599,6 +3714,7 @@ def _channel_content_plan_prompt(content_plan: dict | None) -> str:
         f"{_line('Тон', content_plan.get('tone') or {})}\n"
         f"{_line('Заход', content_plan.get('hook') or {})}\n"
         f"{_line('Финал', content_plan.get('ending') or {})}\n"
+        "Форма важнее привычного шаблона: сделай пост визуально и ритмически отличимым от обычной схемы 'наблюдение, совет, вопрос'. "
         "Следуй этому плану, но не называй рубрику, форму или тон в самом посте.\n"
     )
 
@@ -3636,11 +3752,12 @@ async def generate_channel_post(
         f"ОБЩЕЕ ПРАВИЛО КАЧЕСТВА:\n{CHANNEL_POST_QUALITY_RULES}\n\n"
         "СТРОГИЕ ТРЕБОВАНИЯ К ПОСТУ:\n"
         "1. Длина 300-700 символов. Это короткий пост для Telegram-канала, не статья.\n"
-        "2. Пиши от первого лица в роде автора, как живой человек, увлечённый темой. Допустимы обороты 'я однажды заметил/заметила', 'у меня как-то было', 'мне кажется', 'честно'.\n"
+        "2. Пиши голосом выбранного автора, но не застревай в одном шаблоне от первого лица. Можно писать от 'я', можно напрямую к читателю, можно как заметку из практики, если это соответствует форме.\n"
         "3. Начни с детали, наблюдения или вопроса. ЗАПРЕЩЕНЫ начала: 'Итак', 'Давайте', 'В этом посте', 'Знаете ли вы', 'Сегодня поговорим', 'Интересный факт', 'Погрузимся'.\n"
         "4. Язык русский, живой разговорный. Чередуй длину предложений, иногда короткое обрывочное. Лёгкая субъективность приветствуется.\n"
         "5. Добавь 2-4 эмодзи по смыслу (не в каждой строке, а там где к месту).\n"
-        "6. В конце один короткий вопрос читателям.\n\n"
+        "6. В конце один короткий вопрос читателям.\n"
+        "7. Не повторяй типовой ритм прошлых постов: если обычно получается 'символ значит X, совет Y, вопрос Z', выбери другую форму из контент-плана.\n\n"
         "ФОРМАТИРОВАНИЕ (только Telegram HTML-теги, никакого markdown):\n"
         "- Оформление обязательно: в посте должен быть хотя бы один <b>...</b>, один <i>...</i> и один <tg-spoiler>...</tg-spoiler>.\n"
         "- <b>...</b>: выдели 1-3 самых важных слова или термина. Это должны быть ОСМЫСЛЕННЫЕ выделения: название карты Таро, имя планеты, ключевое понятие, суть совета. НЕ выделяй случайные слова, союзы, предлоги.\n"
@@ -3695,7 +3812,7 @@ async def build_channel_post() -> dict | None:
         return None
 
     text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
-    image_url = await get_channel_image(topic_info.get("category", ""))
+    image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
     return {
         "text": text,
         "core_text": core_text,
@@ -3794,7 +3911,7 @@ async def post_to_channel() -> bool:
 
         text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
 
-        image_url = await get_channel_image(topic_info.get("category", ""))
+        image_url = await get_channel_image(topic_info.get("category", ""), topic_info.get("topic", ""))
 
         async def _send(body: str, parse_mode: str | None):
             if image_url:
