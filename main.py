@@ -2963,6 +2963,8 @@ CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS = int(getenv("CHANNEL_STOCK_IMAGE_QUERY_ATTEM
 CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "9500000"))
 CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
 MAX_RECENT_CHANNEL_IMAGE_KEYS = int(getenv("MAX_RECENT_CHANNEL_IMAGE_KEYS", "700"))
+CHANNEL_ALLOW_AI_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_AI_IMAGE_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
 POLLINATIONS_API_KEY = getenv("POLLINATIONS_API_KEY", "")
 POLLINATIONS_IMAGE_MODEL = getenv("POLLINATIONS_IMAGE_MODEL", "flux")
 POLLINATIONS_IMAGE_TIMEOUT = int(getenv("POLLINATIONS_IMAGE_TIMEOUT", "90"))
@@ -3208,8 +3210,8 @@ def _is_space_image_topic(topic_info: dict) -> bool:
     return topic_info.get("category") in CHANNEL_SPACE_IMAGE_CATEGORIES
 
 
-def _channel_stock_provider_order(topic_info: dict) -> list[str]:
-    provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
+def _channel_stock_provider_order(topic_info: dict, provider: str | None = None) -> list[str]:
+    provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
     if provider in {"openverse", "pexels", "unsplash", "nasa", "wikimedia"}:
         return [provider]
     if provider not in {"stock", "photo", "photos", "auto", "all"}:
@@ -3575,8 +3577,9 @@ async def _generate_stock_channel_image_asset(
     topic_info: dict,
     author_info: dict | None = None,
     content_plan: dict | None = None,
+    provider: str | None = None,
 ) -> str:
-    providers = _channel_stock_provider_order(topic_info)
+    providers = _channel_stock_provider_order(topic_info, provider)
     if not providers:
         return ""
 
@@ -4206,19 +4209,24 @@ async def generate_channel_image_asset(
 ) -> str:
     """Pick a real stock/open image first; AI/local rendering is only a fallback."""
     provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
+    if provider in {"pollinations", "ai"} and not CHANNEL_ALLOW_AI_IMAGE_FALLBACK:
+        provider = "stock"
+
     if provider not in {"local", "pillow", "off", "none", "pollinations", "ai"}:
-        image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan)
+        image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan, provider)
         if image_path:
             return image_path
 
-    if provider in {"pollinations", "ai", "all"}:
+    if CHANNEL_ALLOW_AI_IMAGE_FALLBACK and provider in {"pollinations", "ai", "all"}:
         scene = _select_ai_image_scene(topic_info, author_info)
         prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan)
         image_path = await _generate_pollinations_channel_image(prompt)
         if image_path:
             return image_path
 
-    return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
+    if provider in {"local", "pillow"} or CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK:
+        return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
+    return ""
 
 
 def _topic_key(topic_info: dict) -> str:
