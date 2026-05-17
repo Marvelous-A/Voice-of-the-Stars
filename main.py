@@ -3184,7 +3184,17 @@ CHANNEL_STOCK_IMAGE_QUERIES = {
     ],
 }
 
-CHANNEL_SPACE_IMAGE_CATEGORIES = {"astrology", "zodiac", "moon", "planets"}
+CHANNEL_EMERGENCY_STOCK_IMAGE_QUERIES = [
+    "night sky stars",
+    "starry sky",
+    "galaxy stars",
+    "deep space nebula",
+    "moon night sky",
+    "northern lights sky",
+    "abstract night sky",
+    "space background stars",
+]
+CHANNEL_SPACE_IMAGE_CATEGORIES = {"astrology", "zodiac", "moon", "planets", "fallback_space"}
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
@@ -3298,12 +3308,17 @@ def _has_concrete_channel_image_queries(topic_info: dict, post_text: str = "") -
 def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str = "") -> list[str]:
     category = topic_info.get("category", "")
     combined_text = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
-    specific_queries = _specific_channel_image_queries(combined_text)
-    category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
-    random.shuffle(category_queries)
-    queries = specific_queries + category_queries
+    if category == "fallback_space":
+        queries = list(CHANNEL_EMERGENCY_STOCK_IMAGE_QUERIES)
+    else:
+        specific_queries = _specific_channel_image_queries(combined_text)
+        category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
+        random.shuffle(category_queries)
+        queries = specific_queries + category_queries
     if provider in {"nasa", "wikimedia"}:
-        if category == "moon":
+        if category == "fallback_space":
+            queries = ["galaxy", "nebula", "star field", "night sky stars", "moon"]
+        elif category == "moon":
             queries = ["moon surface", "lunar eclipse", "crescent moon", "full moon", "moon night sky"]
         elif category == "planets":
             queries = ["planet space", "solar system", "mercury planet", "mars planet", "saturn planet"]
@@ -3758,6 +3773,21 @@ async def _generate_stock_channel_image_asset(
                     )
                     return image_path
     return ""
+
+
+async def _generate_emergency_stock_channel_image_asset() -> str:
+    topic_info = {
+        "category": "fallback_space",
+        "topic": " ".join(CHANNEL_EMERGENCY_STOCK_IMAGE_QUERIES),
+    }
+    image_path = await _generate_stock_channel_image_asset(
+        topic_info,
+        provider="stock",
+        post_text=topic_info["topic"],
+    )
+    if image_path:
+        print("[channel_image] selected emergency stock fallback image")
+    return image_path
 
 
 def _blend_rgb(a: tuple[int, int, int], b: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
@@ -4370,6 +4400,8 @@ async def generate_channel_image_asset(
     provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
     if provider in {"pollinations", "ai"} and not CHANNEL_ALLOW_AI_IMAGE_FALLBACK:
         provider = "stock"
+    if provider in {"local", "pillow"} and not CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK:
+        provider = "stock"
 
     if provider not in {"local", "pillow", "off", "none", "pollinations", "ai"}:
         image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan, provider, post_text)
@@ -4382,6 +4414,10 @@ async def generate_channel_image_asset(
         image_path = await _generate_pollinations_channel_image(prompt)
         if image_path:
             return image_path
+
+    image_path = await _generate_emergency_stock_channel_image_asset()
+    if image_path:
+        return image_path
 
     if provider in {"local", "pillow"} or CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK:
         return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
