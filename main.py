@@ -3192,9 +3192,116 @@ NASA_IMAGE_SEARCH_URL = "https://images-api.nasa.gov/search"
 CHANNEL_IMAGE_USER_AGENT = f"VoiceOfTheStarsBot/1.0 ({MAIN_BOT_URL})"
 
 
-def _channel_stock_image_queries(topic_info: dict, provider: str) -> list[str]:
+def _plain_channel_text_for_image(text: str) -> str:
+    text = re.sub(r"<br\s*/?>", " ", text or "", flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _specific_channel_image_queries(text: str) -> list[str]:
+    rules = [
+        (
+            ("комод", "ящик", "чемодан", "предк", "семейн", "фотограф", "письм", "дед"),
+            [
+                "old family photo album",
+                "old family photographs",
+                "vintage family photo album",
+                "vintage family photographs",
+                "antique suitcase family photos",
+                "old wooden dresser drawer",
+            ],
+        ),
+        (
+            ("дизайн человека", "генератор", "отклик", "стратег", "стратегия"),
+            [
+                "person at crossroads",
+                "lighthouse in fog",
+                "person looking out window",
+                "person walking path fog",
+                "compass in hand",
+            ],
+        ),
+        (
+            ("кристалл", "кварц", "изумруд", "аметист", "минерал"),
+            [
+                "quartz crystal close up",
+                "emerald crystal close up",
+                "amethyst quartz crystals",
+                "crystal cluster on table",
+                "person holding crystal",
+            ],
+        ),
+        (
+            ("сон", "сновид", "подушка", "кровать"),
+            [
+                "dream journal bedside table",
+                "moonlight bedroom window",
+                "notebook on bedside table",
+                "night window moon",
+            ],
+        ),
+        (
+            ("медитац", "дыхани", "мантр", "рейки", "настройк"),
+            [
+                "meditation candle",
+                "singing bowl candle",
+                "incense smoke candle",
+                "quiet meditation room",
+            ],
+        ),
+        (
+            ("таро", "карта дня", "расклад", "колода", "аркан"),
+            [
+                "tarot cards on table",
+                "tarot deck candle",
+                "three tarot cards spread",
+                "fortune telling cards candle",
+            ],
+        ),
+        (
+            ("луна", "лунн", "новолуние", "полнолуние", "лилит"),
+            [
+                "crescent moon night sky",
+                "full moon night sky",
+                "moon phases",
+                "moonlight window",
+            ],
+        ),
+        (
+            ("наталь", "зодиак", "созвезд", "планет", "меркур", "сатурн"),
+            [
+                "astrology chart desk",
+                "constellation map",
+                "telescope night sky",
+                "star chart notebook",
+            ],
+        ),
+    ]
+    queries = []
+    for needles, candidates in rules:
+        if any(needle in text for needle in needles):
+            queries.extend(candidates)
+    seen = set()
+    unique = []
+    for query in queries:
+        if query not in seen:
+            seen.add(query)
+            unique.append(query)
+    return unique
+
+
+def _has_concrete_channel_image_queries(topic_info: dict, post_text: str = "") -> bool:
+    combined = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
+    return bool(_specific_channel_image_queries(combined))
+
+
+def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str = "") -> list[str]:
     category = topic_info.get("category", "")
-    queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
+    combined_text = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
+    specific_queries = _specific_channel_image_queries(combined_text)
+    category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
+    random.shuffle(category_queries)
+    queries = specific_queries + category_queries
     if provider in {"nasa", "wikimedia"}:
         if category == "moon":
             queries = ["moon surface", "lunar eclipse", "crescent moon", "full moon", "moon night sky"]
@@ -3202,7 +3309,6 @@ def _channel_stock_image_queries(topic_info: dict, provider: str) -> list[str]:
             queries = ["planet space", "solar system", "mercury planet", "mars planet", "saturn planet"]
         elif category in {"astrology", "zodiac"}:
             queries = ["constellation", "night sky stars", "astronomy chart", "celestial map", "telescope stars"]
-    random.shuffle(queries)
     return queries
 
 
@@ -3210,17 +3316,24 @@ def _is_space_image_topic(topic_info: dict) -> bool:
     return topic_info.get("category") in CHANNEL_SPACE_IMAGE_CATEGORIES
 
 
-def _channel_stock_provider_order(topic_info: dict, provider: str | None = None) -> list[str]:
+def _channel_stock_provider_order(topic_info: dict, provider: str | None = None, post_text: str = "") -> list[str]:
     provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
     if provider in {"openverse", "pexels", "unsplash", "nasa", "wikimedia"}:
         return [provider]
     if provider not in {"stock", "photo", "photos", "auto", "all"}:
         return []
 
-    providers = ["openverse"]
+    providers = []
+    if _has_concrete_channel_image_queries(topic_info, post_text):
+        if PEXELS_API_KEY:
+            providers.append("pexels")
+        if UNSPLASH_ACCESS_KEY:
+            providers.append("unsplash")
+    providers.append("openverse")
     if _is_space_image_topic(topic_info):
         providers.extend(["nasa", "wikimedia"])
     providers.extend(["pexels", "unsplash"])
+    providers = [provider for idx, provider in enumerate(providers) if provider not in providers[:idx]]
     return providers
 
 
@@ -3315,6 +3428,43 @@ def _dedupe_stock_candidates(candidates: list[dict]) -> list[dict]:
         seen.add(key)
         unique.append(candidate)
     return unique
+
+
+def _stock_candidate_relevance_score(candidate: dict) -> int:
+    query = str(candidate.get("query") or "").lower()
+    title_haystack = str(candidate.get("title") or "").lower()
+    full_haystack = " ".join(
+        str(candidate.get(field) or "").lower()
+        for field in ("title", "page_url", "download_url")
+    )
+    score = 30 - int(candidate.get("query_rank", 99)) * 5
+    source = str(candidate.get("source") or "").lower()
+    if source in {"pexels", "unsplash"}:
+        score += 3
+
+    common_bad = (
+        "quote", "typography", "words", "text", "poster", "sign", "book cover",
+        "stamps", "coins", "postcard", "postcards", "love is pain",
+    )
+    score -= sum(10 for token in common_bad if token in full_haystack)
+
+    if any(token in query for token in ("family", "photo", "album", "suitcase", "dresser", "drawer")):
+        good = ("family", "photo", "photos", "album", "scrapbook", "vintage", "elderly", "portrait", "drawer", "dresser", "suitcase")
+        bad = ("stamps", "coins", "postcard", "postcards", "dog", "books", "tableware", "christmas", "love", "pain")
+        score += sum(5 for token in good if token in title_haystack)
+        score -= sum(12 for token in bad if token in full_haystack)
+
+    if any(token in query for token in ("crystal", "quartz", "emerald", "amethyst")):
+        good = ("crystal", "quartz", "emerald", "amethyst", "gem", "stone", "mineral")
+        score += sum(5 for token in good if token in title_haystack)
+
+    if any(token in query for token in ("crossroads", "lighthouse", "fog", "window", "path", "compass")):
+        good = ("crossroads", "lighthouse", "fog", "window", "path", "person", "walking", "compass")
+        bad = ("book", "page", "quote", "text", "typography", "poster", "sign")
+        score += sum(5 for token in good if token in title_haystack)
+        score -= sum(10 for token in bad if token in full_haystack)
+
+    return score
 
 
 def _openverse_candidates(data: dict, source_label: str) -> list[dict]:
@@ -3466,14 +3616,18 @@ async def _query_stock_provider(
     session: aiohttp.ClientSession,
     provider: str,
     topic_info: dict,
+    post_text: str = "",
 ) -> list[dict]:
-    queries = _channel_stock_image_queries(topic_info, provider)
+    queries = _channel_stock_image_queries(topic_info, provider, post_text)
+    combined_text = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
+    specific_count = len(_specific_channel_image_queries(combined_text))
     candidates = []
     max_page = max(1, CHANNEL_STOCK_IMAGE_MAX_PAGE)
     attempts = max(1, min(CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS, len(queries)))
 
-    for query in queries[:attempts]:
-        page = random.randint(1, max_page)
+    for rank, query in enumerate(queries[:attempts]):
+        page_limit = min(max_page, 4) if rank >= specific_count else 1
+        page = random.randint(1, page_limit)
         if provider == "openverse":
             batch = await _query_openverse_images(session, query, page)
         elif provider == "wikimedia":
@@ -3486,6 +3640,9 @@ async def _query_stock_provider(
             batch = await _query_nasa_images(session, query, page)
         else:
             batch = []
+        for candidate in batch:
+            candidate["query"] = query
+            candidate["query_rank"] = rank
         candidates.extend(batch)
         if len(candidates) >= CHANNEL_STOCK_IMAGE_POOL_TARGET:
             break
@@ -3578,8 +3735,9 @@ async def _generate_stock_channel_image_asset(
     author_info: dict | None = None,
     content_plan: dict | None = None,
     provider: str | None = None,
+    post_text: str = "",
 ) -> str:
-    providers = _channel_stock_provider_order(topic_info, provider)
+    providers = _channel_stock_provider_order(topic_info, provider, post_text)
     if not providers:
         return ""
 
@@ -3587,9 +3745,9 @@ async def _generate_stock_channel_image_asset(
     timeout = aiohttp.ClientTimeout(total=CHANNEL_STOCK_IMAGE_TIMEOUT)
     async with aiohttp.ClientSession(timeout=timeout) as image_session:
         for provider in providers:
-            pool = await _query_stock_provider(image_session, provider, topic_info)
+            pool = await _query_stock_provider(image_session, provider, topic_info, post_text)
             unused_pool = [candidate for candidate in pool if _stock_image_key(candidate) not in used_keys]
-            random.shuffle(unused_pool)
+            unused_pool.sort(key=lambda candidate: (-_stock_candidate_relevance_score(candidate), random.random()))
             for candidate in unused_pool[:8]:
                 image_path = await _download_stock_image_candidate(image_session, candidate)
                 if image_path:
@@ -4206,6 +4364,7 @@ async def generate_channel_image_asset(
     topic_info: dict,
     author_info: dict | None = None,
     content_plan: dict | None = None,
+    post_text: str = "",
 ) -> str:
     """Pick a real stock/open image first; AI/local rendering is only a fallback."""
     provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
@@ -4213,7 +4372,7 @@ async def generate_channel_image_asset(
         provider = "stock"
 
     if provider not in {"local", "pillow", "off", "none", "pollinations", "ai"}:
-        image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan, provider)
+        image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan, provider, post_text)
         if image_path:
             return image_path
 
@@ -4852,7 +5011,7 @@ async def build_channel_post() -> dict | None:
         return None
 
     text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
-    image_path = await generate_channel_image_asset(topic_info, author_info, content_plan)
+    image_path = await generate_channel_image_asset(topic_info, author_info, content_plan, core_text)
     return {
         "text": text,
         "core_text": core_text,
@@ -4938,7 +5097,7 @@ async def post_to_channel() -> bool:
 
         text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
 
-        image_path = await generate_channel_image_asset(topic_info, author_info, content_plan)
+        image_path = await generate_channel_image_asset(topic_info, author_info, content_plan, core_text)
 
         async def _send(body: str, parse_mode: str | None):
             if image_path and os.path.exists(image_path):
