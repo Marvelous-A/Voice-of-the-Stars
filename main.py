@@ -970,6 +970,18 @@ def get_ckassa_payment_keyboard(pay_url: str, amount_text: str = ""):
     ])
 
 
+DISCOUNT_OLD_PRICE_RUB = 310
+
+
+def _strike_text(text: str) -> str:
+    return "".join(f"{char}\u0336" if not char.isspace() else char for char in text)
+
+
+def _ckassa_sale_amount_text() -> str:
+    old_price = _strike_text(f"{DISCOUNT_OLD_PRICE_RUB} рублей")
+    return f"{old_price} {ckassa_client.config.amount_rub_text}"
+
+
 def get_session_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -1197,7 +1209,7 @@ def get_effective_session_limit(user_id: str) -> int:
     return get_daily_free_limit(user_id) + get_bonus_sessions(user_id) + get_paid_sessions(user_id)
 
 def _ckassa_amount_button_text() -> str:
-    return f"💳 {ckassa_client.config.amount_rub_text}"
+    return f"💳 {_ckassa_sale_amount_text()}"
 
 def _needs_ckassa_payment(user_id: str | int) -> bool:
     try:
@@ -1237,7 +1249,7 @@ async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = Fal
         order.get("specialist_id", ""),
     )
     specialist_line = f"\nСпециалист: {specialist_name}" if specialist_name else ""
-    amount_rub = ckassa_client.config.amount_rub_text
+    amount_rub = _ckassa_sale_amount_text()
     await message.answer(
         f"💳 {prefix}\n\n"
         f"Сумма: {amount_rub}{specialist_line}\n"
@@ -4669,7 +4681,7 @@ CHANNEL_BOT_PROMO_OFFERS = [
         "id": "question_route",
         "text": (
             "В боте <b>Голос Звёзд</b> можно задать свой вопрос тарологу или астрологу и получить личный разбор.\n"
-            "Консультация специалиста: 150 руб., первый сеанс бесплатный.\n"
+            "Консультация специалиста: {sale_price_label}, первый сеанс бесплатный.\n"
             "Бот: {bot_label}"
         ),
     },
@@ -4814,7 +4826,10 @@ def _select_channel_promo_offer(short: bool = False) -> str:
         recent.pop(0)
     state["recent_promo_keys"] = recent
     save_channel_state(state)
-    return offer["text"].format(bot_label=bot_label)
+    return offer["text"].format(
+        bot_label=bot_label,
+        sale_price_label=_ckassa_sale_amount_text(),
+    )
 
 
 def _channel_bot_promo_offer_short() -> str:
