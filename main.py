@@ -4669,6 +4669,104 @@ def clean_markdown(text: str) -> str:
 
 
 # Разрешённые теги Telegram HTML (которые мы хотим видеть в постах)
+CHANNEL_AI_META_BAN_PROMPT = (
+    "\u041d\u0435 \u0434\u043e\u0431\u0430\u0432\u043b\u044f\u0439 "
+    "\u0441\u043b\u0443\u0436\u0435\u0431\u043d\u044b\u0435 "
+    "\u0444\u0440\u0430\u0437\u044b \u043e \u0442\u043e\u043c, "
+    "\u0447\u0442\u043e \u0442\u0435\u043a\u0441\u0442 "
+    "\u0441\u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u043d "
+    "\u0438\u043b\u0438 \u0433\u043e\u0442\u043e\u0432: "
+    "'\u0412\u043e\u0442, \u0447\u0442\u043e \u0443 \u043c\u0435\u043d\u044f "
+    "\u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c:', "
+    "'\u0412\u043e\u0442, \u0447\u0442\u043e \u0443 \u043c\u043d\u0435\u044f "
+    "\u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c:', "
+    "'\u0413\u043e\u0442\u043e\u0432\u044b\u0439 \u043f\u043e\u0441\u0442:', "
+    "'\u0412\u0430\u0440\u0438\u0430\u043d\u0442 \u043f\u043e\u0441\u0442\u0430:'. "
+    "\u0421\u0440\u0430\u0437\u0443 \u043d\u0430\u0447\u0438\u043d\u0430\u0439 "
+    "\u0441 \u0441\u0430\u043c\u043e\u0433\u043e \u043f\u043e\u0441\u0442\u0430."
+)
+
+_CHANNEL_AI_META_PHRASES = (
+    "\u0432\u043e\u0442, \u0447\u0442\u043e \u0443 \u043c\u0435\u043d\u044f \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u0432\u043e\u0442 \u0447\u0442\u043e \u0443 \u043c\u0435\u043d\u044f \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u0432\u043e\u0442, \u0447\u0442\u043e \u0443 \u043c\u043d\u0435\u044f \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u0432\u043e\u0442 \u0447\u0442\u043e \u0443 \u043c\u043d\u0435\u044f \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u0432\u043e\u0442, \u0447\u0442\u043e \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u0432\u043e\u0442 \u0447\u0442\u043e \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u0432\u043e\u0442 \u043f\u043e\u0441\u0442",
+    "\u0432\u043e\u0442 \u0433\u043e\u0442\u043e\u0432\u044b\u0439 \u043f\u043e\u0441\u0442",
+    "\u0432\u043e\u0442 \u0432\u0430\u0440\u0438\u0430\u043d\u0442 \u043f\u043e\u0441\u0442\u0430",
+    "\u0432\u043e\u0442 \u0442\u0435\u043a\u0441\u0442 \u043f\u043e\u0441\u0442\u0430",
+    "\u0433\u043e\u0442\u043e\u0432\u044b\u0439 \u043f\u043e\u0441\u0442",
+    "\u0432\u0430\u0440\u0438\u0430\u043d\u0442 \u043f\u043e\u0441\u0442\u0430",
+    "\u0442\u0435\u043a\u0441\u0442 \u043f\u043e\u0441\u0442\u0430",
+    "\u043f\u043e\u0441\u0442 \u0434\u043b\u044f \u043a\u0430\u043d\u0430\u043b\u0430",
+    "\u043f\u043e\u0441\u0442 \u0433\u043e\u0442\u043e\u0432",
+    "\u043f\u043e\u043b\u0443\u0447\u0438\u043b\u0441\u044f \u0442\u0430\u043a\u043e\u0439 \u043f\u043e\u0441\u0442",
+    "\u043f\u043e\u043b\u0443\u0447\u0438\u043b\u0441\u044f \u0432\u043e\u0442 \u0442\u0430\u043a\u043e\u0439 \u043f\u043e\u0441\u0442",
+    "\u043a\u043e\u043d\u0435\u0447\u043d\u043e, \u0432\u043e\u0442 \u0447\u0442\u043e \u0443 \u043c\u0435\u043d\u044f \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u043a\u043e\u043d\u0435\u0447\u043d\u043e \u0432\u043e\u0442 \u0447\u0442\u043e \u0443 \u043c\u0435\u043d\u044f \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c",
+    "\u043a\u043e\u043d\u0435\u0447\u043d\u043e, \u0432\u043e\u0442 \u043f\u043e\u0441\u0442",
+    "\u043a\u043e\u043d\u0435\u0447\u043d\u043e \u0432\u043e\u0442 \u043f\u043e\u0441\u0442",
+    "\u043a\u043e\u043d\u0435\u0447\u043d\u043e, \u0433\u043e\u0442\u043e\u0432\u044b\u0439 \u043f\u043e\u0441\u0442",
+    "\u043a\u043e\u043d\u0435\u0447\u043d\u043e \u0433\u043e\u0442\u043e\u0432\u044b\u0439 \u043f\u043e\u0441\u0442",
+)
+_CHANNEL_HTML_OPEN_TAG_RE = r"<[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>"
+_CHANNEL_HTML_CLOSE_TAG_RE = r"</[a-zA-Z][a-zA-Z0-9\-]*\s*>"
+_CHANNEL_HTML_TAG_RE = r"(?:" + _CHANNEL_HTML_OPEN_TAG_RE + r"|" + _CHANNEL_HTML_CLOSE_TAG_RE + r")"
+_CHANNEL_AI_META_PATTERN = "|".join(re.escape(phrase) for phrase in _CHANNEL_AI_META_PHRASES)
+_CHANNEL_AI_META_PREFIX_RE = re.compile(
+    r"^\s*(?:" + _CHANNEL_HTML_TAG_RE + r"\s*)*(?:"
+    + _CHANNEL_AI_META_PATTERN
+    + r")[^\w<]*(?:" + _CHANNEL_HTML_CLOSE_TAG_RE + r"\s*)*",
+    flags=re.IGNORECASE,
+)
+_CHANNEL_AI_META_SUFFIX_RE = re.compile(
+    r"(?:" + _CHANNEL_HTML_OPEN_TAG_RE + r"\s*)*(?:"
+    + _CHANNEL_AI_META_PATTERN
+    + r")[^\w<]*(?:" + _CHANNEL_HTML_CLOSE_TAG_RE + r"\s*)*$",
+    flags=re.IGNORECASE,
+)
+
+
+def strip_channel_ai_meta_wrappers(text: str) -> str:
+    """Remove model wrapper phrases from the start or end of a channel post."""
+    text = (text or "").strip()
+    for _ in range(4):
+        if not text:
+            return ""
+        lines = text.splitlines()
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if not lines:
+            return ""
+
+        first = lines[0]
+        cleaned_first = _CHANNEL_AI_META_PREFIX_RE.sub("", first, count=1).lstrip()
+        if cleaned_first != first:
+            if cleaned_first:
+                lines[0] = cleaned_first
+            else:
+                lines.pop(0)
+            text = "\n".join(lines).strip()
+            continue
+
+        last = lines[-1]
+        cleaned_last = _CHANNEL_AI_META_SUFFIX_RE.sub("", last, count=1).rstrip()
+        if cleaned_last != last:
+            if cleaned_last:
+                lines[-1] = cleaned_last
+            else:
+                lines.pop()
+            text = "\n".join(lines).strip()
+            continue
+
+        break
+    return text
+
+
 _ALLOWED_HTML_TAGS = {"a", "b", "i", "u", "s", "tg-spoiler"}
 TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 CHANNEL_TAROT_AUTHOR_CATEGORIES = {"tarot", "divination", "numerology"}
@@ -5082,10 +5180,14 @@ async def generate_channel_post(
         "- Симметричные идеальные тройки ('это, это и это'). Пиши неровно, как живой человек, а не как аналитический отчёт.\n"
         "- Приветствия в начале поста.\n"
     )
+    prompt = f"{prompt}\n{CHANNEL_AI_META_BAN_PROMPT}\n"
     text = await ask_ai(prompt, max_tokens=600)
     if not text:
         return ""
     text = clean_markdown(text)
+    text = strip_channel_ai_meta_wrappers(text)
+    text = sanitize_html_for_telegram(text)
+    text = strip_channel_ai_meta_wrappers(text)
     text = sanitize_html_for_telegram(text)
     return text
 
