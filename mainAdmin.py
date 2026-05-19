@@ -24,6 +24,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile,
                            InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
+from ckassa_payments import format_kopeks_amount
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -190,6 +191,14 @@ def load_consultation_requests() -> list:
         return []
 
 
+def load_earnings() -> dict:
+    try:
+        return main_app.ckassa_store.get_earnings()
+    except Exception as e:
+        print(f"[load_earnings] {e}")
+        return {"total_kopeks": 0, "orders_count": 0}
+
+
 def save_reviews(reviews: list) -> None:
     with open(REVIEWS_FILE, "w", encoding="utf-8") as f:
         json.dump(reviews, f, ensure_ascii=False, indent=2)
@@ -328,6 +337,7 @@ def render_pending_review(review_id: str, review: dict) -> str:
 # ====== РЕНДЕРЫ ======
 def render_stats() -> str:
     users = load_users()
+    earnings = load_earnings()
     now = datetime.now()
     today = now.date()
     week_ago = now - timedelta(days=7)
@@ -373,6 +383,8 @@ def render_stats() -> str:
     users_with_referrals = sum(1 for u in users.values() if u.get("referrals_total", 0) > 0)
     total_bonus_remaining = sum(u.get("bonus_sessions", 0) for u in users.values())
     came_by_referral = sum(1 for u in users.values() if u.get("referred_by"))
+    earned_total = format_kopeks_amount(earnings.get("total_kopeks"))
+    earned_count = int(earnings.get("orders_count", 0) or 0)
 
     return (
         f"📊 *Статистика бота «Голос Звёзд»*\n"
@@ -391,6 +403,9 @@ def render_stats() -> str:
         f"  🎴 Консультации таролога: *{totals['tarot']}*\n"
         f"  ⭐ Консультации астролога: *{totals['astro']}*\n"
         f"  ✍️ Отправили отзыв: *{totals['review']}*\n\n"
+        f"💰 *Заработанные деньги*\n"
+        f"  Всего: *{earned_total}*\n"
+        f"  Оплаченных чеков: *{earned_count}*\n\n"
         f"🎁 *Реферальная система*\n"
         f"  Всего приглашений: *{total_referrals}*\n"
         f"  Пришли по реферальной ссылке: *{came_by_referral}*\n"
@@ -949,11 +964,15 @@ async def handle_find_prompt(message: Message):
 async def handle_status(message: Message):
     _reset_input_state(message.from_user.id)
     users = load_users()
+    earnings = load_earnings()
+    earned_total = format_kopeks_amount(earnings.get("total_kopeks"))
+    earned_count = int(earnings.get("orders_count", 0) or 0)
     pending = len(load_pending_reviews())
     requests_total = len(load_consultation_requests())
     await message.answer(
         f"✅ Админ-бот работает.\n"
         f"Пользователей в базе: *{len(users)}*\n"
+        f"Заработано: *{earned_total}* ({earned_count} чеков)\n"
         f"Запросов к специалистам: *{requests_total}*\n"
         f"Отзывов на модерации: *{pending}*\n"
         f"Время: {datetime.now().strftime('%d.%m.%Y %H:%M')}",

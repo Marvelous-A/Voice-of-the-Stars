@@ -21,6 +21,7 @@ from ckassa_payments import (
     CkassaPaymentError,
     CkassaPaymentStore,
     extract_payment_order_id,
+    format_kopeks_amount,
     make_order_id,
     payment_identity,
 )
@@ -1313,8 +1314,9 @@ async def credit_paid_order(order: dict, notify_user: bool = True) -> bool:
     user_id = str(order.get("user_id", ""))
     if not user_id:
         return False
+    order_id = order["order_id"]
     paid_left = add_paid_session_credit(user_id, 1)
-    ckassa_store.mark_order_credited(order["order_id"])
+    ckassa_store.mark_order_credited(order_id)
     if notify_user:
         text = (
             "✅ Оплата получена. Я начислил один платный сеанс.\n\n"
@@ -1332,9 +1334,27 @@ async def credit_paid_order(order: dict, notify_user: bool = True) -> bool:
             )
         except Exception as e:
             print(f"[Ckassa] notify paid user {user_id}: {e}")
+
+    amount_kopeks = order.get("amount_kopeks", 0)
+    earned_added, earnings = ckassa_store.add_earned_amount(order_id, amount_kopeks)
+    earned_total = format_kopeks_amount(earnings.get("total_kopeks", 0))
+    earned_count = int(earnings.get("orders_count", 0) or 0)
+    amount_text = format_kopeks_amount(amount_kopeks)
+    if earned_added:
+        earnings_text = (
+            f"\n\n💰 Счётчик заработка: +{amount_text}"
+            f"\n📈 Всего заработано: {earned_total}"
+            f"\n🧾 Оплаченных чеков: {earned_count}"
+        )
+    else:
+        earnings_text = f"\n\n💰 Всего заработано: {earned_total}"
+
     await notify_admin(
-        f"[Ckassa] Paid consultation credited. user_id={user_id}, "
-        f"order_id={order.get('order_id')}, regPayNum={order.get('reg_pay_num', '')}"
+        f"💳 Оплаченная консультация засчитана\n"
+        f"user_id={user_id}\n"
+        f"order_id={order_id}\n"
+        f"regPayNum={order.get('reg_pay_num', '')}"
+        f"{earnings_text}"
     )
     return True
 
