@@ -3305,6 +3305,197 @@ CHANNEL_SCHEDULE_STYLE_BY_ID = {
         "что повторялось, что стало яснее, с чем можно зайти в новую неделю."
     ),
 }
+CHANNEL_SCHEDULE_VISUAL_BY_ID = {
+    "day1_morning_card": {
+        "size": "420-620 символов, ощущение короткой утренней карточки",
+        "paragraphs": "3 абзаца: карта, смысл, вопрос",
+        "formatting": "1 жирный акцент на названии карты, курсив не обязателен, блюр не нужен",
+        "emoji": "1 спокойный утренний символ, например карта, солнце или точка света",
+        "layout": "много воздуха, без списков, без длинных строк",
+        "image_mood": "утренний стол таролога, мягкий свет, одна карта как главный объект",
+        "image_queries": ["tarot card morning light", "single tarot card candle", "tarot deck sunrise table"],
+    },
+    "day1_day_relationship_situation": {
+        "size": "650-850 символов, как живой разбор короткой сцены",
+        "paragraphs": "4 коротких абзаца: сцена, первая тревожная мысль, карта, проверочный вопрос",
+        "formatting": "жирным выделить карту или ключевой вывод, курсивом можно дать внутреннюю фразу, блюр не нужен",
+        "emoji": "0-1 эмодзи, настроение сдержанное, без романтической перегрузки",
+        "layout": "ритм переписки: короткая первая строка, потом спокойное объяснение",
+        "image_mood": "телефон с сообщением без читаемого текста, вечерний стол, чувство паузы",
+        "image_queries": ["smartphone on table evening", "phone message blurred screen", "woman holding phone window"],
+    },
+    "day1_evening_pick_card": {
+        "size": "300-480 символов, очень легкий интерактив",
+        "paragraphs": "вступление, три отдельные строки 1/2/3, короткий финал",
+        "formatting": "жирный заголовок, без курсива, блюр не использовать",
+        "emoji": "1 загадочный вечерний эмодзи, настроение выбора",
+        "layout": "варианты 1, 2, 3 должны быть визуально видны с первого взгляда",
+        "image_mood": "три карты на столе, темный фон, свеча, без текста и цифр на картинке",
+        "image_queries": ["three tarot cards candle", "three tarot cards spread", "tarot cards dark table"],
+    },
+    "day2_morning_astro_mood": {
+        "size": "450-700 символов, как прогноз погоды, но астрологический",
+        "paragraphs": "3 абзаца: фон, как прожить, вопрос",
+        "formatting": "жирным планету или Луну, курсивом одну атмосферную строку, блюр не нужен",
+        "emoji": "1 небесный эмодзи, настроение ясное и воздушное",
+        "layout": "плавные строки, без резких продажных блоков",
+        "image_mood": "астрологический стол, карта неба, утренний или дневной свет",
+        "image_queries": ["astrology chart morning desk", "star chart notebook light", "astrologer desk sunlight"],
+    },
+    "day2_day_myth_or_sign": {
+        "size": "600-820 символов, мини-колонка с поворотом мысли",
+        "paragraphs": "4 абзаца: миф, почему он цепляет, трезвый взгляд, вопрос",
+        "formatting": "жирным 'миф' или главный термин, курсив минимально, блюр можно один раз для неожиданного вывода",
+        "emoji": "0-1 эмодзи, настроение умное и чуть ироничное",
+        "layout": "контрастные абзацы, не делать список",
+        "image_mood": "часы, городская деталь, случайный знак без читаемых слов",
+        "image_queries": ["clock night table", "street reflection night", "coincidence city lights"],
+    },
+    "day2_evening_card_decode": {
+        "size": "650-900 символов, расшифровка выбора",
+        "paragraphs": "три компактных блока 1/2/3, у каждого 2-3 предложения",
+        "formatting": "жирным названия карт, курсив по желанию, блюр не нужен",
+        "emoji": "до 2 спокойных эмодзи на весь пост, не в каждом пункте",
+        "layout": "ясные блоки выбора, чтобы читатель быстро нашел свой номер",
+        "image_mood": "три карты раскрыты на столе, свеча или ткань, фокус на раскладе",
+        "image_queries": ["three tarot cards revealed", "tarot card spread candle", "tarot reading three cards"],
+    },
+    "day3_morning_dream_symbol": {
+        "size": "550-800 символов, медленный дневник сна",
+        "paragraphs": "3-4 абзаца с большим воздухом",
+        "formatting": "курсив для первой атмосферной строки, жирный для символа сна, блюр можно не использовать",
+        "emoji": "0-1 лунный или сонный эмодзи, настроение тихое",
+        "layout": "мягкое чтение, без учебниковых определений",
+        "image_mood": "прикроватный стол, сонник не нужен, дневник сна и лунный свет",
+        "image_queries": ["dream journal bedside table", "moonlight bedroom window", "notebook bedside moonlight"],
+    },
+    "day3_day_one_minute_practice": {
+        "size": "350-560 символов, практическая карточка",
+        "paragraphs": "короткое действие, зачем оно нужно, вопрос после практики",
+        "formatting": "жирным действие, без курсива, без блюра",
+        "emoji": "1 земной спокойный эмодзи, настроение опоры",
+        "layout": "очень простые строки, можно начать с 'На минуту:'",
+        "image_mood": "свеча, вода, дыхание, минимальный спокойный предметный кадр",
+        "image_queries": ["meditation candle quiet room", "breathing practice candle", "calm desk candle notebook"],
+    },
+    "day3_evening_relationship_archetype": {
+        "size": "700-950 символов, психологический портрет",
+        "paragraphs": "4 абзаца: архетип, внутренний голос, карта, вопрос",
+        "formatting": "жирным архетип или карту, курсив для внутренней реплики, блюр один раз можно для скрытого вывода",
+        "emoji": "0-1 эмодзи, настроение узнавания, не драматизировать",
+        "layout": "плотнее обычного, как маленький портрет",
+        "image_mood": "человек у окна или пустой стул, атмосфера ожидания, без лиц крупным планом",
+        "image_queries": ["person by window evening", "empty chair window", "woman waiting by window"],
+    },
+    "day4_morning_one_sign": {
+        "size": "420-650 символов, заметка-наблюдение",
+        "paragraphs": "2-3 абзаца, один знак и один вывод",
+        "formatting": "один жирный акцент, курсив по желанию, блюр не нужен",
+        "emoji": "0-1 маленький символ, настроение внимательности",
+        "layout": "без заголовка или с очень коротким заголовком",
+        "image_mood": "маленькая деталь реальности: тень, отражение, окно, рука, свет",
+        "image_queries": ["sunlight shadow wall", "window reflection morning", "small sign reflection street"],
+    },
+    "day4_day_tarot_life_card": {
+        "size": "600-850 символов, бытовая сцена через карту",
+        "paragraphs": "сцена, карта как линза, неожиданный вывод, вопрос",
+        "formatting": "жирным карту, курсив для бытовой фразы, блюр не нужен",
+        "emoji": "1 предметный или таро-эмодзи, настроение живое",
+        "layout": "начать не с карты, а с обычной ситуации",
+        "image_mood": "карта Таро рядом с бытовым предметом: чашка, ключи, блокнот",
+        "image_queries": ["tarot card coffee cup", "tarot card notebook keys", "tarot card everyday table"],
+    },
+    "day4_evening_soft_bot": {
+        "size": "650-900 символов, мягкий продающий пост",
+        "paragraphs": "3-4 абзаца: ограничение общего прогноза, когда нужен личный разбор, спокойный CTA",
+        "formatting": "жирным пользу личного разбора, курсив минимум, блюр не использовать",
+        "emoji": "0-1 спокойный эмодзи, настроение доверия",
+        "layout": "без агрессивных офферов, CTA отдельным последним абзацем",
+        "image_mood": "астрологический рабочий стол, личная карта, блокнот с вопросом без читаемого текста",
+        "image_queries": ["astrology consultation desk", "natal chart notebook candle", "astrology chart question notebook"],
+    },
+    "day5_morning_astrology_without_fear": {
+        "size": "500-760 символов, объяснение простым языком",
+        "paragraphs": "3 абзаца: термин, бытовой перевод, вопрос",
+        "formatting": "жирным термин, курсив не обязателен, блюр не нужен",
+        "emoji": "0-1 светлый эмодзи, настроение облегчения",
+        "layout": "понятно даже новичку, без плотной терминологии",
+        "image_mood": "астрологическая карта рядом с кофе или ручкой, дневной свет",
+        "image_queries": ["natal chart coffee desk", "astrology chart pen daylight", "zodiac wheel notebook desk"],
+    },
+    "day5_day_reality_check": {
+        "size": "650-900 символов, спокойный внутренний чек",
+        "paragraphs": "4 коротких абзаца, каждый как шаг к ясности",
+        "formatting": "жирным 'тревога' или 'интуиция', курсив для внутренней реплики, блюр можно для проверочного вопроса",
+        "emoji": "0 эмодзи или один очень спокойный, настроение трезвое",
+        "layout": "меньше мистики, больше ясности и пауз",
+        "image_mood": "телефон, блокнот, чашка, спокойная проверка фактов",
+        "image_queries": ["phone notebook coffee table", "journal pen calm desk", "person writing notebook window"],
+    },
+    "day5_evening_pick_phrase": {
+        "size": "280-430 символов, короткое зеркало",
+        "paragraphs": "вступление, три строки 1/2/3, финал",
+        "formatting": "жирный короткий заголовок, без курсива, без блюра",
+        "emoji": "0-1 эмодзи, настроение внутреннего выбора",
+        "layout": "очень много воздуха, фразы отдельными строками",
+        "image_mood": "зеркало, блокнот, свеча, три маленькие бумажки без читаемого текста",
+        "image_queries": ["mirror candle notebook", "three blank notes candle", "journal candle mirror"],
+    },
+    "day6_morning_phrase_decode": {
+        "size": "650-900 символов, расшифровка зеркала",
+        "paragraphs": "три блока 1/2/3, каждый короткий и самостоятельный",
+        "formatting": "жирным ключевую фразу каждого выбора, курсив по желанию, блюр не нужен",
+        "emoji": "0-2 спокойных эмодзи на весь пост",
+        "layout": "читатель должен быстро найти свой номер",
+        "image_mood": "открытый дневник, три заметки или три карты, утренний свет",
+        "image_queries": ["open journal three notes", "three cards journal morning", "notebook three blank papers"],
+    },
+    "day6_day_choice_situation": {
+        "size": "650-900 символов, развилка решения",
+        "paragraphs": "4 абзаца: две двери, карта, критерий выбора, вопрос",
+        "formatting": "жирным карту или критерий, курсив для фразы выбора, блюр можно для мягкого вывода",
+        "emoji": "0-1 эмодзи, настроение честной развилки",
+        "layout": "ощущение двух направлений, но без списка плюсов и минусов",
+        "image_mood": "развилка дороги, две двери, ключи или перекресток",
+        "image_queries": ["two doors hallway", "crossroads path fog", "keys on table decision"],
+    },
+    "day6_evening_sleep_ritual": {
+        "size": "420-650 символов, вечерняя атмосфера",
+        "paragraphs": "3 мягких абзаца: предмет, действие, отпускание дня",
+        "formatting": "курсив для первой строки, жирный для ритуального действия, блюр не нужен",
+        "emoji": "1 ночной или водный эмодзи, настроение убаюкивающее",
+        "layout": "медленный темп, короткие строки, без терминов",
+        "image_mood": "стакан воды у кровати, свеча, лунный свет, тишина",
+        "image_queries": ["glass of water bedside moonlight", "bedside candle night", "moonlight bedroom water glass"],
+    },
+    "day7_morning_weekly_spread": {
+        "size": "650-900 символов, расклад-компас",
+        "paragraphs": "можно 3 смысловые строки или 3 коротких абзаца: отпустить, увидеть, направить",
+        "formatting": "жирным три ключевых глагола, курсив умеренно, блюр не нужен",
+        "emoji": "1 навигационный или звездный эмодзи, настроение начала недели",
+        "layout": "структурно, но не сухо; три части должны различаться визуально",
+        "image_mood": "три карты, компас, блокнот, ощущение навигации",
+        "image_queries": ["tarot cards compass notebook", "three tarot cards compass", "weekly tarot spread desk"],
+    },
+    "day7_day_signs_vs_anxiety": {
+        "size": "700-950 символов, трезвая эзотерика",
+        "paragraphs": "4 абзаца, прямой тон без жесткости",
+        "formatting": "жирным 'знак' и 'тревога' только если уместно, курсив для одной внутренней фразы, блюр можно для критерия",
+        "emoji": "без эмодзи или 1 минимальный, настроение ясности",
+        "layout": "не список, а последовательное отрезвление",
+        "image_mood": "окно, туман, телефон, блокнот, человек возвращается к фактам",
+        "image_queries": ["foggy window notebook", "phone notebook window", "person writing by window"],
+    },
+    "day7_evening_week_summary": {
+        "size": "650-900 символов, воскресное письмо",
+        "paragraphs": "4 абзаца: итог, повторяющийся мотив, что взять дальше, мягкий CTA",
+        "formatting": "жирным итоговый смысл, курсив для теплой строки, блюр не использовать",
+        "emoji": "1 вечерний эмодзи, настроение спокойного завершения",
+        "layout": "как письмо канала, без списков и без давления",
+        "image_mood": "вечерний дневник, свеча, окно со звездами, закрытие недели",
+        "image_queries": ["evening journal candle window", "sunday night notebook candle", "starry window journal candle"],
+    },
+}
 CHANNEL_GENERATED_IMAGE_SYMBOLS = {
     "tarot": ["XVII", "VI", "XI", "☽", "✦", "◆"],
     "astrology": ["☉", "☽", "☿", "♀", "♂", "♃", "♄"],
@@ -3695,6 +3886,9 @@ def _specific_channel_image_queries(text: str) -> list[str]:
 
 
 def _has_concrete_channel_image_queries(topic_info: dict, post_text: str = "") -> bool:
+    visual = (topic_info.get("schedule") or {}).get("visual") or {}
+    if visual.get("image_queries"):
+        return True
     combined = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
     return bool(_specific_channel_image_queries(combined))
 
@@ -3702,13 +3896,20 @@ def _has_concrete_channel_image_queries(topic_info: dict, post_text: str = "") -
 def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str = "") -> list[str]:
     category = topic_info.get("category", "")
     combined_text = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
+    visual = (topic_info.get("schedule") or {}).get("visual") or {}
+    visual_queries = [
+        str(query).strip()
+        for query in visual.get("image_queries", []) or []
+        if str(query).strip()
+    ]
+    random.shuffle(visual_queries)
     if category == "fallback_space":
         queries = list(CHANNEL_EMERGENCY_STOCK_IMAGE_QUERIES)
     else:
         specific_queries = _specific_channel_image_queries(combined_text)
         category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
         random.shuffle(category_queries)
-        queries = specific_queries + category_queries
+        queries = visual_queries + specific_queries + category_queries
     if provider in {"nasa", "wikimedia"}:
         if category == "fallback_space":
             queries = ["galaxy", "nebula", "star field", "night sky stars", "moon"]
@@ -4726,13 +4927,15 @@ def _build_ai_channel_image_prompt(
         "square image, intimate desk scene, clear main subject",
     ])
     topic_hint = (topic_info.get("topic") or "").replace("\n", " ")[:180]
+    visual = (topic_info.get("schedule") or {}).get("visual") or {}
+    image_mood = str(visual.get("image_mood") or "").strip()
     role_hint = ""
     if author_info:
         role_hint = "tarot reader atmosphere" if author_info.get("type") == "tarot" else "astrologer workspace atmosphere"
 
     return (
         f"{scene_text}. {style}. {lighting}. {camera}. "
-        f"Theme hint: {topic_hint}. {role_hint}. "
+        f"Theme hint: {topic_hint}. Visual mood: {image_mood}. {role_hint}. "
         "No text, no readable words, no letters, no logo, no watermark, no poster, no infographic, no list layout, "
         "no UI card, no flat vector icons, no abstract geometric symbols, no decorative template border."
     ).strip()
@@ -4897,6 +5100,7 @@ def _remember_channel_schedule_slot(slot_key: str) -> None:
 
 def _channel_topic_from_schedule_slot(slot: dict) -> dict:
     style = slot.get("style") or CHANNEL_SCHEDULE_STYLE_BY_ID.get(slot.get("id", ""), "")
+    visual = slot.get("visual") or CHANNEL_SCHEDULE_VISUAL_BY_ID.get(slot.get("id", ""), {})
     return {
         "category": slot.get("category", "mystic"),
         "topic": slot.get("topic", ""),
@@ -4906,6 +5110,7 @@ def _channel_topic_from_schedule_slot(slot: dict) -> dict:
             "time": slot.get("time", ""),
             "rubric": slot.get("rubric", ""),
             "style": style,
+            "visual": visual,
             "slot_key": slot.get("slot_key", ""),
             "weekday": slot.get("weekday"),
         },
@@ -5557,10 +5762,24 @@ def _channel_content_plan_prompt(content_plan: dict | None) -> str:
     schedule = content_plan.get("schedule") or {}
     schedule_block = ""
     if schedule:
+        visual = schedule.get("visual") or {}
+        visual_lines = ""
+        if visual:
+            visual_lines = (
+                "Визуальный профиль поста:\n"
+                f"- Размер: {visual.get('size', '')}\n"
+                f"- Абзацы: {visual.get('paragraphs', '')}\n"
+                f"- Жирный, курсив и блюр: {visual.get('formatting', '')}\n"
+                f"- Эмодзи: {visual.get('emoji', '')}\n"
+                f"- Воздух и раскладка: {visual.get('layout', '')}\n"
+                f"- Настроение картинки: {visual.get('image_mood', '')}\n"
+                "Этот визуальный профиль важнее случайно выбранной раскладки ниже, если они конфликтуют.\n"
+            )
         schedule_block = (
             "РЕДАКЦИОННЫЙ СЛОТ:\n"
             f"Рубрика: {schedule.get('rubric', '')}. Время: {schedule.get('time', '')} МСК.\n"
             f"Уникальный дизайн этого поста: {schedule.get('style', '')}\n"
+            f"{visual_lines}"
             "Пиши ровно под эту рубрику и не называй ее служебно, если это не выглядит естественным заголовком.\n"
         )
     promo_block = (
@@ -5622,10 +5841,10 @@ async def generate_channel_post(
         "4. Язык русский, живой разговорный. Чередуй длину предложений, иногда короткое обрывочное. Лёгкая субъективность приветствуется.\n"
         "5. Добавь 0-2 эмодзи по смыслу. Если текст держится без эмодзи, не добавляй их силой.\n"
         "6. В конце один короткий вопрос читателям.\n"
-        "7. Визуальная раскладка обязательна: используй выбранный layout, пустые строки и эмодзи-акценты так, чтобы пост отличался при беглом пролистывании.\n"
+        "7. Визуальная раскладка обязательна: в первую очередь следуй визуальному профилю слота, затем выбранному layout. Используй пустые строки, длину абзацев и эмодзи так, чтобы пост отличался при беглом пролистывании.\n"
         "8. Не повторяй типовой ритм прошлых постов: если обычно получается 'символ значит X, совет Y, вопрос Z', выбери другую форму из контент-плана.\n\n"
         "ФОРМАТИРОВАНИЕ (только Telegram HTML-теги, никакого markdown):\n"
-        "- Оформление умеренное: используй хотя бы один осмысленный HTML-акцент <b>...</b> или <i>...</i>.\n"
+        "- Оформление зависит от визуального профиля слота. Если профиль просит жирный, курсив или блюр, используй их. Если профиль просит без курсива или без блюра, не добавляй их просто ради украшения.\n"
         "- <b>...</b>: выдели 1-3 самых важных слова или термина. Это должны быть ОСМЫСЛЕННЫЕ выделения: название карты Таро, имя планеты, ключевое понятие, суть совета. НЕ выделяй случайные слова, союзы, предлоги.\n"
         "- <i>...</i>: используй 1-2 раза для атмосферной фразы, метафоры или короткого внутреннего наблюдения.\n"
         "- <tg-spoiler>...</tg-spoiler>: используй только если он действительно усиливает интригу интерактива или выбора, максимум один раз.\n"
