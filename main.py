@@ -2979,7 +2979,8 @@ CHANNEL_POST_TOPICS.extend(
     for category, topic_name in CHANNEL_POST_EXTRA_TOPICS
 )
 
-CHANNEL_POST_INTERVAL = 180  # legacy fallback interval, kept for admin status messages
+# Старый интервальный режим отключён: автопостинг теперь идёт по CHANNEL_WEEKLY_POST_SCHEDULE.
+# CHANNEL_POST_INTERVAL = 180
 CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
 CHANNEL_SCHEDULE_GRACE_MINUTES = 90
 CHANNEL_WEEKLY_POST_SCHEDULE = {
