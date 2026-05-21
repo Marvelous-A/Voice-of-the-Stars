@@ -939,10 +939,14 @@ async def handle_channel_post(message: Message):
 
         posted_at = main_app._msk_now()
         main_app._mark_channel_post_time(posted_at)
-        next_post_at = posted_at + timedelta(minutes=main_app.CHANNEL_POST_INTERVAL)
+        next_slot = main_app.next_channel_schedule_slot_after(posted_at)
+        next_post_text = (
+            f"{next_slot['at'].strftime('%d.%m.%Y %H:%M')} МСК, рубрика: {next_slot['slot'].get('rubric', 'пост')}"
+            if next_slot else "по ближайшему слоту редакционной сетки"
+        )
         await status.edit_text(
             "✅ Пост опубликован в канале.\n\n"
-            f"Следующий автоматический пост: примерно в {next_post_at.strftime('%d.%m.%Y %H:%M')} МСК."
+            f"Следующий автоматический пост: {next_post_text}."
         )
 
 

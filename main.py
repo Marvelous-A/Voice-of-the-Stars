@@ -2979,8 +2979,246 @@ CHANNEL_POST_TOPICS.extend(
     for category, topic_name in CHANNEL_POST_EXTRA_TOPICS
 )
 
-CHANNEL_POST_INTERVAL = 85  # интервал постинга в минутах (1 час 25 минут)
+CHANNEL_POST_INTERVAL = 180  # legacy fallback interval, kept for admin status messages
 CHANNEL_ACTIVE_HOURS = (9, 22)  # посты с 9:00 до 22:30 по МСК
+CHANNEL_SCHEDULE_GRACE_MINUTES = 90
+CHANNEL_WEEKLY_POST_SCHEDULE = {
+    0: [
+        {
+            "id": "day1_morning_card",
+            "time": "09:00",
+            "rubric": "Карта дня",
+            "category": "tarot",
+            "topic": (
+                "Сгенерируй утреннюю рубрику 'Карта дня'. Выбери одну карту Таро из Старших Арканов, "
+                "дай короткое послание дня и один вопрос для саморефлексии. Не продавай бота."
+            ),
+        },
+        {
+            "id": "day1_day_relationship_situation",
+            "time": "14:00",
+            "rubric": "Ситуация дня",
+            "category": "tarot",
+            "promo": True,
+            "topic": (
+                "Разбери типовую ситуацию в отношениях без фразы 'вопрос подписчика': человек отвечает сухо, "
+                "исчезает или тянет с ответом. Покажи взгляд через одну карту Таро, отдели факт от тревоги, "
+                "заверши мягким вопросом."
+            ),
+        },
+        {
+            "id": "day1_evening_pick_card",
+            "time": "19:30",
+            "rubric": "Выберите карту",
+            "category": "tarot",
+            "topic": (
+                "Сделай интерактив: предложи выбрать карту 1, 2 или 3. Карты задай явно: 1 - Луна, "
+                "2 - Умеренность, 3 - Сила. Не раскрывай значения, не зови в бота, только создай атмосферу "
+                "и попроси сохранить выбранный номер до завтрашней расшифровки."
+            ),
+        },
+    ],
+    1: [
+        {
+            "id": "day2_morning_astro_mood",
+            "time": "09:00",
+            "rubric": "Астрологический настрой",
+            "category": "moon",
+            "topic": (
+                "Дай утренний астрологический настрой дня через Луну, Венеру, Марс или Меркурий как метафору "
+                "состояния. Нужен один практичный ориентир на день без запугивания."
+            ),
+        },
+        {
+            "id": "day2_day_myth_or_sign",
+            "time": "14:00",
+            "rubric": "Миф или знак",
+            "category": "mystic",
+            "topic": (
+                "Разбери популярный эзотерический миф в формате 'миф или знак': одинаковые числа на часах, "
+                "повторяющиеся фразы или случайная встреча. Покажи, где знак, а где фокус внимания."
+            ),
+        },
+        {
+            "id": "day2_evening_card_decode",
+            "time": "19:30",
+            "rubric": "Расшифровка выбора",
+            "category": "tarot",
+            "topic": (
+                "Расшифруй вчерашний интерактив с картами: 1 - Луна, 2 - Умеренность, 3 - Сила. "
+                "Для каждой карты дай 2-3 живых предложения: что заметить в себе сегодня и какой маленький шаг сделать. "
+                "Не продавай бота."
+            ),
+        },
+    ],
+    2: [
+        {
+            "id": "day3_morning_dream_symbol",
+            "time": "09:00",
+            "rubric": "Сон и символ",
+            "category": "dreams",
+            "topic": (
+                "Выбери один образ из сна: вода, дверь, лестница, бывший, дом или дорога. "
+                "Разбери его не как сонник, а как символ внутреннего состояния."
+            ),
+        },
+        {
+            "id": "day3_day_one_minute_practice",
+            "time": "14:00",
+            "rubric": "Практика на минуту",
+            "category": "meditation",
+            "topic": (
+                "Дай простую мини-практику на 1 минуту: дыхание, пауза, запись одной мысли или наблюдение за телом. "
+                "Без обещаний чудес, с мягким объяснением, зачем это нужно."
+            ),
+        },
+        {
+            "id": "day3_evening_relationship_archetype",
+            "time": "19:30",
+            "rubric": "Архетип отношений",
+            "category": "tarot",
+            "topic": (
+                "Разбери один архетип отношений: женщина, которая ждёт; человек, который исчезает; "
+                "тот, кто боится выбрать; тот, кто держит дверь приоткрытой. Свяжи с одной картой Таро."
+            ),
+        },
+    ],
+    3: [
+        {
+            "id": "day4_morning_one_sign",
+            "time": "09:00",
+            "rubric": "Один знак дня",
+            "category": "mystic",
+            "topic": (
+                "Рубрика 'Один знак дня': число, повторяющаяся фраза, случайная встреча или телесное ощущение. "
+                "Покажи, как заметить знак без ухода в тревожную мнительность."
+            ),
+        },
+        {
+            "id": "day4_day_tarot_life_card",
+            "time": "14:00",
+            "rubric": "Таро в жизни",
+            "category": "tarot",
+            "topic": (
+                "Разбери одну карту Таро не как учебное значение, а как бытовую сцену из жизни. "
+                "Выбери карту сам, дай неожиданный, но ясный вывод."
+            ),
+        },
+        {
+            "id": "day4_evening_soft_bot",
+            "time": "19:30",
+            "rubric": "Когда общего прогноза мало",
+            "category": "astrology",
+            "promo": True,
+            "topic": (
+                "Сделай мягкий вечерний продающий пост: объясни, когда общий прогноз или общий расклад уже не помогает "
+                "и нужен личный вопрос. Не дави, не обещай точных чудес, покажи разницу между общей подсказкой "
+                "и личным разбором."
+            ),
+        },
+    ],
+    4: [
+        {
+            "id": "day5_morning_astrology_without_fear",
+            "time": "09:00",
+            "rubric": "Астрология без страха",
+            "category": "astrology",
+            "topic": (
+                "Объясни один астрологический элемент простыми словами: дом, аспект, транзит, Луна или Венера. "
+                "Главный акцент: это не приговор, а способ заметить паттерн."
+            ),
+        },
+        {
+            "id": "day5_day_reality_check",
+            "time": "14:00",
+            "rubric": "Проверка реальности",
+            "category": "mystic",
+            "promo": True,
+            "topic": (
+                "Пост 'Проверка реальности': отдели интуицию от тревоги. Дай 3 узнаваемых признака без списка, "
+                "через связный текст: как звучит тревога, как звучит тихая интуиция, что проверить перед выводом."
+            ),
+        },
+        {
+            "id": "day5_evening_pick_phrase",
+            "time": "19:30",
+            "rubric": "Выберите фразу",
+            "category": "mystic",
+            "topic": (
+                "Сделай интерактив: предложи выбрать фразу, которая сильнее откликается. "
+                "Варианты: 1 - 'я устала ждать', 2 - 'я боюсь ошибиться', 3 - 'я уже знаю ответ'. "
+                "Не раскрывай значения до завтрашней расшифровки."
+            ),
+        },
+    ],
+    5: [
+        {
+            "id": "day6_morning_phrase_decode",
+            "time": "09:00",
+            "rubric": "Расшифровка фраз",
+            "category": "mystic",
+            "topic": (
+                "Расшифруй вчерашний выбор фраз: 1 - 'я устала ждать', 2 - 'я боюсь ошибиться', "
+                "3 - 'я уже знаю ответ'. Для каждой фразы дай короткий психологично-эзотерический смысл "
+                "и маленькое действие на день."
+            ),
+        },
+        {
+            "id": "day6_day_choice_situation",
+            "time": "14:00",
+            "rubric": "Ситуация дня",
+            "category": "tarot",
+            "promo": True,
+            "topic": (
+                "Разбери ситуацию выбора без выдуманного подписчика: написать или не писать, уйти или остаться, "
+                "ждать или отпустить. Свяжи с одной картой Таро и дай честный ориентир без давления."
+            ),
+        },
+        {
+            "id": "day6_evening_sleep_ritual",
+            "time": "19:30",
+            "rubric": "Ритуал перед сном",
+            "category": "meditation",
+            "topic": (
+                "Напиши атмосферный вечерний пост про маленький ритуал перед сном: вода, свет, запись мысли, "
+                "тишина или дыхание. Не мистифицируй чрезмерно, дай ощущение опоры."
+            ),
+        },
+    ],
+    6: [
+        {
+            "id": "day7_morning_weekly_spread",
+            "time": "09:00",
+            "rubric": "Недельный расклад",
+            "category": "tarot",
+            "topic": (
+                "Сделай общий недельный расклад из трёх смыслов: что отпустить, что увидеть, куда направить внимание. "
+                "Пиши цельно, можно упомянуть 3 карты, но без сухого списка."
+            ),
+        },
+        {
+            "id": "day7_day_signs_vs_anxiety",
+            "time": "14:00",
+            "rubric": "Знаки и тревога",
+            "category": "mystic",
+            "topic": (
+                "Напиши пост '7 признаков, что это не знак, а тревога' или '5 признаков, что интуиция говорит тихо'. "
+                "Не делай сухой список, подай как живое наблюдение с ясным выводом."
+            ),
+        },
+        {
+            "id": "day7_evening_week_summary",
+            "time": "19:30",
+            "rubric": "Итог недели",
+            "category": "astrology",
+            "promo": True,
+            "topic": (
+                "Сделай итог недели: что могло повторяться в знаках, снах, отношениях и внутреннем состоянии. "
+                "Заверши мягким приглашением в бота для личного вопроса, без давления и без обещания стопроцентного ответа."
+            ),
+        },
+    ],
+}
 CHANNEL_GENERATED_IMAGE_SYMBOLS = {
     "tarot": ["XVII", "VI", "XI", "☽", "✦", "◆"],
     "astrology": ["☉", "☽", "☿", "♀", "♂", "♃", "♄"],
@@ -4498,6 +4736,94 @@ def _topic_key(topic_info: dict) -> str:
     return (topic_info.get("topic") or "").strip()
 
 
+def _parse_channel_slot_minutes(time_text: str) -> int:
+    hour, minute = (int(part) for part in time_text.split(":", 1))
+    return hour * 60 + minute
+
+
+def _channel_schedule_slot_key(msk: datetime, slot: dict) -> str:
+    return f"{msk.date().isoformat()}:{slot.get('id', '')}"
+
+
+def _select_due_channel_schedule_slot(msk: datetime) -> dict | None:
+    state = load_channel_state()
+    posted_keys = {
+        key for key in state.get("posted_schedule_slots", []) or []
+        if isinstance(key, str) and key.strip()
+    }
+    current_minute = msk.hour * 60 + msk.minute
+    slots = CHANNEL_WEEKLY_POST_SCHEDULE.get(msk.weekday(), [])
+    for slot in slots:
+        try:
+            target_minute = _parse_channel_slot_minutes(slot["time"])
+        except Exception:
+            continue
+        if current_minute < target_minute:
+            continue
+        if current_minute > target_minute + CHANNEL_SCHEDULE_GRACE_MINUTES:
+            continue
+
+        slot_key = _channel_schedule_slot_key(msk, slot)
+        if slot_key in posted_keys:
+            continue
+
+        due_slot = dict(slot)
+        due_slot["slot_key"] = slot_key
+        due_slot["weekday"] = msk.weekday()
+        return due_slot
+    return None
+
+
+def next_channel_schedule_slot_after(msk: datetime | None = None) -> dict | None:
+    msk = msk or _msk_now()
+    for day_offset in range(8):
+        target_date = msk.date() + timedelta(days=day_offset)
+        weekday = (msk.weekday() + day_offset) % 7
+        slots = sorted(
+            CHANNEL_WEEKLY_POST_SCHEDULE.get(weekday, []),
+            key=lambda item: item.get("time", "99:99"),
+        )
+        for slot in slots:
+            try:
+                hour, minute = (int(part) for part in slot["time"].split(":", 1))
+            except Exception:
+                continue
+            target_at = datetime.combine(target_date, datetime.min.time()).replace(hour=hour, minute=minute)
+            if target_at > msk:
+                return {"at": target_at, "slot": slot}
+    return None
+
+
+def _remember_channel_schedule_slot(slot_key: str) -> None:
+    if not slot_key:
+        return
+    state = load_channel_state()
+    posted = [
+        key for key in state.get("posted_schedule_slots", []) or []
+        if isinstance(key, str) and key.strip()
+    ]
+    if slot_key in posted:
+        posted.remove(slot_key)
+    posted.append(slot_key)
+    state["posted_schedule_slots"] = posted[-60:]
+    save_channel_state(state)
+
+
+def _channel_topic_from_schedule_slot(slot: dict) -> dict:
+    return {
+        "category": slot.get("category", "mystic"),
+        "topic": slot.get("topic", ""),
+        "promo": bool(slot.get("promo", False)),
+        "schedule": {
+            "id": slot.get("id", ""),
+            "time": slot.get("time", ""),
+            "rubric": slot.get("rubric", ""),
+            "slot_key": slot.get("slot_key", ""),
+            "weekday": slot.get("weekday"),
+        },
+    }
+
+
 def _sync_recent_topics_from_state() -> None:
     RECENT_TOPIC_KEYS.clear()
     for key in load_channel_state().get("recent_topics", []) or []:
@@ -4586,6 +4912,8 @@ def _select_channel_content_plan(topic_info: dict, author_info: dict | None) -> 
         "layout": _pick_fresh_channel_variant(CHANNEL_TEXT_LAYOUTS, "layout", recent_parts),
         "ending": _pick_fresh_channel_variant(CHANNEL_POST_ENDINGS, "ending", recent_parts),
         "category": topic_info.get("category", ""),
+        "promo": bool(topic_info.get("promo", False)),
+        "schedule": topic_info.get("schedule") or {},
     }
     return plan
 
@@ -4633,6 +4961,10 @@ def _remember_channel_content(content_plan: dict | None, text: str) -> None:
 
 
 def _select_channel_topic() -> dict:
+    scheduled_slot = _select_due_channel_schedule_slot(_msk_now())
+    if scheduled_slot:
+        return _channel_topic_from_schedule_slot(scheduled_slot)
+
     _sync_recent_topics_from_state()
     fresh_topics = [
         topic_info for topic_info in CHANNEL_POST_TOPICS
@@ -5103,6 +5435,28 @@ def with_channel_bot_promo(text: str, final_suffix: str = "") -> str:
     return f"{trimmed}...{suffix}"
 
 
+def with_channel_final_suffix(text: str, final_suffix: str = "") -> str:
+    """Добавляет только подпись автора, без промо бота."""
+    text = text.strip()
+    final_suffix = final_suffix.strip()
+    if not final_suffix:
+        return text
+
+    final_block = f"\n\n{final_suffix}"
+    full_text = f"{text}{final_block}"
+    if len(full_text) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
+        return full_text
+
+    available = TELEGRAM_PHOTO_CAPTION_LIMIT - len(final_block) - 3
+    if available <= 0:
+        return final_suffix[:TELEGRAM_PHOTO_CAPTION_LIMIT]
+
+    trimmed = text[:available].rstrip()
+    trimmed = re.sub(r'</?([a-zA-Z][a-zA-Z0-9\-]*)(?:\s[^>]*)?$', '', trimmed).rstrip()
+    trimmed = sanitize_html_for_telegram(trimmed)
+    return f"{trimmed}...{final_block}"
+
+
 def _channel_content_plan_prompt(content_plan: dict | None) -> str:
     if not content_plan:
         return ""
@@ -5112,8 +5466,24 @@ def _channel_content_plan_prompt(content_plan: dict | None) -> str:
         instruction = item.get("instruction", "")
         return f"{title}: {label}. {instruction}"
 
+    schedule = content_plan.get("schedule") or {}
+    schedule_block = ""
+    if schedule:
+        schedule_block = (
+            "РЕДАКЦИОННЫЙ СЛОТ:\n"
+            f"Рубрика: {schedule.get('rubric', '')}. Время: {schedule.get('time', '')} МСК.\n"
+            "Пиши ровно под эту рубрику и не называй ее служебно, если это не выглядит естественным заголовком.\n"
+        )
+    promo_block = (
+        "CTA В БОТА: в этом посте можно мягко пригласить в @VoiceOfTheStarsBot, без давления и без повторения старых продажных формулировок.\n"
+        if content_plan.get("promo")
+        else "CTA В БОТА: не добавляй продажу, ссылку на бота, цену, бесплатный сеанс или призыв к консультации в основной текст.\n"
+    )
+
     return (
         "КОНТЕНТ-ПЛАН ЭТОГО ПОСТА:\n"
+        f"{schedule_block}"
+        f"{promo_block}"
         f"{_line('Рубрика', content_plan.get('rubric') or {})}\n"
         f"{_line('Форма', content_plan.get('format') or {})}\n"
         f"{_line('Тон', content_plan.get('tone') or {})}\n"
@@ -5157,19 +5527,19 @@ async def generate_channel_post(
         f"{recent_posts_prompt}\n"
         f"ОБЩЕЕ ПРАВИЛО КАЧЕСТВА:\n{CHANNEL_POST_QUALITY_RULES}\n\n"
         "СТРОГИЕ ТРЕБОВАНИЯ К ПОСТУ:\n"
-        "1. Длина 300-700 символов. Это короткий пост для Telegram-канала, не статья.\n"
+        "1. Длина 350-850 символов. Чередуй короткие посты и средние, но не превращай текст в статью.\n"
         "2. Пиши голосом выбранного автора, но не застревай в одном шаблоне от первого лица. Можно писать от 'я', можно напрямую к читателю, можно как заметку из практики, если это соответствует форме.\n"
         "3. Начни с детали, наблюдения или вопроса. ЗАПРЕЩЕНЫ начала: 'Итак', 'Давайте', 'В этом посте', 'Знаете ли вы', 'Сегодня поговорим', 'Интересный факт', 'Погрузимся'.\n"
         "4. Язык русский, живой разговорный. Чередуй длину предложений, иногда короткое обрывочное. Лёгкая субъективность приветствуется.\n"
-        "5. Добавь 2-4 эмодзи по смыслу (не в каждой строке, а там где к месту).\n"
+        "5. Добавь 0-2 эмодзи по смыслу. Если текст держится без эмодзи, не добавляй их силой.\n"
         "6. В конце один короткий вопрос читателям.\n"
         "7. Визуальная раскладка обязательна: используй выбранный layout, пустые строки и эмодзи-акценты так, чтобы пост отличался при беглом пролистывании.\n"
         "8. Не повторяй типовой ритм прошлых постов: если обычно получается 'символ значит X, совет Y, вопрос Z', выбери другую форму из контент-плана.\n\n"
         "ФОРМАТИРОВАНИЕ (только Telegram HTML-теги, никакого markdown):\n"
-        "- Оформление обязательно: в посте должен быть хотя бы один <b>...</b>, один <i>...</i> и один <tg-spoiler>...</tg-spoiler>.\n"
+        "- Оформление умеренное: используй хотя бы один осмысленный HTML-акцент <b>...</b> или <i>...</i>.\n"
         "- <b>...</b>: выдели 1-3 самых важных слова или термина. Это должны быть ОСМЫСЛЕННЫЕ выделения: название карты Таро, имя планеты, ключевое понятие, суть совета. НЕ выделяй случайные слова, союзы, предлоги.\n"
         "- <i>...</i>: используй 1-2 раза для атмосферной фразы, метафоры или короткого внутреннего наблюдения.\n"
-        "- <tg-spoiler>...</tg-spoiler>: используй один раз, для интригующего откровения или 'тайной' фразы, чтобы читатель захотел её открыть (например, неожиданное послание карты или тайный совет).\n"
+        "- <tg-spoiler>...</tg-spoiler>: используй только если он действительно усиливает интригу интерактива или выбора, максимум один раз.\n"
         "- Не ставь теги вокруг целых абзацев. Оформление должно помогать читать, а не выглядеть как случайная разметка.\n\n"
         "ЗАПРЕЩЕНО:\n"
         "- Хештеги, ссылки, упоминания аккаунтов.\n"
@@ -5181,7 +5551,7 @@ async def generate_channel_post(
         "- Приветствия в начале поста.\n"
     )
     prompt = f"{prompt}\n{CHANNEL_AI_META_BAN_PROMPT}\n"
-    text = await ask_ai(prompt, max_tokens=600)
+    text = await ask_ai(prompt, max_tokens=800)
     if not text:
         return ""
     text = clean_markdown(text)
@@ -5221,7 +5591,11 @@ async def build_channel_post() -> dict | None:
         print("[autoposting] AI returned empty post text, skipping")
         return None
 
-    text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
+    author_signature = _channel_author_signature(author_info)
+    if content_plan.get("promo"):
+        text = with_channel_bot_promo(core_text, author_signature)
+    else:
+        text = with_channel_final_suffix(core_text, author_signature)
     image_path = await generate_channel_image_asset(topic_info, author_info, content_plan, core_text)
     return {
         "text": text,
@@ -5229,6 +5603,7 @@ async def build_channel_post() -> dict | None:
         "image_path": image_path,
         "topic_info": topic_info,
         "content_plan": content_plan,
+        "schedule": topic_info.get("schedule") or {},
     }
 
 
@@ -5281,6 +5656,7 @@ async def publish_channel_post() -> bool:
             topic_info = post["topic_info"]
             _remember_channel_topic(topic_info)
             _remember_channel_content(post.get("content_plan"), post.get("core_text", post.get("text", "")))
+            _remember_channel_schedule_slot((post.get("schedule") or {}).get("slot_key", ""))
             topic_preview = _topic_key(topic_info)[:80]
             print(
                 f"[MSK {msk}] Channel post published "
@@ -5306,7 +5682,11 @@ async def post_to_channel() -> bool:
             print("[Автопостинг] ИИ не вернул текст, пропускаю")
             return False
 
-        text = with_channel_bot_promo(core_text, _channel_author_signature(author_info))
+        author_signature = _channel_author_signature(author_info)
+        if content_plan.get("promo"):
+            text = with_channel_bot_promo(core_text, author_signature)
+        else:
+            text = with_channel_final_suffix(core_text, author_signature)
 
         image_path = await generate_channel_image_asset(topic_info, author_info, content_plan, core_text)
 
@@ -5327,6 +5707,8 @@ async def post_to_channel() -> bool:
         msk = _msk_now()
         _remember_channel_topic(topic_info)
         _remember_channel_content(content_plan, core_text)
+        schedule_slot_key = ((topic_info.get("schedule") or {}).get("slot_key") or "")
+        _remember_channel_schedule_slot(schedule_slot_key)
         topic_preview = _topic_key(topic_info)[:80]
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
               f"(категория: {topic_info.get('category', '-')}, тема: {topic_preview}, "
@@ -5374,18 +5756,9 @@ async def scheduler():
             morning_sent_date = today
             await send_morning_notifications()
 
-        # Автопостинг в канал каждые 1 час 25 минут в активные часы
+        # Автопостинг по редакционной недельной сетке: 09:00, 14:00, 19:30 МСК.
         if CHANNEL_ACTIVE_HOURS[0] <= msk.hour < CHANNEL_ACTIVE_HOURS[1]:
-            state_last_post = _get_last_channel_post_from_state()
-            if state_last_post and (last_channel_post is None or state_last_post > last_channel_post):
-                last_channel_post = state_last_post
-
-            should_post = False
-            if last_channel_post is None:
-                should_post = True
-            elif (msk - last_channel_post).total_seconds() >= CHANNEL_POST_INTERVAL * 60:
-                should_post = True
-            if should_post:
+            if _select_due_channel_schedule_slot(msk):
                 posted = await publish_channel_post()
                 if posted:
                     last_channel_post = _msk_now()
