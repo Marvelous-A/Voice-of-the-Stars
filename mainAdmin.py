@@ -35,7 +35,7 @@ PROXY_URL = getenv("PROXY_URL", "")
 
 # Для закреплённого сообщения со ссылками
 MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
-CHANNEL_ID = getenv("CHANNEL_ID", "")  # напр. "@VoiceOfTheStarsInfo"
+CHANNEL_ID = main_app.CHANNEL_ID  # напр. "@VoiceOfTheStars"
 MAIN_BOT_URL = getenv("MAIN_BOT_URL", "")
 
 if not ADMIN_BOT_TOKEN:

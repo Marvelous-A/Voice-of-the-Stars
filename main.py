@@ -45,8 +45,20 @@ ADMIN_ID = int(getenv("ADMIN_ID", "0"))       # Telegram ID администра
 EMAIL_FROM = getenv("EMAIL_FROM", "")         # Почта ОТ кого шлём уведомления (заполни в .env)
 EMAIL_PASSWORD = getenv("EMAIL_PASSWORD", "") # Пароль от этой почты (заполни в .env)
 EMAIL_TO = "mogneto.r@mail.ru"               # Куда приходят уведомления
-CHANNEL_ID = getenv("CHANNEL_ID", "")        # ID или @username канала для автопостинга
+CHANNEL_ID_ALIASES = {
+    "@VoiceOfTheStarsInfo": "@VoiceOfTheStars",
+    "VoiceOfTheStarsInfo": "@VoiceOfTheStars",
+}
+
+
+def normalize_channel_id(channel_id: str) -> str:
+    channel_id = (channel_id or "").strip()
+    return CHANNEL_ID_ALIASES.get(channel_id, channel_id)
+
+
+CHANNEL_ID = normalize_channel_id(getenv("CHANNEL_ID", "@VoiceOfTheStars"))        # ID или @username канала для автопостинга
 CHANNEL_URL = f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID and CHANNEL_ID.startswith("@") else ""
+CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC = int(getenv("CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC", "21600"))
 MAIN_BOT_USERNAME = getenv("MAIN_BOT_USERNAME", "VoiceOfTheStarsBot").lstrip("@")
 MAIN_BOT_URL = f"https://t.me/{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "https://t.me/VoiceOfTheStarsBot"
 REVIEWS_FILE = "reviews.json"
@@ -5916,8 +5928,64 @@ async def build_channel_post() -> dict | None:
     }
 
 
+_last_channel_publish_alert_at = 0.0
+
+
+def _redact_channel_publish_error(text: str) -> str:
+    text = str(text or "")
+    for secret in (TOKEN, ADMIN_BOT_TOKEN, OPENROUTER_KEY, GROQ_API_KEY):
+        if secret:
+            text = text.replace(secret, "<secret>")
+    return text[:1500]
+
+
+async def _notify_channel_publish_issue(reason: str) -> None:
+    global _last_channel_publish_alert_at
+    now = time.monotonic()
+    if now - _last_channel_publish_alert_at < CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC:
+        return
+    _last_channel_publish_alert_at = now
+    clean_reason = _redact_channel_publish_error(reason)
+    await notify_admin(
+        "Channel autoposting failed.\n\n"
+        f"CHANNEL_ID: {CHANNEL_ID or '-'}\n"
+        f"Reason: {clean_reason}\n\n"
+        "Check that the main bot is an administrator of the channel and that CHANNEL_ID still points to the channel."
+    )
+
+
+async def check_channel_publish_access(notify: bool = False) -> bool:
+    if not CHANNEL_ID:
+        if notify:
+            await _notify_channel_publish_issue("CHANNEL_ID is empty")
+        return False
+
+    try:
+        chat = await bot.get_chat(CHANNEL_ID)
+        me = await bot.get_me()
+        member = await bot.get_chat_member(chat.id, me.id)
+        status = getattr(member, "status", "")
+        can_post = getattr(member, "can_post_messages", None)
+        if status not in {"creator", "administrator"}:
+            reason = f"Bot is not channel administrator; status={status}"
+            if notify:
+                await _notify_channel_publish_issue(reason)
+            return False
+        if getattr(chat, "type", "") == "channel" and status == "administrator" and can_post is False:
+            reason = "Bot is channel administrator but can_post_messages=False"
+            if notify:
+                await _notify_channel_publish_issue(reason)
+            return False
+        return True
+    except Exception as e:
+        if notify:
+            await _notify_channel_publish_issue(f"Cannot access channel {CHANNEL_ID}: {e}")
+        return False
+
+
 async def post_to_telegram_channel(post: dict) -> bool:
     if not CHANNEL_ID:
+        await _notify_channel_publish_issue("CHANNEL_ID is empty")
         return False
 
     text = post["text"]
@@ -5940,6 +6008,7 @@ async def post_to_telegram_channel(post: dict) -> bool:
             return True
         except Exception as plain_error:
             print(f"[autoposting] Telegram publish error: {plain_error}")
+            await _notify_channel_publish_issue(str(plain_error))
             return False
 
 
@@ -5975,6 +6044,7 @@ async def publish_channel_post() -> bool:
         return ok
     except Exception as e:
         print(f"[autoposting] error: {e}")
+        await _notify_channel_publish_issue(str(e))
         return False
 
 
@@ -7292,6 +7362,7 @@ async def on_startup(bot):
     except Exception as e:
         print(f"[on_startup] failed to resolve bot username: {e}")
     await notify_admin("🔄 Бот перезапущен и работает.")
+    await check_channel_publish_access(notify=True)
 
 
 async def _restore_pending_answers() -> None:
@@ -7382,8 +7453,23 @@ async def _restore_active_sessions() -> None:
         print(f"[_restore_active_sessions] восстановлено сеансов: {restored}")
 
 
+async def run_background_task(name: str, task_factory):
+    while True:
+        try:
+            await task_factory()
+            print(f"[background] {name} returned; restarting in 60 seconds")
+            await notify_admin(f"Background task returned: {name}. Restarting in 60 seconds.")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            clean_error = _redact_channel_publish_error(str(e))
+            print(f"[background] {name} crashed: {clean_error}")
+            await notify_admin(f"Background task crashed: {name}\n{clean_error}\nRestarting in 60 seconds.")
+        await asyncio.sleep(60)
+
+
 async def main():
-    asyncio.create_task(scheduler())
+    asyncio.create_task(run_background_task("scheduler", scheduler))
     asyncio.create_task(heartbeat())
     asyncio.create_task(ckassa_payment_watcher())
     await on_startup(bot)
