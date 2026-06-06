@@ -3558,6 +3558,8 @@ CHANNEL_STOCK_IMAGE_PAGE_SIZE = int(getenv("CHANNEL_STOCK_IMAGE_PAGE_SIZE", "20"
 CHANNEL_STOCK_IMAGE_MAX_PAGE = int(getenv("CHANNEL_STOCK_IMAGE_MAX_PAGE", "18"))
 CHANNEL_STOCK_IMAGE_POOL_TARGET = int(getenv("CHANNEL_STOCK_IMAGE_POOL_TARGET", "18"))
 CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS = int(getenv("CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS", "4"))
+CHANNEL_USE_AI_IMAGE_BRIEF = getenv("CHANNEL_USE_AI_IMAGE_BRIEF", "true").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_IMAGE_MIN_BRIEF_SCORE = int(getenv("CHANNEL_IMAGE_MIN_BRIEF_SCORE", "20"))
 CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "9500000"))
 CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
 MAX_RECENT_CHANNEL_IMAGE_KEYS = int(getenv("MAX_RECENT_CHANNEL_IMAGE_KEYS", "700"))
@@ -3812,18 +3814,468 @@ CHANNEL_BROAD_REAL_PHOTO_QUERIES = [
     "door",
     "hands",
 ]
-CHANNEL_SPACE_IMAGE_CATEGORIES = {"astrology", "zodiac", "moon", "planets", "fallback_space"}
+CHANNEL_SPACE_IMAGE_CATEGORIES = {"moon", "planets", "fallback_space"}
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 NASA_IMAGE_SEARCH_URL = "https://images-api.nasa.gov/search"
 CHANNEL_IMAGE_USER_AGENT = f"VoiceOfTheStarsBot/1.0 ({MAIN_BOT_URL})"
+CHANNEL_GENERIC_IMAGE_QUERIES = {
+    "moon",
+    "candle",
+    "notebook",
+    "water glass",
+    "night sky",
+    "night sky stars",
+    "starry sky",
+    "stars sky",
+    "galaxy stars",
+    "deep space nebula",
+    "moon night sky",
+    "northern lights sky",
+    "abstract night sky",
+    "space background stars",
+    "window",
+    "hands",
+}
+CHANNEL_ALWAYS_BAD_IMAGE_TERMS = (
+    "quote", "typography", "words", "text", "poster", "sign", "book cover",
+    "stamps", "coins", "postcard", "postcards", "love is pain", "meme",
+    "logo", "font", "lettering", "caption",
+)
+CHANNEL_IMAGE_SCENE_RULES = [
+    {
+        "id": "relationship_message",
+        "needles": (
+            "сообщ", "переписк", "ответ", "отвечает", "молчит", "исчез",
+            "жд", "сухо", "бывш", "отношен", "любов", "пара", "границ",
+        ),
+        "queries": [
+            "smartphone on table evening window",
+            "person holding phone by window evening",
+            "phone message blurred screen table",
+            "woman waiting by window phone",
+            "mobile phone coffee table evening",
+        ],
+        "required_groups": [("phone", "smartphone", "mobile"), ("window", "table", "hand", "person")],
+        "preferred_terms": ("message", "waiting", "evening", "coffee", "screen", "window"),
+        "negative_terms": ("galaxy", "nebula", "zodiac", "constellation"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "choice_or_crossroads",
+        "needles": ("выбор", "выбрать", "развил", "двер", "ключ", "решени", "ошиб", "направлен"),
+        "queries": [
+            "two doors hallway decision",
+            "crossroads path fog",
+            "keys on table decision",
+            "person standing at crossroads",
+            "open door light hallway",
+        ],
+        "required_groups": [("door", "crossroads", "path", "keys"), ("decision", "choice", "person", "hallway")],
+        "preferred_terms": ("fog", "light", "standing", "open", "way"),
+        "negative_terms": ("galaxy", "zodiac", "tarot deck"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "tarot_cards",
+        "needles": ("таро", "карта дня", "аркан", "расклад", "колод", "умеренность", "сила"),
+        "queries": [
+            "tarot cards on table natural light",
+            "single tarot card on table",
+            "three tarot cards spread table",
+            "tarot deck coffee cup",
+            "tarot cards notebook keys",
+        ],
+        "required_groups": [("tarot", "cards", "card", "deck")],
+        "preferred_terms": ("table", "spread", "notebook", "coffee", "candle"),
+        "negative_terms": ("playing cards", "pokemon", "business card", "credit card"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "astrology_chart",
+        "needles": (
+            "наталь", "астролог", "зодиак", "гороскоп", "аспект",
+            "транзит", "синастр", "венер", "меркур", "марс", "сатурн", "соляр",
+        ),
+        "queries": [
+            "astrology chart desk daylight",
+            "natal chart notebook pen",
+            "zodiac wheel chart on desk",
+            "star chart notebook candle",
+            "astrologer desk sunlight",
+        ],
+        "required_groups": [("astrology", "zodiac", "natal", "chart", "horoscope"), ("desk", "notebook", "pen", "paper")],
+        "preferred_terms": ("sunlight", "wheel", "consultation", "star", "map"),
+        "negative_terms": ("galaxy", "nebula", "telescope photo"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "moon_or_space",
+        "needles": ("луна", "лунн", "новолун", "полнолун", "лилит", "затмени", "планет", "созвезд", "звезд"),
+        "queries": [
+            "moon night sky",
+            "crescent moon dark sky",
+            "full moon night sky",
+            "moonlight window",
+            "constellation night sky",
+        ],
+        "required_groups": [("moon", "lunar", "night", "sky", "constellation", "stars", "planet")],
+        "preferred_terms": ("crescent", "full", "window", "space", "astronomy"),
+        "negative_terms": ("quote", "poster", "typography"),
+        "allow_nasa": True,
+    },
+    {
+        "id": "dream_journal",
+        "needles": ("сон", "снится", "сновид", "кровать", "подуш", "ноч", "засып"),
+        "queries": [
+            "dream journal bedside table",
+            "moonlight bedroom window notebook",
+            "notebook on bedside table night",
+            "rainy window notebook night",
+            "glass of water bedside moonlight",
+        ],
+        "required_groups": [("bedroom", "bedside", "bed", "window", "night"), ("journal", "notebook", "water", "rain")],
+        "preferred_terms": ("moonlight", "sleep", "dream", "quiet", "pillow"),
+        "negative_terms": ("galaxy", "tarot", "zodiac wheel"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "meditation_practice",
+        "needles": ("медитац", "дых", "пауза", "тело", "мантр", "рейки", "настройк", "практик", "минута"),
+        "queries": [
+            "meditation candle quiet room",
+            "person breathing by window",
+            "hands on notebook calm room",
+            "singing bowl candle",
+            "calm desk candle notebook",
+        ],
+        "required_groups": [("meditation", "breathing", "hands", "person", "room"), ("candle", "notebook", "bowl", "window")],
+        "preferred_terms": ("calm", "quiet", "practice", "mindful", "light"),
+        "negative_terms": ("galaxy", "zodiac", "poster"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "intuition_reality_check",
+        "needles": ("интуиц", "тревог", "провер", "факт", "ясност", "знак", "совпад", "случайн", "повторя"),
+        "queries": [
+            "phone notebook coffee table",
+            "person writing notebook by window",
+            "window reflection morning",
+            "clock night table",
+            "street reflection night",
+        ],
+        "required_groups": [("notebook", "journal", "phone", "clock", "window"), ("writing", "reflection", "table", "street", "coffee")],
+        "preferred_terms": ("calm", "check", "facts", "morning", "night"),
+        "negative_terms": ("galaxy", "nebula", "zodiac wheel"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "family_ancestors",
+        "needles": ("родов", "предк", "семейн", "фотограф", "письм", "дед", "бабуш", "чемодан", "комод", "ящик"),
+        "queries": [
+            "old family photo album",
+            "vintage family photographs on table",
+            "old letters family photos wooden drawer",
+            "antique suitcase family photos",
+            "old wooden dresser drawer photographs",
+        ],
+        "required_groups": [("family", "photo", "photographs", "album", "letters"), ("old", "vintage", "drawer", "suitcase")],
+        "preferred_terms": ("wooden", "memory", "ancestor", "paper", "portrait"),
+        "negative_terms": ("stamps", "coins", "postcard", "christmas"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "numerology_numbers",
+        "needles": ("нумер", "числ", "11:11", "22:22", "дата", "матриц", "час"),
+        "queries": [
+            "clock numbers notebook table",
+            "digital clock 11 11 bedside",
+            "calendar numbers notebook pen",
+            "handwritten numbers notebook",
+            "pocket watch notebook numbers",
+        ],
+        "required_groups": [("clock", "numbers", "calendar", "watch"), ("notebook", "table", "pen", "bedside")],
+        "preferred_terms": ("time", "digital", "handwritten", "date", "paper"),
+        "negative_terms": ("stock market", "calculator", "poster", "quote"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "crystals",
+        "needles": ("кристалл", "камн", "кварц", "аметист", "изумруд", "минерал", "талисман", "амулет"),
+        "queries": [
+            "amethyst crystal close up",
+            "quartz crystal on table",
+            "crystal cluster natural light",
+            "person holding crystal",
+            "minerals still life",
+        ],
+        "required_groups": [("crystal", "quartz", "amethyst", "gem", "stone", "mineral")],
+        "preferred_terms": ("close", "table", "hand", "natural", "cluster"),
+        "negative_terms": ("jewelry store", "poster", "quote"),
+        "allow_nasa": False,
+    },
+    {
+        "id": "coffee_divination",
+        "needles": ("кофе", "кофейн", "гуще", "чашк"),
+        "queries": [
+            "coffee cup on table close up",
+            "coffee grounds cup table",
+            "empty coffee cup saucer",
+            "coffee cup notebook candle",
+            "turkish coffee cup table",
+        ],
+        "required_groups": [("coffee", "cup", "mug"), ("table", "saucer", "grounds", "notebook")],
+        "preferred_terms": ("close", "morning", "candle", "reading", "empty"),
+        "negative_terms": ("logo", "poster", "quote"),
+        "allow_nasa": False,
+    },
+]
 
 
 def _plain_channel_text_for_image(text: str) -> str:
     text = re.sub(r"<br\s*/?>", " ", text or "", flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _channel_unique_texts(items, limit: int | None = None) -> list[str]:
+    seen = set()
+    unique = []
+    for item in items or []:
+        text = re.sub(r"\s+", " ", str(item or "")).strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(text)
+        if limit and len(unique) >= limit:
+            break
+    return unique
+
+
+def _channel_image_query_clean(query: str) -> str:
+    query = re.sub(r"\s+", " ", str(query or "")).strip()
+    query = re.sub(
+        r"\b(?:no|without|без)\s+(?:text|words|letters|logo|caption|watermark|текста)\b",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _channel_image_term_groups(terms) -> list[tuple[str, ...]]:
+    groups = []
+    for item in terms or []:
+        if isinstance(item, (list, tuple, set)):
+            group = tuple(
+                re.sub(r"\s+", " ", str(term or "")).strip().lower()
+                for term in item
+                if str(term or "").strip()
+            )
+        else:
+            group = (re.sub(r"\s+", " ", str(item or "")).strip().lower(),)
+        group = tuple(term for term in group if term)
+        if group and group not in groups:
+            groups.append(group)
+    return groups
+
+
+def _channel_brief_template() -> dict:
+    return {
+        "scene_ru": "",
+        "queries": [],
+        "required_groups": [],
+        "preferred_terms": [],
+        "negative_terms": list(CHANNEL_ALWAYS_BAD_IMAGE_TERMS),
+        "allow_nasa": False,
+        "strict": False,
+        "source": "rules",
+    }
+
+
+def _normalise_channel_image_brief(raw: dict | None) -> dict:
+    brief = _channel_brief_template()
+    if not isinstance(raw, dict):
+        return brief
+
+    brief["scene_ru"] = str(raw.get("scene_ru") or raw.get("scene") or "").strip()
+    brief["queries"] = _channel_unique_texts(
+        _channel_image_query_clean(query)
+        for query in (raw.get("queries") or raw.get("search_queries") or raw.get("image_queries") or [])
+    )[:8]
+
+    required_groups = raw.get("required_groups")
+    if not required_groups:
+        required_groups = raw.get("required_terms") or raw.get("must_have_terms") or []
+    brief["required_groups"] = _channel_image_term_groups(required_groups)[:5]
+    brief["preferred_terms"] = _channel_unique_texts(
+        str(term).lower()
+        for term in (raw.get("preferred_terms") or raw.get("keywords") or raw.get("soft_terms") or [])
+    )[:12]
+    brief["negative_terms"] = _channel_unique_texts(
+        list(CHANNEL_ALWAYS_BAD_IMAGE_TERMS)
+        + [str(term).lower() for term in (raw.get("negative_terms") or raw.get("avoid_terms") or [])]
+    )[:28]
+    brief["allow_nasa"] = bool(raw.get("allow_nasa"))
+    brief["strict"] = bool(raw.get("strict") or brief["queries"] or brief["required_groups"])
+    brief["source"] = str(raw.get("source") or "ai").strip() or "ai"
+    return brief
+
+
+def _merge_channel_image_briefs(primary: dict, fallback: dict) -> dict:
+    merged = _channel_brief_template()
+    merged["scene_ru"] = primary.get("scene_ru") or fallback.get("scene_ru") or ""
+    merged["queries"] = _channel_unique_texts(
+        list(primary.get("queries") or []) + list(fallback.get("queries") or []),
+        limit=10,
+    )
+    merged["required_groups"] = _channel_image_term_groups(
+        list(primary.get("required_groups") or []) + list(fallback.get("required_groups") or [])
+    )[:7]
+    merged["preferred_terms"] = _channel_unique_texts(
+        list(primary.get("preferred_terms") or []) + list(fallback.get("preferred_terms") or []),
+        limit=18,
+    )
+    merged["negative_terms"] = _channel_unique_texts(
+        list(CHANNEL_ALWAYS_BAD_IMAGE_TERMS)
+        + list(primary.get("negative_terms") or [])
+        + list(fallback.get("negative_terms") or []),
+        limit=34,
+    )
+    merged["allow_nasa"] = bool(primary.get("allow_nasa") or fallback.get("allow_nasa"))
+    merged["strict"] = bool(primary.get("strict") or fallback.get("strict"))
+    merged["source"] = "+".join(
+        part for part in (primary.get("source"), fallback.get("source")) if part
+    ) or "rules"
+    return merged
+
+
+def _channel_image_brief_from_rules(
+    topic_info: dict,
+    content_plan: dict | None = None,
+    post_text: str = "",
+) -> dict:
+    brief = _channel_brief_template()
+    category = topic_info.get("category", "")
+    visual = ((content_plan or {}).get("schedule") or topic_info.get("schedule") or {}).get("visual") or {}
+    combined = _plain_channel_text_for_image(
+        f"{topic_info.get('topic', '')} {visual.get('image_mood', '')} {post_text}"
+    )
+
+    visual_queries = [
+        _channel_image_query_clean(query)
+        for query in visual.get("image_queries", []) or []
+        if str(query).strip()
+    ]
+    if visual.get("image_mood"):
+        brief["scene_ru"] = str(visual.get("image_mood") or "").strip()
+    if visual_queries:
+        brief["queries"].extend(visual_queries)
+        brief["strict"] = True
+
+    matched_rules = []
+    for rule in CHANNEL_IMAGE_SCENE_RULES:
+        if any(needle in combined for needle in rule.get("needles", ())):
+            matched_rules.append(rule)
+
+    # For broad astrology/moon topics, keep the category guard even when the final text is abstract.
+    if not matched_rules:
+        category_rule_ids = {
+            "tarot": {"tarot_cards"},
+            "divination": {"tarot_cards", "coffee_divination"},
+            "astrology": {"astrology_chart"},
+            "zodiac": {"astrology_chart"},
+            "moon": {"moon_or_space"},
+            "planets": {"moon_or_space", "astrology_chart"},
+            "dreams": {"dream_journal"},
+            "meditation": {"meditation_practice"},
+            "numerology": {"numerology_numbers"},
+            "crystals": {"crystals"},
+            "karma": {"family_ancestors"},
+        }.get(category, set())
+        matched_rules = [
+            rule for rule in CHANNEL_IMAGE_SCENE_RULES
+            if rule.get("id") in category_rule_ids
+        ]
+
+    rule_queries = []
+    required_groups = []
+    preferred_terms = []
+    negative_terms = []
+    allow_nasa = False
+    for rule in matched_rules:
+        rule_queries.extend(rule.get("queries", []))
+        required_groups.extend(rule.get("required_groups", []))
+        preferred_terms.extend(rule.get("preferred_terms", []))
+        negative_terms.extend(rule.get("negative_terms", []))
+        allow_nasa = allow_nasa or bool(rule.get("allow_nasa"))
+
+    # Rule queries are more semantic than schedule mood, so put them first.
+    brief["queries"] = _channel_unique_texts(
+        [_channel_image_query_clean(query) for query in rule_queries]
+        + list(brief["queries"]),
+        limit=10,
+    )
+    brief["required_groups"] = _channel_image_term_groups(required_groups)[:7]
+    brief["preferred_terms"] = _channel_unique_texts(preferred_terms, limit=18)
+    brief["negative_terms"] = _channel_unique_texts(
+        list(CHANNEL_ALWAYS_BAD_IMAGE_TERMS) + negative_terms,
+        limit=34,
+    )
+    brief["allow_nasa"] = allow_nasa or category in CHANNEL_SPACE_IMAGE_CATEGORIES
+    brief["strict"] = bool(brief["strict"] or matched_rules)
+    return brief
+
+
+async def _build_channel_image_brief(
+    topic_info: dict,
+    content_plan: dict | None = None,
+    post_text: str = "",
+) -> dict:
+    rule_brief = _channel_image_brief_from_rules(topic_info, content_plan, post_text)
+    if not CHANNEL_USE_AI_IMAGE_BRIEF or not OPENROUTER_KEY or not post_text.strip():
+        return rule_brief
+
+    visual = ((content_plan or {}).get("schedule") or topic_info.get("schedule") or {}).get("visual") or {}
+    post_plain = _plain_channel_text_for_image(post_text)[:1800]
+    prompt = (
+        "Ты подбираешь brief для поиска реальной фотографии к посту Telegram-канала.\n"
+        "Нужно не мистическое настроение вообще, а конкретная сцена, которая видимо отражает смысл текста.\n"
+        "Предпочитай бытовые предметы, место и действие. Таро, Луну, свечи, звезды и карты используй только если они реально центральны в посте.\n"
+        "Ответь строго JSON без markdown и без пояснений.\n\n"
+        "Поля JSON:\n"
+        "- scene_ru: короткое описание сцены на русском.\n"
+        "- search_queries: 4-6 английских запросов для Pexels/Unsplash/Openverse, каждый 3-7 слов.\n"
+        "- required_terms: 3-7 английских слов или коротких фраз, которые должны быть в метаданных или запросе.\n"
+        "- preferred_terms: 4-10 английских слов для мягкого ранжирования.\n"
+        "- negative_terms: 3-10 английских слов, чего избегать.\n"
+        "- allow_nasa: true только если нужна реальная Луна, планеты, космос, созвездия или астрономия.\n"
+        "- strict: true.\n\n"
+        "Запреты для картинки: readable text, quotes, posters, typography, logos, memes, screenshots.\n\n"
+        f"Категория: {topic_info.get('category', '')}\n"
+        f"Тема: {topic_info.get('topic', '')[:500]}\n"
+        f"Настроение картинки из расписания: {visual.get('image_mood', '')}\n"
+        f"Готовый пост: {post_plain}\n"
+    )
+    try:
+        answer = await ask_ai(prompt, max_tokens=550)
+        ai_brief = _normalise_channel_image_brief(extract_json_from_text(answer))
+        if not ai_brief.get("queries") and not ai_brief.get("required_groups"):
+            return rule_brief
+        merged = _merge_channel_image_briefs(ai_brief, rule_brief)
+        print(
+            "[channel_image] visual brief "
+            f"source={merged.get('source')} scene={merged.get('scene_ru')[:120]} "
+            f"queries={merged.get('queries')[:3]}"
+        )
+        return merged
+    except Exception as e:
+        print(f"[channel_image] visual brief error: {e}")
+        return rule_brief
 
 
 def _specific_channel_image_queries(text: str) -> list[str]:
@@ -3918,7 +4370,13 @@ def _specific_channel_image_queries(text: str) -> list[str]:
     return unique
 
 
-def _has_concrete_channel_image_queries(topic_info: dict, post_text: str = "") -> bool:
+def _has_concrete_channel_image_queries(
+    topic_info: dict,
+    post_text: str = "",
+    visual_brief: dict | None = None,
+) -> bool:
+    if visual_brief and (visual_brief.get("queries") or visual_brief.get("required_groups")):
+        return True
     visual = (topic_info.get("schedule") or {}).get("visual") or {}
     if visual.get("image_queries"):
         return True
@@ -3926,10 +4384,20 @@ def _has_concrete_channel_image_queries(topic_info: dict, post_text: str = "") -
     return bool(_specific_channel_image_queries(combined))
 
 
-def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str = "") -> list[str]:
+def _channel_stock_image_queries(
+    topic_info: dict,
+    provider: str,
+    post_text: str = "",
+    visual_brief: dict | None = None,
+) -> list[str]:
     category = topic_info.get("category", "")
     combined_text = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
     visual = (topic_info.get("schedule") or {}).get("visual") or {}
+    brief_queries = [
+        _channel_image_query_clean(query)
+        for query in (visual_brief or {}).get("queries", []) or []
+        if str(query).strip()
+    ]
     visual_queries = [
         str(query).strip()
         for query in visual.get("image_queries", []) or []
@@ -3942,11 +4410,17 @@ def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str
         specific_queries = _specific_channel_image_queries(combined_text)
         category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
         random.shuffle(category_queries)
-        queries = visual_queries + specific_queries + category_queries
-        if provider in {"openverse", "wikimedia"}:
+        queries = brief_queries + visual_queries + specific_queries + category_queries
+        if provider in {"openverse", "wikimedia"} and not (visual_brief or {}).get("strict"):
             queries.extend(CHANNEL_BROAD_REAL_PHOTO_QUERIES)
     if provider == "nasa":
-        if category == "fallback_space":
+        if visual_brief and visual_brief.get("allow_nasa") and visual_brief.get("queries"):
+            space_queries = [
+                query for query in visual_brief.get("queries", [])
+                if any(token in query.lower() for token in ("moon", "lunar", "planet", "space", "star", "constellation", "galaxy", "nebula"))
+            ]
+            queries = space_queries or ["moon", "night sky stars", "star field", "galaxy", "nebula"]
+        elif category == "fallback_space":
             queries = ["galaxy", "nebula", "star field", "night sky stars", "moon"]
         elif category == "moon":
             queries = ["moon surface", "lunar eclipse", "crescent moon", "full moon", "moon night sky"]
@@ -3972,7 +4446,12 @@ def _is_space_image_topic(topic_info: dict) -> bool:
     return topic_info.get("category") in CHANNEL_SPACE_IMAGE_CATEGORIES
 
 
-def _channel_stock_provider_order(topic_info: dict, provider: str | None = None, post_text: str = "") -> list[str]:
+def _channel_stock_provider_order(
+    topic_info: dict,
+    provider: str | None = None,
+    post_text: str = "",
+    visual_brief: dict | None = None,
+) -> list[str]:
     provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
     if provider in {"openverse", "pexels", "unsplash", "nasa", "wikimedia"}:
         return [provider]
@@ -3980,14 +4459,14 @@ def _channel_stock_provider_order(topic_info: dict, provider: str | None = None,
         return []
 
     providers = []
-    if _has_concrete_channel_image_queries(topic_info, post_text):
+    if _has_concrete_channel_image_queries(topic_info, post_text, visual_brief):
         if PEXELS_API_KEY:
             providers.append("pexels")
         if UNSPLASH_ACCESS_KEY:
             providers.append("unsplash")
     providers.append("openverse")
     providers.append("wikimedia")
-    if _is_space_image_topic(topic_info) or _channel_real_photo_required(provider):
+    if _is_space_image_topic(topic_info) or bool((visual_brief or {}).get("allow_nasa")):
         providers.append("nasa")
     if PEXELS_API_KEY:
         providers.append("pexels")
@@ -4090,23 +4569,63 @@ def _dedupe_stock_candidates(candidates: list[dict]) -> list[dict]:
     return unique
 
 
-def _stock_candidate_relevance_score(candidate: dict) -> int:
+def _channel_image_contains_any(haystack: str, terms) -> bool:
+    return any(str(term or "").lower() in haystack for term in terms if str(term or "").strip())
+
+
+def _stock_candidate_relevance_score(candidate: dict, visual_brief: dict | None = None) -> int:
     query = str(candidate.get("query") or "").lower()
     title_haystack = str(candidate.get("title") or "").lower()
-    full_haystack = " ".join(
+    metadata_haystack = " ".join(
         str(candidate.get(field) or "").lower()
         for field in ("title", "page_url", "download_url")
     )
+    full_haystack = f"{metadata_haystack} {query}"
     score = 30 - int(candidate.get("query_rank", 99)) * 5
     source = str(candidate.get("source") or "").lower()
     if source in {"pexels", "unsplash"}:
         score += 3
 
-    common_bad = (
-        "quote", "typography", "words", "text", "poster", "sign", "book cover",
-        "stamps", "coins", "postcard", "postcards", "love is pain",
-    )
-    score -= sum(10 for token in common_bad if token in full_haystack)
+    score -= sum(10 for token in CHANNEL_ALWAYS_BAD_IMAGE_TERMS if token in full_haystack)
+
+    if visual_brief:
+        if source == "nasa" and not visual_brief.get("allow_nasa"):
+            score -= 45
+        if visual_brief.get("strict") and query.strip() in CHANNEL_GENERIC_IMAGE_QUERIES:
+            score -= 28
+
+        for group in (visual_brief.get("required_groups") or [])[:7]:
+            terms = [str(term or "").lower() for term in group if str(term or "").strip()]
+            if not terms:
+                continue
+            if _channel_image_contains_any(metadata_haystack, terms):
+                score += 18
+            elif _channel_image_contains_any(query, terms):
+                score += 7
+            else:
+                score -= 14
+
+        preferred_hits = 0
+        for term in (visual_brief.get("preferred_terms") or [])[:18]:
+            term = str(term or "").lower().strip()
+            if not term:
+                continue
+            if term in metadata_haystack:
+                score += 5
+                preferred_hits += 1
+            elif term in query:
+                score += 2
+                preferred_hits += 1
+        score += min(preferred_hits, 5)
+
+        for term in (visual_brief.get("negative_terms") or [])[:34]:
+            term = str(term or "").lower().strip()
+            if not term:
+                continue
+            if term in metadata_haystack:
+                score -= 16
+            elif term in query:
+                score -= 7
 
     if any(token in query for token in ("family", "photo", "album", "suitcase", "dresser", "drawer")):
         good = ("family", "photo", "photos", "album", "scrapbook", "vintage", "elderly", "portrait", "drawer", "dresser", "suitcase")
@@ -4277,15 +4796,18 @@ async def _query_stock_provider(
     provider: str,
     topic_info: dict,
     post_text: str = "",
+    visual_brief: dict | None = None,
 ) -> list[dict]:
-    queries = _channel_stock_image_queries(topic_info, provider, post_text)
+    queries = _channel_stock_image_queries(topic_info, provider, post_text, visual_brief)
     combined_text = _plain_channel_text_for_image(f"{topic_info.get('topic', '')} {post_text}")
-    specific_count = len(_specific_channel_image_queries(combined_text))
+    specific_count = len((visual_brief or {}).get("queries") or []) + len(_specific_channel_image_queries(combined_text))
     candidates = []
     max_page = max(1, CHANNEL_STOCK_IMAGE_MAX_PAGE)
     query_attempts = CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS
     if provider in {"openverse", "wikimedia", "nasa"}:
         query_attempts = max(query_attempts, 10)
+    if visual_brief and visual_brief.get("strict"):
+        query_attempts = max(query_attempts, 8)
     attempts = max(1, min(query_attempts, len(queries)))
 
     for rank, query in enumerate(queries[:attempts]):
@@ -4405,8 +4927,9 @@ async def _generate_stock_channel_image_asset(
     content_plan: dict | None = None,
     provider: str | None = None,
     post_text: str = "",
+    visual_brief: dict | None = None,
 ) -> str:
-    providers = _channel_stock_provider_order(topic_info, provider, post_text)
+    providers = _channel_stock_provider_order(topic_info, provider, post_text, visual_brief)
     if not providers:
         return ""
 
@@ -4414,7 +4937,7 @@ async def _generate_stock_channel_image_asset(
     timeout = aiohttp.ClientTimeout(total=CHANNEL_STOCK_IMAGE_TIMEOUT)
     async with aiohttp.ClientSession(timeout=timeout) as image_session:
         for provider in providers:
-            pool = await _query_stock_provider(image_session, provider, topic_info, post_text)
+            pool = await _query_stock_provider(image_session, provider, topic_info, post_text, visual_brief)
             if not pool:
                 print(f"[channel_image] {provider} returned empty pool")
                 continue
@@ -4422,14 +4945,29 @@ async def _generate_stock_channel_image_asset(
             if not unused_pool:
                 print(f"[channel_image] {provider} pool exhausted by recent image dedupe ({len(pool)} candidates)")
                 continue
-            unused_pool.sort(key=lambda candidate: (-_stock_candidate_relevance_score(candidate), random.random()))
-            for candidate in unused_pool[:8]:
+            scored_pool = [
+                (_stock_candidate_relevance_score(candidate, visual_brief), candidate)
+                for candidate in unused_pool
+            ]
+            scored_pool.sort(key=lambda item: (-item[0], random.random()))
+            if visual_brief and visual_brief.get("strict"):
+                strong_pool = [
+                    (score, candidate)
+                    for score, candidate in scored_pool
+                    if score >= CHANNEL_IMAGE_MIN_BRIEF_SCORE
+                ]
+                if not strong_pool:
+                    best_score = scored_pool[0][0] if scored_pool else "-"
+                    print(f"[channel_image] {provider} no strong visual matches (best={best_score})")
+                    continue
+                scored_pool = strong_pool
+            for score, candidate in scored_pool[:8]:
                 image_path = await _download_stock_image_candidate(image_session, candidate)
                 if image_path:
                     _remember_channel_image(candidate)
                     print(
                         f"[channel_image] selected {candidate.get('source')} image "
-                        f"{candidate.get('id') or candidate.get('page_url') or ''}"
+                        f"{candidate.get('id') or candidate.get('page_url') or ''} score={score}"
                     )
                     return image_path
     return ""
@@ -4921,6 +5459,7 @@ def _build_ai_channel_image_prompt(
     topic_info: dict,
     author_info: dict | None = None,
     content_plan: dict | None = None,
+    visual_brief: dict | None = None,
 ) -> str:
     rng = random.Random(uuid.uuid4().hex)
     scene_variants = {
@@ -5017,13 +5556,26 @@ def _build_ai_channel_image_prompt(
     topic_hint = (topic_info.get("topic") or "").replace("\n", " ")[:180]
     visual = (topic_info.get("schedule") or {}).get("visual") or {}
     image_mood = str(visual.get("image_mood") or "").strip()
+    brief_scene = str((visual_brief or {}).get("scene_ru") or "").strip()
+    brief_queries = ", ".join((visual_brief or {}).get("queries", [])[:4])
+    brief_required = ", ".join(
+        "/".join(group)
+        for group in (visual_brief or {}).get("required_groups", [])[:4]
+    )
+    brief_hint = ""
+    if brief_scene or brief_queries or brief_required:
+        brief_hint = (
+            f"Concrete visual brief: {brief_scene}. "
+            f"Search scene keywords: {brief_queries}. "
+            f"Must visibly include: {brief_required}. "
+        )
     role_hint = ""
     if author_info:
         role_hint = "tarot reader atmosphere" if author_info.get("type") == "tarot" else "astrologer workspace atmosphere"
 
     return (
         f"{scene_text}. {style}. {lighting}. {camera}. "
-        f"Theme hint: {topic_hint}. Visual mood: {image_mood}. {role_hint}. "
+        f"{brief_hint}Theme hint: {topic_hint}. Visual mood: {image_mood}. {role_hint}. "
         "No text, no readable words, no letters, no logo, no watermark, no poster, no infographic, no list layout, "
         "no UI card, no flat vector icons, no abstract geometric symbols, no decorative template border."
     ).strip()
@@ -5089,11 +5641,19 @@ async def generate_channel_image_asset(
         provider = "stock"
     if provider in {"off", "none"}:
         return ""
+    visual_brief = await _build_channel_image_brief(topic_info, content_plan, post_text)
     if provider in {"local", "pillow"}:
         return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
 
     if provider not in {"local", "pillow", "off", "none", "pollinations", "ai"}:
-        image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan, provider, post_text)
+        image_path = await _generate_stock_channel_image_asset(
+            topic_info,
+            author_info,
+            content_plan,
+            provider,
+            post_text,
+            visual_brief,
+        )
         if image_path:
             return image_path
 
@@ -5103,7 +5663,7 @@ async def generate_channel_image_asset(
         and provider in {"pollinations", "ai", "all"}
     ):
         scene = _select_ai_image_scene(topic_info, author_info)
-        prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan)
+        prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan, visual_brief)
         image_path = await _generate_pollinations_channel_image(prompt)
         if image_path:
             return image_path
