@@ -3786,6 +3786,11 @@ CHANNEL_STOCK_IMAGE_QUERIES = {
 }
 
 CHANNEL_EMERGENCY_STOCK_IMAGE_QUERIES = [
+    "moon",
+    "candle",
+    "water glass",
+    "notebook",
+    "night sky",
     "night sky stars",
     "starry sky",
     "galaxy stars",
@@ -3794,6 +3799,18 @@ CHANNEL_EMERGENCY_STOCK_IMAGE_QUERIES = [
     "northern lights sky",
     "abstract night sky",
     "space background stars",
+]
+CHANNEL_BROAD_REAL_PHOTO_QUERIES = [
+    "moon",
+    "candle",
+    "notebook",
+    "water glass",
+    "night sky stars",
+    "starry sky",
+    "window",
+    "keys",
+    "door",
+    "hands",
 ]
 CHANNEL_SPACE_IMAGE_CATEGORIES = {"astrology", "zodiac", "moon", "planets", "fallback_space"}
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
@@ -3926,7 +3943,9 @@ def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str
         category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
         random.shuffle(category_queries)
         queries = visual_queries + specific_queries + category_queries
-    if provider in {"nasa", "wikimedia"}:
+        if provider in {"openverse", "wikimedia"}:
+            queries.extend(CHANNEL_BROAD_REAL_PHOTO_QUERIES)
+    if provider == "nasa":
         if category == "fallback_space":
             queries = ["galaxy", "nebula", "star field", "night sky stars", "moon"]
         elif category == "moon":
@@ -3935,6 +3954,17 @@ def _channel_stock_image_queries(topic_info: dict, provider: str, post_text: str
             queries = ["planet space", "solar system", "mercury planet", "mars planet", "saturn planet"]
         elif category in {"astrology", "zodiac"}:
             queries = ["constellation", "night sky stars", "astronomy chart", "celestial map", "telescope stars"]
+        else:
+            queries = ["moon", "night sky stars", "star field", "galaxy", "nebula"]
+    elif provider == "wikimedia" and category == "fallback_space":
+        queries = ["moon", "night sky stars", "galaxy", "starry sky", "candle"]
+    seen = set()
+    unique = []
+    for query in queries:
+        if query not in seen:
+            seen.add(query)
+            unique.append(query)
+    queries = unique
     return queries
 
 
@@ -3956,9 +3986,13 @@ def _channel_stock_provider_order(topic_info: dict, provider: str | None = None,
         if UNSPLASH_ACCESS_KEY:
             providers.append("unsplash")
     providers.append("openverse")
-    if _is_space_image_topic(topic_info):
-        providers.extend(["nasa", "wikimedia"])
-    providers.extend(["pexels", "unsplash"])
+    providers.append("wikimedia")
+    if _is_space_image_topic(topic_info) or _channel_real_photo_required(provider):
+        providers.append("nasa")
+    if PEXELS_API_KEY:
+        providers.append("pexels")
+    if UNSPLASH_ACCESS_KEY:
+        providers.append("unsplash")
     providers = [provider for idx, provider in enumerate(providers) if provider not in providers[:idx]]
     return providers
 
@@ -4249,7 +4283,10 @@ async def _query_stock_provider(
     specific_count = len(_specific_channel_image_queries(combined_text))
     candidates = []
     max_page = max(1, CHANNEL_STOCK_IMAGE_MAX_PAGE)
-    attempts = max(1, min(CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS, len(queries)))
+    query_attempts = CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS
+    if provider in {"openverse", "wikimedia", "nasa"}:
+        query_attempts = max(query_attempts, 10)
+    attempts = max(1, min(query_attempts, len(queries)))
 
     for rank, query in enumerate(queries[:attempts]):
         page_limit = min(max_page, 4) if rank >= specific_count else 1
@@ -4266,6 +4303,8 @@ async def _query_stock_provider(
             batch = await _query_nasa_images(session, query, page)
         else:
             batch = []
+        if not batch:
+            print(f"[channel_image] {provider} no candidates for query '{query}' page {page}")
         for candidate in batch:
             candidate["query"] = query
             candidate["query_rank"] = rank
@@ -4337,13 +4376,17 @@ async def _download_stock_image_candidate(
                 content_type = response.headers.get("Content-Type", "").lower()
                 content_length = int(response.headers.get("Content-Length") or 0)
                 if response.status != 200:
+                    print(f"[channel_image] download status {response.status} from {candidate.get('source')}: {url[:120]}")
                     continue
                 if content_length and content_length > CHANNEL_STOCK_IMAGE_MAX_BYTES:
+                    print(f"[channel_image] download too large from {candidate.get('source')}: {content_length} bytes")
                     continue
                 data = await response.read()
                 if len(data) < CHANNEL_STOCK_IMAGE_MIN_BYTES or len(data) > CHANNEL_STOCK_IMAGE_MAX_BYTES:
+                    print(f"[channel_image] download rejected from {candidate.get('source')}: {len(data)} bytes")
                     continue
                 if content_type and not content_type.startswith("image/"):
+                    print(f"[channel_image] download non-image from {candidate.get('source')}: {content_type}")
                     continue
                 ext = _stock_image_ext(content_type, url)
                 path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}{ext}")
@@ -4372,7 +4415,13 @@ async def _generate_stock_channel_image_asset(
     async with aiohttp.ClientSession(timeout=timeout) as image_session:
         for provider in providers:
             pool = await _query_stock_provider(image_session, provider, topic_info, post_text)
+            if not pool:
+                print(f"[channel_image] {provider} returned empty pool")
+                continue
             unused_pool = [candidate for candidate in pool if _stock_image_key(candidate) not in used_keys]
+            if not unused_pool:
+                print(f"[channel_image] {provider} pool exhausted by recent image dedupe ({len(pool)} candidates)")
+                continue
             unused_pool.sort(key=lambda candidate: (-_stock_candidate_relevance_score(candidate), random.random()))
             for candidate in unused_pool[:8]:
                 image_path = await _download_stock_image_candidate(image_session, candidate)
