@@ -3562,8 +3562,9 @@ CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "950
 CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
 MAX_RECENT_CHANNEL_IMAGE_KEYS = int(getenv("MAX_RECENT_CHANNEL_IMAGE_KEYS", "700"))
 CHANNEL_REQUIRE_IMAGE = getenv("CHANNEL_REQUIRE_IMAGE", "true").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_REQUIRE_REAL_PHOTO = getenv("CHANNEL_REQUIRE_REAL_PHOTO", "true").strip().lower() in {"1", "true", "yes", "on"}
 CHANNEL_ALLOW_AI_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_AI_IMAGE_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
-CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
 POLLINATIONS_API_KEY = getenv("POLLINATIONS_API_KEY", "")
 POLLINATIONS_IMAGE_MODEL = getenv("POLLINATIONS_IMAGE_MODEL", "flux")
 POLLINATIONS_IMAGE_TIMEOUT = int(getenv("POLLINATIONS_IMAGE_TIMEOUT", "90"))
@@ -4820,10 +4821,16 @@ def _channel_image_required(provider: str | None = None) -> bool:
     return CHANNEL_REQUIRE_IMAGE and provider not in {"off", "none"}
 
 
+def _channel_real_photo_required(provider: str | None = None) -> bool:
+    provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
+    return CHANNEL_REQUIRE_REAL_PHOTO and provider not in {"off", "none"}
+
+
 def _should_use_local_channel_image_fallback(provider: str | None = None) -> bool:
     provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
     return (
         provider not in {"off", "none"}
+        and not _channel_real_photo_required(provider)
         and (
             provider in {"local", "pillow"}
             or CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK
@@ -5027,6 +5034,8 @@ async def generate_channel_image_asset(
 ) -> str:
     """Pick a real stock/open image first; AI/local rendering is only a fallback."""
     provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
+    if _channel_real_photo_required(provider) and provider in {"local", "pillow", "pollinations", "ai"}:
+        provider = "stock"
     if provider in {"pollinations", "ai"} and not CHANNEL_ALLOW_AI_IMAGE_FALLBACK:
         provider = "stock"
     if provider in {"off", "none"}:
@@ -5039,7 +5048,11 @@ async def generate_channel_image_asset(
         if image_path:
             return image_path
 
-    if CHANNEL_ALLOW_AI_IMAGE_FALLBACK and provider in {"pollinations", "ai", "all"}:
+    if (
+        CHANNEL_ALLOW_AI_IMAGE_FALLBACK
+        and not _channel_real_photo_required(provider)
+        and provider in {"pollinations", "ai", "all"}
+    ):
         scene = _select_ai_image_scene(topic_info, author_info)
         prompt = _build_ai_channel_image_prompt(scene, topic_info, author_info, content_plan)
         image_path = await _generate_pollinations_channel_image(prompt)
@@ -6061,7 +6074,7 @@ async def post_to_telegram_channel(post: dict) -> bool:
     text = post["text"]
     image_path = _resolve_channel_post_image_path(post)
     if _channel_image_required() and not image_path:
-        await _notify_channel_publish_issue("Channel post image generation failed; post was not published without an image.")
+        await _notify_channel_publish_issue("Channel real photo selection failed; post was not published without an image.")
         return False
 
     try:
@@ -6143,7 +6156,7 @@ async def post_to_channel() -> bool:
         }
         image_path = _resolve_channel_post_image_path(post_payload)
         if _channel_image_required() and not image_path:
-            await _notify_channel_publish_issue("Channel post image generation failed; post was not published without an image.")
+            await _notify_channel_publish_issue("Channel real photo selection failed; post was not published without an image.")
             return False
 
         try:
