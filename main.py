@@ -3561,11 +3561,13 @@ CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS = int(getenv("CHANNEL_STOCK_IMAGE_QUERY_ATTEM
 CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "9500000"))
 CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
 MAX_RECENT_CHANNEL_IMAGE_KEYS = int(getenv("MAX_RECENT_CHANNEL_IMAGE_KEYS", "700"))
+CHANNEL_REQUIRE_IMAGE = getenv("CHANNEL_REQUIRE_IMAGE", "true").strip().lower() in {"1", "true", "yes", "on"}
 CHANNEL_ALLOW_AI_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_AI_IMAGE_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
-CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK = getenv("CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
 POLLINATIONS_API_KEY = getenv("POLLINATIONS_API_KEY", "")
 POLLINATIONS_IMAGE_MODEL = getenv("POLLINATIONS_IMAGE_MODEL", "flux")
 POLLINATIONS_IMAGE_TIMEOUT = int(getenv("POLLINATIONS_IMAGE_TIMEOUT", "90"))
+TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = 8
 RECENT_CONTENT_SIGNATURES: list[str] = []
@@ -4813,6 +4815,23 @@ def _generate_local_channel_image_asset(
         return ""
 
 
+def _channel_image_required(provider: str | None = None) -> bool:
+    provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
+    return CHANNEL_REQUIRE_IMAGE and provider not in {"off", "none"}
+
+
+def _should_use_local_channel_image_fallback(provider: str | None = None) -> bool:
+    provider = (provider or CHANNEL_IMAGE_PROVIDER).strip().lower()
+    return (
+        provider not in {"off", "none"}
+        and (
+            provider in {"local", "pillow"}
+            or CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK
+            or _channel_image_required(provider)
+        )
+    )
+
+
 def _select_ai_image_scene(topic_info: dict, author_info: dict | None = None) -> str:
     rng = random.Random(uuid.uuid4().hex)
     category = topic_info.get("category", "")
@@ -5010,8 +5029,10 @@ async def generate_channel_image_asset(
     provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
     if provider in {"pollinations", "ai"} and not CHANNEL_ALLOW_AI_IMAGE_FALLBACK:
         provider = "stock"
-    if provider in {"local", "pillow"} and not CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK:
-        provider = "stock"
+    if provider in {"off", "none"}:
+        return ""
+    if provider in {"local", "pillow"}:
+        return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
 
     if provider not in {"local", "pillow", "off", "none", "pollinations", "ai"}:
         image_path = await _generate_stock_channel_image_asset(topic_info, author_info, content_plan, provider, post_text)
@@ -5029,7 +5050,8 @@ async def generate_channel_image_asset(
     if image_path:
         return image_path
 
-    if provider in {"local", "pillow"} or CHANNEL_ALLOW_LOCAL_IMAGE_FALLBACK:
+    if _should_use_local_channel_image_fallback(provider):
+        print("[channel_image] external image unavailable, using local fallback")
         return _generate_local_channel_image_asset(topic_info, author_info, content_plan)
     return ""
 
@@ -5923,6 +5945,7 @@ async def build_channel_post() -> dict | None:
         "core_text": core_text,
         "image_path": image_path,
         "topic_info": topic_info,
+        "author_info": author_info,
         "content_plan": content_plan,
         "schedule": topic_info.get("schedule") or {},
     }
@@ -5983,28 +6006,72 @@ async def check_channel_publish_access(notify: bool = False) -> bool:
         return False
 
 
+def _plain_channel_publish_text(text: str) -> str:
+    return re.sub(r'</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>', '', text)
+
+
+def _resolve_channel_post_image_path(post: dict) -> str:
+    image_path = post.get("image_path") or ""
+    if image_path and os.path.exists(image_path):
+        return image_path
+
+    if image_path:
+        print(f"[channel_image] generated image is missing on disk: {image_path}")
+
+    provider = CHANNEL_IMAGE_PROVIDER.strip().lower()
+    if not _should_use_local_channel_image_fallback(provider):
+        return ""
+
+    image_path = _generate_local_channel_image_asset(
+        post.get("topic_info") or {},
+        post.get("author_info"),
+        post.get("content_plan"),
+    )
+    if image_path and os.path.exists(image_path):
+        post["image_path"] = image_path
+        return image_path
+    return ""
+
+
+async def _send_channel_post_payload(body: str, parse_mode: str | None, image_path: str = "") -> None:
+    if image_path and os.path.exists(image_path):
+        photo = FSInputFile(image_path)
+        if len(body or "") <= TELEGRAM_PHOTO_CAPTION_LIMIT:
+            await bot.send_photo(CHANNEL_ID, photo=photo, caption=body, parse_mode=parse_mode)
+            return
+
+        await bot.send_photo(CHANNEL_ID, photo=photo)
+        try:
+            await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
+        except Exception as text_error:
+            if parse_mode is None:
+                raise
+            print(f"[autoposting] Telegram rejected HTML after photo, sending plain text: {text_error}")
+            await bot.send_message(CHANNEL_ID, _plain_channel_publish_text(body), parse_mode=None)
+        return
+
+    await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
+
+
 async def post_to_telegram_channel(post: dict) -> bool:
     if not CHANNEL_ID:
         await _notify_channel_publish_issue("CHANNEL_ID is empty")
         return False
 
     text = post["text"]
-    image_path = post.get("image_path")
-
-    async def _send(body: str, parse_mode: str | None):
-        if image_path and os.path.exists(image_path):
-            await bot.send_photo(CHANNEL_ID, photo=FSInputFile(image_path), caption=body, parse_mode=parse_mode)
-        else:
-            await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
+    image_path = _resolve_channel_post_image_path(post)
+    if _channel_image_required() and not image_path:
+        await _notify_channel_publish_issue("Channel post image generation failed; post was not published without an image.")
+        return False
 
     try:
-        await _send(text, "HTML")
+        await _send_channel_post_payload(text, "HTML", image_path)
         return True
     except Exception as e:
         print(f"[autoposting] Telegram rejected HTML, sending plain text: {e}")
         try:
-            plain = re.sub(r'</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>', '', text)
-            await _send(plain, None)
+            plain = _plain_channel_publish_text(text)
+            await _send_channel_post_payload(plain, None, image_path)
             return True
         except Exception as plain_error:
             print(f"[autoposting] Telegram publish error: {plain_error}")
@@ -6068,20 +6135,24 @@ async def post_to_channel() -> bool:
             text = with_channel_final_suffix(core_text, author_signature)
 
         image_path = await generate_channel_image_asset(topic_info, author_info, content_plan, core_text)
-
-        async def _send(body: str, parse_mode: str | None):
-            if image_path and os.path.exists(image_path):
-                await bot.send_photo(CHANNEL_ID, photo=FSInputFile(image_path), caption=body, parse_mode=parse_mode)
-            else:
-                await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
+        post_payload = {
+            "image_path": image_path,
+            "topic_info": topic_info,
+            "author_info": author_info,
+            "content_plan": content_plan,
+        }
+        image_path = _resolve_channel_post_image_path(post_payload)
+        if _channel_image_required() and not image_path:
+            await _notify_channel_publish_issue("Channel post image generation failed; post was not published without an image.")
+            return False
 
         try:
-            await _send(text, "HTML")
+            await _send_channel_post_payload(text, "HTML", image_path)
         except Exception as e:
             # Если Telegram не принял HTML (битые теги), шлём чистый текст
             print(f"[Автопостинг] HTML отклонён Telegram, шлю plain: {e}")
-            plain = re.sub(r'</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>', '', text)
-            await _send(plain, None)
+            plain = _plain_channel_publish_text(text)
+            await _send_channel_post_payload(plain, None, image_path)
 
         msk = _msk_now()
         _remember_channel_topic(topic_info)
