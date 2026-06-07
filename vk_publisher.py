@@ -83,6 +83,13 @@ class VKPostResult:
         return f"wall{self.owner_id}_{self.post_id}"
 
 
+@dataclass(frozen=True)
+class VKPublishAttempt:
+    ok: bool
+    wall_id: str = ""
+    error: str = ""
+
+
 def is_vk_configured() -> bool:
     return bool((os.getenv("VK_ACCESS_TOKEN") or "").strip() and _parse_group_id(os.getenv("VK_GROUP_ID") or ""))
 
@@ -104,13 +111,18 @@ async def post_channel_payload_to_vk(post: Mapping[str, Any]) -> VKPostResult:
 
 
 async def try_post_channel_payload_to_vk(post: Mapping[str, Any]) -> bool:
+    return (await post_channel_payload_to_vk_attempt(post)).ok
+
+
+async def post_channel_payload_to_vk_attempt(post: Mapping[str, Any]) -> VKPublishAttempt:
     try:
         result = await post_channel_payload_to_vk(post)
         print(f"[vk_autoposting] published {result.wall_id}")
-        return True
+        return VKPublishAttempt(ok=True, wall_id=result.wall_id)
     except Exception as exc:
-        print(f"[vk_autoposting] publish error: {_safe_error_text(exc)}")
-        return False
+        error = _safe_error_text(exc)
+        print(f"[vk_autoposting] publish error: {error}")
+        return VKPublishAttempt(ok=False, error=error)
 
 
 class VKPublisher:
@@ -337,4 +349,3 @@ def _safe_error_text(error: Exception) -> str:
     if token:
         text = text.replace(token, "<secret>")
     return text[:1000]
-

@@ -25,7 +25,7 @@ from ckassa_payments import (
     make_order_id,
     payment_identity,
 )
-from vk_publisher import is_vk_configured, try_post_channel_payload_to_vk
+from vk_publisher import is_vk_configured, post_channel_payload_to_vk_attempt
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
@@ -6717,10 +6717,14 @@ async def publish_channel_post() -> bool:
             return False
 
         results = {}
+        errors = {}
         if CHANNEL_ID:
             results["telegram"] = await post_to_telegram_channel(post)
         if is_vk_configured():
-            results["vk"] = await try_post_channel_payload_to_vk(post)
+            vk_attempt = await post_channel_payload_to_vk_attempt(post)
+            results["vk"] = vk_attempt.ok
+            if vk_attempt.error:
+                errors["vk"] = vk_attempt.error
 
         ok = any(results.values())
         if ok:
@@ -6738,7 +6742,11 @@ async def publish_channel_post() -> bool:
                 f"topic: {topic_preview}, photo: {'yes' if post.get('image_path') else 'no'})"
             )
             if failed_targets:
-                await _notify_channel_publish_issue(f"Post published only partially; failed targets: {failed_targets}")
+                details = "; ".join(f"{target}: {error}" for target, error in errors.items())
+                reason = f"Post published only partially; failed targets: {failed_targets}"
+                if details:
+                    reason = f"{reason}. Details: {details}"
+                await _notify_channel_publish_issue(reason)
         return ok
     except Exception as e:
         print(f"[autoposting] error: {e}")
