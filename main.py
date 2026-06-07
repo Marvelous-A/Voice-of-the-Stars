@@ -25,6 +25,7 @@ from ckassa_payments import (
     make_order_id,
     payment_identity,
 )
+from vk_publisher import is_vk_configured, try_post_channel_payload_to_vk
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
@@ -6578,7 +6579,7 @@ _last_channel_publish_alert_at = 0.0
 
 def _redact_channel_publish_error(text: str) -> str:
     text = str(text or "")
-    for secret in (TOKEN, ADMIN_BOT_TOKEN, OPENROUTER_KEY, GROQ_API_KEY):
+    for secret in (TOKEN, ADMIN_BOT_TOKEN, OPENROUTER_KEY, GROQ_API_KEY, getenv("VK_ACCESS_TOKEN", "")):
         if secret:
             text = text.replace(secret, "<secret>")
     return text[:1500]
@@ -6702,7 +6703,7 @@ async def post_to_telegram_channel(post: dict) -> bool:
 
 
 def has_configured_publish_target() -> bool:
-    return bool(CHANNEL_ID)
+    return bool(CHANNEL_ID or is_vk_configured())
 
 
 async def publish_channel_post() -> bool:
@@ -6715,9 +6716,13 @@ async def publish_channel_post() -> bool:
         if not post:
             return False
 
-        ok = False
-        ok = await post_to_telegram_channel(post)
+        results = {}
+        if CHANNEL_ID:
+            results["telegram"] = await post_to_telegram_channel(post)
+        if is_vk_configured():
+            results["vk"] = await try_post_channel_payload_to_vk(post)
 
+        ok = any(results.values())
         if ok:
             msk = _msk_now()
             topic_info = post["topic_info"]
@@ -6725,11 +6730,15 @@ async def publish_channel_post() -> bool:
             _remember_channel_content(post.get("content_plan"), post.get("core_text", post.get("text", "")))
             _remember_channel_schedule_slot((post.get("schedule") or {}).get("slot_key", ""))
             topic_preview = _topic_key(topic_info)[:80]
+            targets = ",".join(name for name, posted in results.items() if posted) or "-"
+            failed_targets = ",".join(name for name, posted in results.items() if not posted)
             print(
                 f"[MSK {msk}] Channel post published "
-                f"(target: telegram, category: {topic_info.get('category', '-')}, "
+                f"(targets: {targets}, category: {topic_info.get('category', '-')}, "
                 f"topic: {topic_preview}, photo: {'yes' if post.get('image_path') else 'no'})"
             )
+            if failed_targets:
+                await _notify_channel_publish_issue(f"Post published only partially; failed targets: {failed_targets}")
         return ok
     except Exception as e:
         print(f"[autoposting] error: {e}")
