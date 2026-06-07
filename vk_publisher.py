@@ -56,6 +56,7 @@ class VKPublisherConfig:
     from_group: bool = True
     signed: bool = False
     allow_text_fallback: bool = True
+    text_only: bool = False
 
     @classmethod
     def from_env(cls) -> "VKPublisherConfig":
@@ -66,6 +67,7 @@ class VKPublisherConfig:
         timeout_sec = _parse_timeout(os.getenv("VK_TIMEOUT_SEC") or "30")
         signed = _env_bool("VK_SIGNED", default=False)
         allow_text_fallback = _env_bool("VK_ALLOW_TEXT_FALLBACK", default=True)
+        text_only = _env_bool("VK_TEXT_ONLY", default=False)
 
         if not access_token:
             raise VKPublisherConfigError("VK_ACCESS_TOKEN is empty")
@@ -80,6 +82,7 @@ class VKPublisherConfig:
             timeout_sec=timeout_sec,
             signed=signed,
             allow_text_fallback=allow_text_fallback,
+            text_only=text_only,
         )
 
 
@@ -169,13 +172,15 @@ class VKPublisher:
         text = telegram_html_to_vk_text(message)
         attachment_items = [item.strip() for item in (attachments or ()) if str(item).strip()]
 
-        if image_path:
+        if image_path and not self.config.text_only:
             try:
                 attachment_items.append(await self.upload_wall_photo(image_path))
             except Exception as exc:
                 if not text or not self.config.allow_text_fallback:
                     raise
                 print(f"[vk_autoposting] photo upload failed, publishing text only: {_safe_error_text(exc)}")
+        elif image_path and self.config.text_only:
+            print("[vk_autoposting] VK_TEXT_ONLY=1, publishing without photo")
 
         if not text and not attachment_items:
             raise VKPublisherError("VK post must contain text or attachments")
