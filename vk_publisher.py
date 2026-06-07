@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import mimetypes
@@ -37,6 +38,14 @@ class VKAPIError(VKPublisherError):
         super().__init__(f"{method}: VK API error {self.code}: {self.api_message}")
 
 
+class VKHTTPError(VKPublisherError):
+    def __init__(self, label: str, status: int, body: str):
+        self.label = label
+        self.status = status
+        self.body = body
+        super().__init__(f"{label}: HTTP {status}: {body[:500]}")
+
+
 @dataclass(frozen=True)
 class VKPublisherConfig:
     access_token: str
@@ -46,6 +55,7 @@ class VKPublisherConfig:
     timeout_sec: float = 30.0
     from_group: bool = True
     signed: bool = False
+    allow_text_fallback: bool = True
 
     @classmethod
     def from_env(cls) -> "VKPublisherConfig":
@@ -55,6 +65,7 @@ class VKPublisherConfig:
         proxy_url = (os.getenv("VK_PROXY_URL") or "").strip()
         timeout_sec = _parse_timeout(os.getenv("VK_TIMEOUT_SEC") or "30")
         signed = _env_bool("VK_SIGNED", default=False)
+        allow_text_fallback = _env_bool("VK_ALLOW_TEXT_FALLBACK", default=True)
 
         if not access_token:
             raise VKPublisherConfigError("VK_ACCESS_TOKEN is empty")
@@ -68,6 +79,7 @@ class VKPublisherConfig:
             proxy_url=proxy_url,
             timeout_sec=timeout_sec,
             signed=signed,
+            allow_text_fallback=allow_text_fallback,
         )
 
 
@@ -158,7 +170,12 @@ class VKPublisher:
         attachment_items = [item.strip() for item in (attachments or ()) if str(item).strip()]
 
         if image_path:
-            attachment_items.append(await self.upload_wall_photo(image_path))
+            try:
+                attachment_items.append(await self.upload_wall_photo(image_path))
+            except Exception as exc:
+                if not text or not self.config.allow_text_fallback:
+                    raise
+                print(f"[vk_autoposting] photo upload failed, publishing text only: {_safe_error_text(exc)}")
 
         if not text and not attachment_items:
             raise VKPublisherError("VK post must contain text or attachments")
@@ -238,16 +255,36 @@ class VKPublisher:
         content_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
         request_kwargs = self._request_kwargs()
 
-        with image_path.open("rb") as file_obj:
-            form = aiohttp.FormData()
-            form.add_field(
-                "photo",
-                file_obj,
-                filename=image_path.name,
-                content_type=content_type,
-            )
-            async with session.post(upload_url, data=form, **request_kwargs) as response:
-                payload = await _read_json_response(response, "VK photo upload")
+        payload = None
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                with image_path.open("rb") as file_obj:
+                    form = aiohttp.FormData()
+                    form.add_field(
+                        "photo",
+                        file_obj,
+                        filename=image_path.name,
+                        content_type=content_type,
+                    )
+                    async with session.post(upload_url, data=form, **request_kwargs) as response:
+                        payload = await _read_json_response(response, "VK photo upload")
+                break
+            except VKHTTPError as exc:
+                last_error = exc
+                if exc.status < 500 and exc.status != 429:
+                    raise
+                if attempt >= 3:
+                    raise
+                await asyncio.sleep(1.5 * attempt)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                last_error = exc
+                if attempt >= 3:
+                    raise VKPublisherError(f"VK photo upload failed after retries: {exc}") from exc
+                await asyncio.sleep(1.5 * attempt)
+
+        if payload is None:
+            raise VKPublisherError(f"VK photo upload returned no response: {last_error}")
 
         if isinstance(payload, Mapping) and "error" in payload:
             raise VKPublisherError(f"VK photo upload error: {_safe_json(payload['error'])}")
@@ -270,7 +307,7 @@ class VKPublisher:
 async def _read_json_response(response: aiohttp.ClientResponse, label: str) -> Any:
     text = await response.text()
     if response.status >= 400:
-        raise VKPublisherError(f"{label}: HTTP {response.status}: {text[:500]}")
+        raise VKHTTPError(label, response.status, text)
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
