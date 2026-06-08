@@ -18,6 +18,17 @@ DEFAULT_VK_API_VERSION = "5.199"
 
 _HTML_BREAK_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_SOCIAL_TELEGRAM_LINK_FOOTERS = (
+    "Если откликнулось, продолжение можно оставить рядом:\n"
+    "дневник наблюдений — {channel_url}\n"
+    "личный вопрос — {bot_url}",
+    "Для тех, кто читает глубже:\n"
+    "общая лента знаков — {channel_url}\n"
+    "тихий вход для личного разбора — {bot_url}",
+    "А если хочется не просто прочитать, а свериться с собой:\n"
+    "лента — {channel_url}\n"
+    "личный маршрут — {bot_url}",
+)
 
 
 class VKPublisherError(RuntimeError):
@@ -116,6 +127,27 @@ def telegram_html_to_vk_text(text: str) -> str:
     return html.unescape(text).strip()
 
 
+def add_telegram_links_to_vk_text(text: str) -> str:
+    if not _env_bool("VK_ADD_TELEGRAM_LINKS", default=_env_bool("SOCIAL_ADD_TELEGRAM_LINKS", default=True)):
+        return text
+
+    channel_url = _telegram_channel_url()
+    bot_url = _telegram_bot_url()
+    links_to_add = {
+        "channel_url": channel_url if channel_url and channel_url not in text else "",
+        "bot_url": bot_url if bot_url and bot_url not in text else "",
+    }
+    if not links_to_add["channel_url"] and not links_to_add["bot_url"]:
+        return text
+
+    footer_template = _SOCIAL_TELEGRAM_LINK_FOOTERS[_stable_footer_index(text)]
+    footer = footer_template.format(
+        channel_url=links_to_add["channel_url"] or channel_url or "канал",
+        bot_url=links_to_add["bot_url"] or bot_url or "бот",
+    )
+    return f"{text.rstrip()}\n\n{footer}".strip()
+
+
 async def post_channel_payload_to_vk(post: Mapping[str, Any]) -> VKPostResult:
     """Publish the same payload shape that main.build_channel_post() returns."""
     async with VKPublisher.from_env() as publisher:
@@ -169,7 +201,7 @@ class VKPublisher:
         publish_date: int | None = None,
         guid: str = "",
     ) -> VKPostResult:
-        text = telegram_html_to_vk_text(message)
+        text = add_telegram_links_to_vk_text(telegram_html_to_vk_text(message))
         attachment_items = [item.strip() for item in (attachments or ()) if str(item).strip()]
 
         if image_path and not self.config.text_only:
@@ -342,6 +374,55 @@ def _photo_attachment(photo: Mapping[str, Any], fallback_owner_id: int) -> str:
     if access_key:
         attachment = f"{attachment}_{access_key}"
     return attachment
+
+
+def _stable_footer_index(text: str) -> int:
+    seed = sum(ord(char) for char in str(text or "")[:400])
+    return seed % len(_SOCIAL_TELEGRAM_LINK_FOOTERS)
+
+
+def _telegram_channel_url() -> str:
+    raw_url = (
+        os.getenv("TELEGRAM_CHANNEL_URL")
+        or os.getenv("TG_CHANNEL_URL")
+        or os.getenv("CHANNEL_URL")
+        or ""
+    ).strip()
+    if raw_url:
+        return _normalise_telegram_url(raw_url)
+
+    channel_id = (os.getenv("CHANNEL_ID") or "").strip()
+    channel_id = {
+        "@VoiceOfTheStarsInfo": "@VoiceOfTheStars",
+        "VoiceOfTheStarsInfo": "@VoiceOfTheStars",
+    }.get(channel_id, channel_id)
+    if channel_id.startswith("@"):
+        return f"https://t.me/{channel_id.lstrip('@')}"
+    return ""
+
+
+def _telegram_bot_url() -> str:
+    raw_url = (os.getenv("MAIN_BOT_URL") or os.getenv("BOT_URL") or "").strip()
+    if raw_url:
+        return _normalise_telegram_url(raw_url)
+
+    username = (os.getenv("MAIN_BOT_USERNAME") or "VoiceOfTheStarsBot").strip().lstrip("@")
+    return f"https://t.me/{username}" if username else ""
+
+
+def _normalise_telegram_url(value: str) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if value.startswith("@"):
+        return f"https://t.me/{value.lstrip('@')}"
+    if value.startswith("t.me/"):
+        return f"https://{value}"
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    if re.fullmatch(r"[A-Za-z0-9_]{5,32}", value):
+        return f"https://t.me/{value}"
+    return value
 
 
 def _parse_group_id(raw_value: str) -> int:
