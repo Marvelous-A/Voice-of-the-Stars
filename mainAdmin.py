@@ -121,7 +121,8 @@ def _format_channel_publish_status(result: dict) -> str:
         label = labels[target]
         if not configured.get(target):
             if target == "ok":
-                lines.append(f"{label}: не настроен в .env")
+                error = _short_admin_error(errors.get(target) or "не настроен в .env")
+                lines.append(f"{label}: не настроен - {error}")
             continue
         if results.get(target) is True:
             lines.append(f"{label}: опубликовано")

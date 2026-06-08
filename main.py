@@ -26,7 +26,12 @@ from ckassa_payments import (
     payment_identity,
 )
 from vk_publisher import is_vk_configured, post_channel_payload_to_vk_attempt
-from ok_publisher import is_ok_configured, post_channel_payload_to_ok_attempt
+from ok_publisher import (
+    get_ok_config_issue,
+    has_ok_env_hint,
+    is_ok_configured,
+    post_channel_payload_to_ok_attempt,
+)
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
@@ -6742,11 +6747,14 @@ async def publish_channel_post() -> bool:
         telegram_configured = bool(CHANNEL_ID)
         vk_configured = is_vk_configured()
         ok_configured = is_ok_configured()
+        ok_config_issue = "" if ok_configured else get_ok_config_issue()
         publish_result["configured"] = {
             "telegram": telegram_configured,
             "vk": vk_configured,
             "ok": ok_configured,
         }
+        if not ok_configured and has_ok_env_hint():
+            publish_result["errors"]["ok"] = ok_config_issue or "OK is not configured"
         _set_channel_publish_result(publish_result)
 
         if not (telegram_configured or vk_configured or ok_configured):

@@ -19,6 +19,7 @@ DEFAULT_OK_FORMAT = "json"
 
 _HTML_BREAK_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_GROUP_URL_RE = re.compile(r"(?:^|/)(?:group|public|club)/?(\d+)(?:\D|$)", re.IGNORECASE)
 
 
 class OKPublisherError(RuntimeError):
@@ -115,14 +116,37 @@ class OKPublishAttempt:
 
 
 def is_ok_configured() -> bool:
+    return get_ok_config_issue() == ""
+
+
+def get_ok_config_issue() -> str:
+    raw_group_id = os.getenv("OK_GROUP_ID") or ""
+    session_key = (os.getenv("OK_SESSION_KEY") or "").strip()
+    access_token = (os.getenv("OK_ACCESS_TOKEN") or "").strip()
+    session_secret_key = (os.getenv("OK_SESSION_SECRET_KEY") or "").strip()
+    application_secret_key = (os.getenv("OK_APPLICATION_SECRET_KEY") or "").strip()
+
+    if not (os.getenv("OK_APPLICATION_KEY") or "").strip():
+        return "OK_APPLICATION_KEY is empty"
+    if not str(raw_group_id or "").strip():
+        return "OK_GROUP_ID is empty"
+    if not _parse_group_id(raw_group_id):
+        return "OK_GROUP_ID must be numeric or a link like https://ok.ru/group/123456789"
+    if not session_key and not access_token:
+        return "OK_SESSION_KEY or OK_ACCESS_TOKEN is empty"
+    if not session_secret_key and not (access_token and application_secret_key):
+        return "OK_SESSION_SECRET_KEY is empty"
+    return ""
+
+
+def has_ok_env_hint() -> bool:
     return bool(
         (os.getenv("OK_APPLICATION_KEY") or "").strip()
-        and _parse_group_id(os.getenv("OK_GROUP_ID") or "")
-        and ((os.getenv("OK_SESSION_KEY") or "").strip() or (os.getenv("OK_ACCESS_TOKEN") or "").strip())
-        and (
-            (os.getenv("OK_SESSION_SECRET_KEY") or "").strip()
-            or ((os.getenv("OK_ACCESS_TOKEN") or "").strip() and (os.getenv("OK_APPLICATION_SECRET_KEY") or "").strip())
-        )
+        or (os.getenv("OK_GROUP_ID") or "").strip()
+        or (os.getenv("OK_SESSION_KEY") or "").strip()
+        or (os.getenv("OK_ACCESS_TOKEN") or "").strip()
+        or (os.getenv("OK_SESSION_SECRET_KEY") or "").strip()
+        or (os.getenv("OK_APPLICATION_SECRET_KEY") or "").strip()
     )
 
 
@@ -370,7 +394,10 @@ def _extract_topic_id(response: Any) -> str:
 
 def _parse_group_id(raw_value: str) -> str:
     value = str(raw_value or "").strip()
-    value = value.removeprefix("group").strip()
+    match = _GROUP_URL_RE.search(value)
+    if match:
+        return match.group(1)
+    value = value.removeprefix("group").removeprefix("public").removeprefix("club").strip()
     if not value:
         return ""
     return value if value.isdigit() else ""
