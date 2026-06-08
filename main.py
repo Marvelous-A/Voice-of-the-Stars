@@ -26,6 +26,7 @@ from ckassa_payments import (
     payment_identity,
 )
 from vk_publisher import is_vk_configured, post_channel_payload_to_vk_attempt
+from ok_publisher import is_ok_configured, post_channel_payload_to_ok_attempt
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton,
                             InlineKeyboardMarkup, InlineKeyboardButton,
@@ -6579,7 +6580,17 @@ _last_channel_publish_alert_at = 0.0
 
 def _redact_channel_publish_error(text: str) -> str:
     text = str(text or "")
-    for secret in (TOKEN, ADMIN_BOT_TOKEN, OPENROUTER_KEY, GROQ_API_KEY, getenv("VK_ACCESS_TOKEN", "")):
+    for secret in (
+        TOKEN,
+        ADMIN_BOT_TOKEN,
+        OPENROUTER_KEY,
+        GROQ_API_KEY,
+        getenv("VK_ACCESS_TOKEN", ""),
+        getenv("OK_ACCESS_TOKEN", ""),
+        getenv("OK_SESSION_KEY", ""),
+        getenv("OK_SESSION_SECRET_KEY", ""),
+        getenv("OK_APPLICATION_SECRET_KEY", ""),
+    ):
         if secret:
             text = text.replace(secret, "<secret>")
     return text[:1500]
@@ -6703,7 +6714,7 @@ async def post_to_telegram_channel(post: dict) -> bool:
 
 
 def has_configured_publish_target() -> bool:
-    return bool(CHANNEL_ID or is_vk_configured())
+    return bool(CHANNEL_ID or is_vk_configured() or is_ok_configured())
 
 
 async def publish_channel_post() -> bool:
@@ -6725,6 +6736,11 @@ async def publish_channel_post() -> bool:
             results["vk"] = vk_attempt.ok
             if vk_attempt.error:
                 errors["vk"] = vk_attempt.error
+        if is_ok_configured():
+            ok_attempt = await post_channel_payload_to_ok_attempt(post)
+            results["ok"] = ok_attempt.ok
+            if ok_attempt.error:
+                errors["ok"] = ok_attempt.error
 
         ok = any(results.values())
         if ok:
