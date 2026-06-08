@@ -100,6 +100,48 @@ BTN_REFRESH = "🔄 Обновить меню"
 CHANNEL_POST_LOCK = asyncio.Lock()
 
 
+def _short_admin_error(text: str, limit: int = 900) -> str:
+    text = str(text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _format_channel_publish_status(result: dict) -> str:
+    configured = result.get("configured") or {}
+    results = result.get("results") or {}
+    errors = result.get("errors") or {}
+    labels = {
+        "telegram": "Telegram",
+        "vk": "VK",
+        "ok": "OK",
+    }
+    lines = []
+    for target in ("telegram", "vk", "ok"):
+        label = labels[target]
+        if not configured.get(target):
+            if target == "ok":
+                lines.append(f"{label}: не настроен в .env")
+            continue
+        if results.get(target) is True:
+            lines.append(f"{label}: опубликовано")
+        elif target in results:
+            error = _short_admin_error(errors.get(target) or "ошибка без подробностей, проверь логи")
+            lines.append(f"{label}: ошибка - {error}")
+        else:
+            error = _short_admin_error(errors.get(target) or "не отправлялся")
+            lines.append(f"{label}: {error}")
+
+    extra_errors = [
+        f"{key}: {_short_admin_error(value)}"
+        for key, value in errors.items()
+        if key not in labels
+    ]
+    if extra_errors:
+        lines.extend(extra_errors)
+    return "\n".join(lines)
+
+
 def get_admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -931,9 +973,12 @@ async def handle_channel_post(message: Message):
     async with CHANNEL_POST_LOCK:
         status = await message.answer("📢 Генерирую пост для канала и подбираю картинку...")
         posted = await main_app.publish_channel_post()
+        publish_status = _format_channel_publish_status(main_app.get_last_channel_publish_result())
         if not posted:
+            details = f"\n\n{publish_status}" if publish_status else ""
             await status.edit_text(
-                "⚠️ Не удалось опубликовать пост. Проверь логи основного бота, токены ИИ и доступ бота к каналу."
+                "⚠️ Не удалось опубликовать пост. Проверь логи основного бота, токены ИИ и доступы к площадкам."
+                f"{details}"
             )
             return
 
@@ -944,8 +989,10 @@ async def handle_channel_post(message: Message):
             f"{next_slot['at'].strftime('%d.%m.%Y %H:%M')} МСК, рубрика: {next_slot['slot'].get('rubric', 'пост')}"
             if next_slot else "по ближайшему слоту редакционной сетки"
         )
+        details = f"\n\n{publish_status}" if publish_status else ""
         await status.edit_text(
-            "✅ Пост опубликован в канале.\n\n"
+            "✅ Пост обработан."
+            f"{details}\n\n"
             f"Следующий автоматический пост: {next_post_text}."
         )
 

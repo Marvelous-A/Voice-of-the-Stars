@@ -6576,6 +6576,24 @@ async def build_channel_post() -> dict | None:
 
 
 _last_channel_publish_alert_at = 0.0
+_last_channel_publish_result = {}
+
+
+def _set_channel_publish_result(result: dict) -> None:
+    global _last_channel_publish_result
+    _last_channel_publish_result = {
+        "configured": dict(result.get("configured") or {}),
+        "results": dict(result.get("results") or {}),
+        "errors": dict(result.get("errors") or {}),
+    }
+
+
+def get_last_channel_publish_result() -> dict:
+    return {
+        "configured": dict(_last_channel_publish_result.get("configured") or {}),
+        "results": dict(_last_channel_publish_result.get("results") or {}),
+        "errors": dict(_last_channel_publish_result.get("errors") or {}),
+    }
 
 
 def _redact_channel_publish_error(text: str) -> str:
@@ -6718,29 +6736,48 @@ def has_configured_publish_target() -> bool:
 
 
 async def publish_channel_post() -> bool:
+    publish_result = {"configured": {}, "results": {}, "errors": {}}
+    _set_channel_publish_result(publish_result)
     try:
-        if not has_configured_publish_target():
+        telegram_configured = bool(CHANNEL_ID)
+        vk_configured = is_vk_configured()
+        ok_configured = is_ok_configured()
+        publish_result["configured"] = {
+            "telegram": telegram_configured,
+            "vk": vk_configured,
+            "ok": ok_configured,
+        }
+        _set_channel_publish_result(publish_result)
+
+        if not (telegram_configured or vk_configured or ok_configured):
             print("[autoposting] no configured publish target")
+            publish_result["errors"]["all"] = "No configured publish target"
+            _set_channel_publish_result(publish_result)
             return False
 
         post = await build_channel_post()
         if not post:
+            publish_result["errors"]["build"] = "Post generation failed"
+            _set_channel_publish_result(publish_result)
             return False
 
-        results = {}
-        errors = {}
-        if CHANNEL_ID:
+        results = publish_result["results"]
+        errors = publish_result["errors"]
+        if telegram_configured:
             results["telegram"] = await post_to_telegram_channel(post)
-        if is_vk_configured():
+            _set_channel_publish_result(publish_result)
+        if vk_configured:
             vk_attempt = await post_channel_payload_to_vk_attempt(post)
             results["vk"] = vk_attempt.ok
             if vk_attempt.error:
                 errors["vk"] = vk_attempt.error
-        if is_ok_configured():
+            _set_channel_publish_result(publish_result)
+        if ok_configured:
             ok_attempt = await post_channel_payload_to_ok_attempt(post)
             results["ok"] = ok_attempt.ok
             if ok_attempt.error:
                 errors["ok"] = ok_attempt.error
+            _set_channel_publish_result(publish_result)
 
         ok = any(results.values())
         if ok:
@@ -6763,10 +6800,14 @@ async def publish_channel_post() -> bool:
                 if details:
                     reason = f"{reason}. Details: {details}"
                 await _notify_channel_publish_issue(reason)
+        _set_channel_publish_result(publish_result)
         return ok
     except Exception as e:
         print(f"[autoposting] error: {e}")
-        await _notify_channel_publish_issue(str(e))
+        clean_error = _redact_channel_publish_error(str(e))
+        publish_result["errors"]["autoposting"] = clean_error
+        _set_channel_publish_result(publish_result)
+        await _notify_channel_publish_issue(clean_error)
         return False
 
 
