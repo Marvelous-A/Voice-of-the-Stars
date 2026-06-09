@@ -249,7 +249,8 @@ def _feedback_resume_keyboard() -> InlineKeyboardMarkup:
 # ====== ПЕРСИСТЕНТНОСТЬ ОТЛОЖЕННЫХ ОТВЕТОВ И СЕАНСОВ ======
 # Хранит запросы к тарологу/астрологу, для которых ещё не отправлен первичный ответ
 # (они спят в send_*_answer_delayed). Формат элемента:
-#   {"id", "user_id", "type", "specialist_id", "user_story", "is_flagged", "deadline_ts"}
+#   {"id", "user_id", "type", "specialist_id", "user_story", "is_flagged", "deadline_ts",
+#    "selected_tarot_card" (только для tarot)}
 def _load_pending_answers() -> list:
     try:
         with open(PENDING_ANSWERS_FILE, "r", encoding="utf-8") as f:
@@ -290,6 +291,7 @@ def _serialize_active_sessions() -> dict:
             "history": s.get("history", []),
             "msg_count": s.get("msg_count", 0),
             "profanity_count": s.get("profanity_count", 0),
+            "selected_tarot_card": s.get("selected_tarot_card"),
             "anecdote_allowed": s.get("anecdote_allowed", False),
             "anecdote_used": s.get("anecdote_used", False),
             "expires_at": s.get("expires_at", 0),
@@ -553,6 +555,85 @@ TAROLOGISTS = [
 ]
 
 TAROLOGISTS_BY_ID = {t["id"]: t for t in TAROLOGISTS}
+
+
+# ====== КЛАССИЧЕСКАЯ КОЛОДА ТАРО ======
+TAROT_MAJOR_ARCANA = (
+    "Шут", "Маг", "Верховная Жрица", "Императрица", "Император", "Иерофант",
+    "Влюблённые", "Колесница", "Сила", "Отшельник", "Колесо Фортуны",
+    "Справедливость", "Повешенный", "Смерть", "Умеренность", "Дьявол",
+    "Башня", "Звезда", "Луна", "Солнце", "Суд", "Мир",
+)
+
+TAROT_MINOR_RANKS = (
+    "Туз", "Двойка", "Тройка", "Четвёрка", "Пятёрка", "Шестёрка", "Семёрка",
+    "Восьмёрка", "Девятка", "Десятка", "Паж", "Рыцарь", "Королева", "Король",
+)
+
+TAROT_SUITS = (
+    ("Жезлы", "жезлов"),
+    ("Кубки", "кубков"),
+    ("Мечи", "мечей"),
+    ("Пентакли", "пентаклей"),
+)
+
+TAROT_DECK = tuple(
+    {"name": name, "arcana": "Старший аркан", "suit": None}
+    for name in TAROT_MAJOR_ARCANA
+) + tuple(
+    {"name": f"{rank} {suit_genitive}", "arcana": "Младший аркан", "suit": suit}
+    for suit, suit_genitive in TAROT_SUITS
+    for rank in TAROT_MINOR_RANKS
+)
+
+if len(TAROT_DECK) != 78:
+    raise RuntimeError(f"В классической колоде Таро должно быть 78 карт, сейчас {len(TAROT_DECK)}")
+
+
+def format_tarot_card(card: dict) -> str:
+    suit = card.get("suit")
+    if suit:
+        return f"{card['name']} ({card['arcana']}, масть {suit})"
+    return f"{card['name']} ({card['arcana']})"
+
+
+def get_recent_tarot_card_names(user_id: str, tarot_id: str, limit: int = 12) -> set[str]:
+    recent: set[str] = set()
+    checked_answers = 0
+    for item in reversed(get_user_tarot_history(user_id, tarot_id)):
+        if item.get("role") != "tarot":
+            continue
+        checked_answers += 1
+        card_name = item.get("tarot_card")
+        if card_name:
+            recent.add(card_name)
+        text = (item.get("text") or "").lower()
+        for card in TAROT_DECK:
+            if card["name"].lower() in text:
+                recent.add(card["name"])
+        if checked_answers >= limit:
+            break
+    return recent
+
+
+def draw_tarot_card(exclude_names: set[str] | None = None) -> dict:
+    exclude_names = exclude_names or set()
+    pool = [card for card in TAROT_DECK if card["name"] not in exclude_names]
+    if not pool:
+        pool = list(TAROT_DECK)
+    return random.choice(pool).copy()
+
+
+def build_selected_tarot_card_block(selected_card: dict) -> str:
+    card_text = format_tarot_card(selected_card)
+    card_name = selected_card["name"]
+    return (
+        f"\n\nВЫТЯНУТАЯ КАРТА СЕАНСА: {card_text}.\n"
+        "Эта карта уже выбрана программным рандомайзером из полной классической колоды 78 карт ДО ответа.\n"
+        f"Твоя задача не выбрать карту, а прочитать именно карту «{card_name}» в ситуации человека.\n"
+        "НЕ придумывай и НЕ называй другие карты как выпавшие. НЕ делай расклад из нескольких карт.\n"
+        "Можно упоминать только эту одну карту и её смысл применительно к вопросу."
+    )
 
 # ====== АСТРОЛОГИ ======
 ASTROLOGERS = [
@@ -1525,14 +1606,16 @@ def get_user_tarot_history(user_id: str, tarot_id: str) -> list:
     history = load_tarot_history()
     return history.get(user_id, {}).get(tarot_id, [])
 
-def save_user_tarot_message(user_id: str, tarot_id: str, role: str, text: str):
+def save_user_tarot_message(user_id: str, tarot_id: str, role: str, text: str, **extra):
     history = load_tarot_history()
     history.setdefault(user_id, {}).setdefault(tarot_id, [])
-    history[user_id][tarot_id].append({
+    entry = {
         "role": role,
         "text": text,
         "time": datetime.now().isoformat()
-    })
+    }
+    entry.update(extra)
+    history[user_id][tarot_id].append(entry)
     save_tarot_history(history)
 
 def load_astro_history():
@@ -2024,7 +2107,10 @@ async def check_profanity(text: str) -> bool:
     return "YES" in result.upper()
 
 # ====== ОТВЕТ ТАРОЛОГА (первичный расклад) ======
-async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_flagged: bool = False, anecdote_allowed: bool = False) -> str:
+async def get_tarot_answer(
+    tarologist: dict, user_story: str, user_id: str, is_flagged: bool = False,
+    anecdote_allowed: bool = False, selected_card: dict | None = None,
+) -> str:
     history = get_user_tarot_history(user_id, tarologist["id"])[-10:]
     history_text = ""
     if history:
@@ -2074,6 +2160,10 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
     age = tarologist.get("age", 35)
     typing_style = get_age_typing_style(age)
     anecdote_block = build_anecdote_block(anecdote_allowed, False)
+    selected_card = selected_card or draw_tarot_card(
+        get_recent_tarot_card_names(user_id, tarologist["id"])
+    )
+    selected_card_block = build_selected_tarot_card_block(selected_card)
 
     if is_flagged:
         moderation_hint = tarologist.get("moderation_hint", "Начни с короткой ироничной ремарки про грубые слова, одно предложение.")
@@ -2086,6 +2176,8 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 {user_story}
 
 {moderation_hint}
+
+{selected_card_block}
 
 Ты пишешь с телефона двумя пальцами, медленно. Отправляй мысли по одной, короткими сообщениями по 1-2 строки. Каждое сообщение отдели строкой "|||". Суммарно не более 300 знаков. Никаких тире. Знаки препинания почти не ставишь. Сохраняй свой характер.
 {typing_style}
@@ -2102,7 +2194,9 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 
 {moderation_hint}
 
-После вступительной ремарки дай короткий ответ на вопрос от лица своего персонажа. Упомяни карты (придумай). Пиши одним блоком без абзацев. Никаких тире. Общий объём 80-100 слов. Не строй ответ как мини-эссе, пиши хаотично как живой человек. Никаких связок "однако", "при этом", "таким образом".
+{selected_card_block}
+
+После вступительной ремарки дай короткий ответ на вопрос от лица своего персонажа. Упомяни выбранную карту и объясни, что она значит именно в этой ситуации. Пиши одним блоком без абзацев. Никаких тире. Общий объём 80-100 слов. Не строй ответ как мини-эссе, пиши хаотично как живой человек. Никаких связок "однако", "при этом", "таким образом".
 {typing_style}
 {NO_CONTACTS_RULE}
 {anecdote_block}
@@ -2116,7 +2210,9 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 Новое обращение человека:
 {user_story}
 
-Ты только что разложил карты на столе и теперь пишешь с телефона двумя пальцами, медленно. Отвечаешь по мере того как смотришь на карты, не собираешь всё в один текст. Каждую законченную мысль отправляешь отдельно. Карту упоминаешь когда до неё доходишь по смыслу, не перечисляешь всё сразу в начале.
+{selected_card_block}
+
+Ты только что вытянул одну карту на столе и теперь пишешь с телефона двумя пальцами, медленно. Отвечаешь по мере того как смотришь на эту карту, не собираешь всё в один текст. Каждую законченную мысль отправляешь отдельно. Карту упоминаешь когда до неё доходишь по смыслу, не начинай с сухого названия если это ломает живой тон.
 
 ФОРМАТ: серия коротких сообщений. Каждое сообщение — 1-2 строки. Между сообщениями ставь разделитель "|||" на отдельной строке. Суммарно 5-8 сообщений, не больше 400 знаков всего.
 
@@ -2140,6 +2236,8 @@ async def get_tarot_answer(tarologist: dict, user_story: str, user_id: str, is_f
 
 Новое обращение человека:
 {user_story}
+
+{selected_card_block}
 
 Ты пишешь быстро с телефона, мысли отправляешь по одной не собирая в стену текста. Каждую законченную мысль отправляй отдельным сообщением. Карту упоминай когда до неё доходишь по смыслу.
 
@@ -2179,10 +2277,15 @@ def strip_dashes_ellipsis(text: str) -> str:
 async def send_tarot_answer_delayed(
     user_id: int, tarologist: dict, user_story: str, is_flagged: bool = False,
     pending_id: str | None = None, deadline_ts: float | None = None,
+    selected_card: dict | None = None,
 ):
     # Новый запрос — считаем задержку и сохраняем на диск, чтобы пережить рестарт.
     # Если передан pending_id — восстановление после рестарта, используем сохранённый deadline.
     if pending_id is None:
+        user_id_str = str(user_id)
+        selected_card = selected_card or draw_tarot_card(
+            get_recent_tarot_card_names(user_id_str, tarologist["id"])
+        )
         age = tarologist.get("age", 35)
         if age >= 57:
             delay = random.randint(4 * 60, 6 * 60)
@@ -2204,9 +2307,13 @@ async def send_tarot_answer_delayed(
             "user_story": user_story,
             "is_flagged": is_flagged,
             "deadline_ts": deadline_ts,
+            "selected_tarot_card": selected_card,
         })
     else:
         age = tarologist.get("age", 35)
+        selected_card = selected_card or draw_tarot_card(
+            get_recent_tarot_card_names(str(user_id), tarologist["id"])
+        )
 
     remaining = (deadline_ts or 0) - time.time()
     if remaining > 0:
@@ -2214,11 +2321,18 @@ async def send_tarot_answer_delayed(
 
     try:
         anecdote_allowed = random.random() < ANECDOTE_SESSION_PROBABILITY
-        answer = await get_tarot_answer(tarologist, user_story, str(user_id), is_flagged=is_flagged, anecdote_allowed=anecdote_allowed)
+        answer = await get_tarot_answer(
+            tarologist, user_story, str(user_id), is_flagged=is_flagged,
+            anecdote_allowed=anecdote_allowed, selected_card=selected_card,
+        )
         if answer:
             answer = strip_dashes_ellipsis(answer)
             save_user_tarot_message(str(user_id), tarologist["id"], "user", user_story)
-            save_user_tarot_message(str(user_id), tarologist["id"], "tarot", answer)
+            save_user_tarot_message(
+                str(user_id), tarologist["id"], "tarot", answer,
+                tarot_card=selected_card["name"],
+                tarot_card_info=selected_card,
+            )
 
             # Собираем карты из первого ответа для контекста сеанса
             session_history = [
@@ -2244,6 +2358,7 @@ async def send_tarot_answer_delayed(
                 "history": session_history,
                 "msg_count": 0,
                 "profanity_count": 0,
+                "selected_tarot_card": selected_card,
                 "anecdote_allowed": anecdote_allowed,
                 "anecdote_used": _has_anecdote(answer),
                 "expires_at": time.time() + SESSION_DURATION_SEC,
@@ -2486,7 +2601,11 @@ async def send_astro_answer_delayed(
 
 
 # ====== СЕАНС: ОТВЕТ НА ДОПВОПРОС ======
-async def get_session_reply(tarologist: dict, user_message: str, session_history: list, is_flagged: bool = False, anecdote_used: bool = False, anecdote_allowed: bool = False) -> str:
+async def get_session_reply(
+    tarologist: dict, user_message: str, session_history: list,
+    is_flagged: bool = False, anecdote_used: bool = False,
+    anecdote_allowed: bool = False, selected_card: dict | None = None,
+) -> str:
     age = tarologist.get("age", 35)
     typing_style = get_age_typing_style(age)
 
@@ -2515,12 +2634,20 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
     )
 
     anecdote_block = build_anecdote_block(anecdote_allowed, anecdote_used)
+    selected_card_block = ""
+    if selected_card:
+        selected_card_block = (
+            f"\n\nКАРТА ЭТОГО СЕАНСА: {format_tarot_card(selected_card)}. "
+            "Она уже была вытянута в начале консультации. "
+            "Опирайся на неё и НЕ называй другие карты как выпавшие."
+        )
 
     if age >= 40:
         prompt = f"""
 {tarologist['personality']}
 {history_text}
 {moderation_block}
+{selected_card_block}
 
 Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
 "{user_message}"
@@ -2545,6 +2672,7 @@ async def get_session_reply(tarologist: dict, user_message: str, session_history
 {tarologist['personality']}
 {history_text}
 {moderation_block}
+{selected_card_block}
 
 Человек ТОЛЬКО ЧТО написал тебе следующее сообщение:
 "{user_message}"
@@ -2760,7 +2888,13 @@ async def _send_session_reply_impl(user_id: int, user_message: str):
     if session.get("type") == "astro":
         answer = await get_astro_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged, anecdote_used=session.get("anecdote_used", False), anecdote_allowed=session.get("anecdote_allowed", False))
     else:
-        answer = await get_session_reply(tarologist, user_message, session["history"], is_flagged=is_flagged, anecdote_used=session.get("anecdote_used", False), anecdote_allowed=session.get("anecdote_allowed", False))
+        answer = await get_session_reply(
+            tarologist, user_message, session["history"],
+            is_flagged=is_flagged,
+            anecdote_used=session.get("anecdote_used", False),
+            anecdote_allowed=session.get("anecdote_allowed", False),
+            selected_card=session.get("selected_tarot_card"),
+        )
     if not answer:
         SESSION_BUSY[user_id_str] = False
         return
@@ -7856,7 +7990,7 @@ async def handle_voice(message: Message):
     is_flagged = await check_profanity(text)
 
     await message.answer(
-        f"✅ Запрос принят! {tarologist['name']} изучит карты и ответит тебе в течение 15-20 минут.",
+        f"✅ Запрос принят! {tarologist['name']} вытянет карту и ответит тебе в течение 15-20 минут.",
         reply_markup=get_main_keyboard()
     )
 
@@ -8080,7 +8214,7 @@ async def handle_story(message: Message):
     is_flagged = await check_profanity(message.text)
 
     await message.answer(
-        f"✅ Запрос принят! {tarologist['name']} изучит карты и ответит тебе в течение 15-20 минут.",
+        f"✅ Запрос принят! {tarologist['name']} вытянет карту и ответит тебе в течение 15-20 минут.",
         reply_markup=get_main_keyboard()
     )
 
@@ -8159,12 +8293,14 @@ async def _restore_pending_answers() -> None:
                 continue
             if not specialist:
                 continue
-            asyncio.create_task(fn(
-                entry["user_id"], specialist, entry["user_story"],
-                is_flagged=entry.get("is_flagged", False),
-                pending_id=entry["id"],
-                deadline_ts=entry.get("deadline_ts", 0),
-            ))
+            kwargs = {
+                "is_flagged": entry.get("is_flagged", False),
+                "pending_id": entry["id"],
+                "deadline_ts": entry.get("deadline_ts", 0),
+            }
+            if stype == "tarot":
+                kwargs["selected_card"] = entry.get("selected_tarot_card")
+            asyncio.create_task(fn(entry["user_id"], specialist, entry["user_story"], **kwargs))
             restored += 1
         except Exception as e:
             print(f"[_restore_pending_answers] skip entry: {e}")
@@ -8201,6 +8337,7 @@ async def _restore_active_sessions() -> None:
                 "history": s.get("history", []),
                 "msg_count": s.get("msg_count", 0),
                 "profanity_count": s.get("profanity_count", 0),
+                "selected_tarot_card": s.get("selected_tarot_card"),
                 "anecdote_allowed": s.get("anecdote_allowed", False),
                 "anecdote_used": s.get("anecdote_used", False),
                 "expires_at": expires_at,
