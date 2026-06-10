@@ -810,6 +810,8 @@ MORNING_TEMPLATES = [
     "💫 {sign}, сегодняшний день скрывает в себе немало интересного. Звёзды уже всё знают, посмотри прогноз! ✨",
     "🌠 Каждое утро это новая страница. {sign}, узнай что написано в твоей на сегодня. Прогноз уже готов! 🔮",
 ]
+MORNING_NOTIFICATION_INTERVAL_DAYS = 4
+MORNING_NOTIFICATION_LAST_SENT_KEY = "morning_notification_last_sent"
 
 # ====== О НАС ======
 ABOUT_TEXT = (
@@ -3004,19 +3006,49 @@ async def update_forecast():
     print("Прогноз так и не обновлён после 3 попыток — оставляем вчерашний")
 
 # ====== УТРЕННИЕ УВЕДОМЛЕНИЯ ======
+def _is_morning_notification_due(user_data: dict, today) -> bool:
+    last_sent = user_data.get(MORNING_NOTIFICATION_LAST_SENT_KEY)
+    if not last_sent:
+        return True
+    try:
+        last_sent_date = datetime.fromisoformat(last_sent).date()
+    except (TypeError, ValueError):
+        return True
+    return (today - last_sent_date).days >= MORNING_NOTIFICATION_INTERVAL_DAYS
+
+
 async def send_morning_notifications():
     msk = _msk_now()
+    today = msk.date()
+    today_iso = today.isoformat()
     print(f"[MSK {msk}] Отправляю утренние уведомления...")
     users = load_users()
+    sent_user_ids = []
+    skipped_count = 0
     for user_id, user_data in users.items():
         if "sign" not in user_data:
+            continue
+        if not _is_morning_notification_due(user_data, today):
+            skipped_count += 1
             continue
         sign = user_data["sign"]
         try:
             msg = random.choice(MORNING_TEMPLATES).format(sign=sign)
             await bot.send_message(int(user_id), msg, reply_markup=get_main_keyboard())
+            sent_user_ids.append(user_id)
         except Exception as e:
             print(f"Ошибка отправки уведомления пользователю {user_id}:", e)
+
+    if sent_user_ids:
+        latest_users = load_users()
+        for user_id in sent_user_ids:
+            if user_id in latest_users:
+                latest_users[user_id][MORNING_NOTIFICATION_LAST_SENT_KEY] = today_iso
+        save_users(latest_users)
+    print(
+        f"Утренние уведомления: отправлено {len(sent_user_ids)}, "
+        f"пропущено по интервалу {skipped_count}"
+    )
 
 # ====== АВТОПОСТИНГ В КАНАЛ ======
 # Темы постов с категориями (категория нужна для подбора тематической картинки)
