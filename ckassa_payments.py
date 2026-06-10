@@ -27,6 +27,10 @@ class CkassaPaymentAccessDenied(CkassaPaymentError):
     pass
 
 
+class CkassaProviderNotFound(CkassaPaymentConfigError):
+    pass
+
+
 @dataclass(frozen=True)
 class CkassaConfig:
     api_login: str
@@ -122,10 +126,9 @@ class CkassaClient:
         }
         text = await self._request_text("POST", "invoice/create2/", json=payload)
         pay_url = text.strip().strip('"')
-        if pay_url.startswith("{"):
-            error = _ckassa_result_exception(pay_url)
-            if error:
-                raise error
+        error = _ckassa_result_exception(pay_url)
+        if error:
+            raise error
         if not pay_url.startswith(("http://", "https://")):
             raise CkassaPaymentError(f"Unexpected Ckassa invoice response: {pay_url[:200]}")
         return CkassaInvoice(
@@ -383,22 +386,42 @@ def _coerce_int(value: Any, default: int = 0) -> int:
 
 
 def _ckassa_result_exception(text: str) -> CkassaPaymentError | None:
+    code = None
+    message = ""
+    details = ""
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        return None
+        data = None
+
     result = data.get("result") if isinstance(data, dict) else None
-    if not isinstance(result, dict):
-        return None
-    code = result.get("code")
-    message = result.get("message") or "unknown error"
-    details = result.get("details")
+    if isinstance(result, dict):
+        code = result.get("code")
+        message = str(result.get("message") or "")
+        details = str(result.get("details") or "")
+    else:
+        # Some Ckassa failures are returned as a Java-style object string
+        # instead of JSON, for example ErrorResponse(result=ResultResponse(...)).
+        code_match = re.search(r"\bcode\s*=\s*([^,\s)]+)", text)
+        message_match = re.search(
+            r"\bmessage\s*=\s*(.*?)(?=,\s*details\s*=|\)\s*\)?\s*$)",
+            text,
+        )
+        details_match = re.search(r"\bdetails\s*=\s*(.*?)(?=\)\s*\)?\s*$)", text)
+        if code_match:
+            code = code_match.group(1).strip()
+            message = message_match.group(1).strip() if message_match else ""
+            details = details_match.group(1).strip() if details_match else ""
+
     if code in (None, 0, "0"):
         return None
+    message = message or "unknown error"
     if details:
         error_text = f"Ckassa error {code}: {message} ({details})"
     else:
         error_text = f"Ckassa error {code}: {message}"
+    if str(code) == "1354":
+        return CkassaProviderNotFound(error_text)
     if str(code) == "2715":
         return CkassaPaymentAccessDenied(error_text)
     return CkassaPaymentError(error_text)

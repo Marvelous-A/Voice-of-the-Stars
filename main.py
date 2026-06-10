@@ -20,6 +20,7 @@ from ckassa_payments import (
     CkassaPaymentConfigError,
     CkassaPaymentError,
     CkassaPaymentStore,
+    CkassaProviderNotFound,
     extract_payment_order_id,
     format_kopeks_amount,
     make_order_id,
@@ -72,9 +73,11 @@ REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 CKASSA_PAYMENTS_FILE = "ckassa_payments.json"
 CKASSA_POLL_INTERVAL_SEC = int(getenv("CKASSA_POLL_INTERVAL_SEC", "60"))
+CKASSA_CONFIG_ALERT_COOLDOWN_SEC = int(getenv("CKASSA_CONFIG_ALERT_COOLDOWN_SEC", "1800"))
 ckassa_client = CkassaClient()
 ckassa_store = CkassaPaymentStore(CKASSA_PAYMENTS_FILE)
 CKASSA_STATE_LOCK = asyncio.Lock()
+_last_ckassa_provider_alert_at = 0.0
 
 PROXY_URL = getenv("PROXY_URL", "")  # socks5://... или пусто если прокси не нужен
 session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
@@ -275,8 +278,8 @@ def _remove_pending_answer(pending_id: str) -> None:
     items = [x for x in items if x.get("id") != pending_id]
     _save_pending_answers(items)
 
-# Длительность сеанса — 10 минут, в session_timeout и при персисте ACTIVE_SESSIONS
-SESSION_DURATION_SEC = 10 * 60
+# Длительность сеанса — 5 минут, в session_timeout и при персисте ACTIVE_SESSIONS
+SESSION_DURATION_SEC = 5 * 60
 
 def _serialize_active_sessions() -> dict:
     out = {}
@@ -1362,6 +1365,8 @@ async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = Fal
     )
 
 async def offer_ckassa_payment(message: Message, user, specialist_type: str = "", specialist_id: str = "") -> None:
+    global _last_ckassa_provider_alert_at
+
     user_id = str(user.id)
     try:
         ckassa_client.config.validate()
@@ -1395,6 +1400,26 @@ async def offer_ckassa_payment(message: Message, user, specialist_type: str = ""
             specialist_id=specialist_id,
         )
         await _send_ckassa_invoice(message, order)
+    except CkassaProviderNotFound as e:
+        print(f"[Ckassa] provider not found for user {user_id}: {e}")
+        now = time.monotonic()
+        if (
+            not _last_ckassa_provider_alert_at
+            or now - _last_ckassa_provider_alert_at >= CKASSA_CONFIG_ALERT_COOLDOWN_SEC
+        ):
+            _last_ckassa_provider_alert_at = now
+            await notify_admin(
+                "[Ckassa] Оператор не найден (ошибка 1354).\n"
+                f"CKASSA_SERV_CODE={ckassa_client.config.serv_code or '<empty>'}\n"
+                f"CKASSA_BASE_URL={ckassa_client.config.base_url}\n"
+                "Проверьте, что этот servCode активен и подключён именно к текущим "
+                "ApiLoginAuthorization/ApiAuthorization и к выбранной среде Ckassa."
+            )
+        await message.answer(
+            "Оплата сейчас временно недоступна из-за настройки платёжного сервиса. "
+            "Администратор уже получил точную причину.",
+            reply_markup=get_main_keyboard(),
+        )
     except CkassaPaymentAccessDenied as e:
         print(f"[Ckassa] create invoice access denied for user {user_id}: {e}")
         await notify_admin(f"[Ckassa] Create invoice access denied for user {user_id}: {e}")
@@ -2375,7 +2400,7 @@ async def send_tarot_answer_delayed(
             await bot.send_message(
                 user_id,
                 f"💬 Сеанс с {tarologist['name']} открыт — можешь задавать вопросы.\n"
-                f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 10 минут.",
+                f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 5 минут.",
                 reply_markup=get_session_keyboard()
             )
         else:
@@ -2583,7 +2608,7 @@ async def send_astro_answer_delayed(
             await bot.send_message(
                 user_id,
                 f"💬 Сеанс с {astrologer['name']} открыт — можешь задавать вопросы.\n"
-                f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 10 минут.",
+                f"У тебя есть {MAX_SESSION_MESSAGES} сообщений и 5 минут.",
                 reply_markup=get_session_keyboard()
             )
         else:
