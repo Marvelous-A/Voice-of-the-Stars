@@ -1070,11 +1070,19 @@ def get_cancel_keyboard():
         is_persistent=True
     )
 
-def get_ckassa_payment_keyboard(pay_url: str, amount_text: str = ""):
+def get_ckassa_payment_keyboard(pay_url: str, amount_text: str = "", order_id: str = ""):
     pay_text = f"💳 {amount_text}" if amount_text else "💳 Оплатить"
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text=pay_text, url=pay_url)],
-    ])
+    ]
+    if order_id:
+        rows.append([
+            InlineKeyboardButton(
+                text="🔄 Получить новую ссылку",
+                callback_data=f"ckassa_refresh:{order_id}",
+            )
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 DISCOUNT_OLD_PRICE_RUB = 310
@@ -1361,7 +1369,11 @@ async def _send_ckassa_invoice(message: Message, order: dict, reused: bool = Fal
         f"💳 {prefix}\n\n"
         f"Сумма: {amount_rub}{specialist_line}\n"
         "Нажми кнопку ниже — откроется страница Ckassa. После оплаты бот сам увидит платеж и начислит один сеанс.",
-        reply_markup=get_ckassa_payment_keyboard(order["invoice_url"], amount_rub),
+        reply_markup=get_ckassa_payment_keyboard(
+            order["invoice_url"],
+            amount_rub,
+            order.get("order_id", ""),
+        ),
         disable_web_page_preview=True,
     )
 
@@ -7711,6 +7723,47 @@ async def ckassa_check_payment(callback: CallbackQuery):
         return
 
     await callback.answer("Пока не вижу подтверждение оплаты. Обычно это занимает 30-60 секунд.", show_alert=True)
+
+@dp.callback_query(F.data.startswith("ckassa_refresh:"))
+async def ckassa_refresh_invoice(callback: CallbackQuery):
+    order_id = callback.data.removeprefix("ckassa_refresh:")
+    user_id = str(callback.from_user.id)
+
+    await callback.answer("Обновляю ссылку на оплату...")
+
+    async with CKASSA_STATE_LOCK:
+        order = ckassa_store.get_order(order_id)
+        if not order or str(order.get("user_id")) != user_id:
+            await callback.message.answer(
+                "Не нашёл этот счёт. Выбери специалиста ещё раз, и я создам новую ссылку.",
+                reply_markup=get_consultations_keyboard(),
+            )
+            return
+        if order.get("status") != "created":
+            await callback.message.answer(
+                "Эта ссылка уже была обновлена или закрыта. Используй последнее сообщение со счётом."
+            )
+            return
+
+        try:
+            canceled = await ckassa_client.cancel_invoice(order.get("invoice_url", ""))
+        except CkassaPaymentError as e:
+            print(f"[Ckassa] cancel invoice before refresh failed for user {user_id}: {e}")
+            await notify_admin(
+                f"[Ckassa] Cancel invoice before refresh failed for user {user_id}: {e}"
+            )
+            canceled = False
+
+        if not canceled:
+            print(f"[Ckassa] invoice {order_id} could not be canceled; replacing locally")
+        ckassa_store.mark_order_status(order_id, "replaced")
+
+    await offer_ckassa_payment(
+        callback.message,
+        callback.from_user,
+        order.get("specialist_type", ""),
+        order.get("specialist_id", ""),
+    )
 
 @dp.message(F.text.in_({"🎴 Тарологи", "🎴 Задать вопрос тарологу"}))
 async def tarot_list(message: Message):

@@ -306,6 +306,16 @@ class CkassaPaymentStore:
         data["orders"][order_id] = order
         self.save(data)
 
+    def mark_order_status(self, order_id: str, status: str) -> None:
+        data = self.load()
+        order = data["orders"].get(order_id)
+        if not order:
+            return
+        order["status"] = str(status)
+        order["updated_at"] = datetime.now(MSK).isoformat()
+        data["orders"][order_id] = order
+        self.save(data)
+
     def mark_order_credited(self, order_id: str) -> None:
         data = self.load()
         order = data["orders"].get(order_id)
@@ -366,6 +376,9 @@ class CkassaPaymentStore:
             for order in data["orders"].values()
             if str(order.get("user_id")) == str(user_id)
         ]
+
+    def get_order(self, order_id: str) -> dict[str, Any] | None:
+        return self.load()["orders"].get(str(order_id))
 
 
 def _read_int_env(name: str, default: int) -> int:
