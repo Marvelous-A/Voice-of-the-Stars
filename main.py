@@ -8,6 +8,7 @@ import subprocess
 import smtplib
 import time
 import uuid
+from io import BytesIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -1778,7 +1779,7 @@ def is_working_hours() -> bool:
     msk_hour = (datetime.now(timezone.utc).hour + 3) % 24
     return 9 <= msk_hour < 22
 
-WORKING_HOURS_BYPASS_USERNAMES = {"turumbos"}
+WORKING_HOURS_BYPASS_USERNAMES = {"turumbos", "sveta_sny"}
 
 def can_start_consultation_now(user) -> bool:
     username = (getattr(user, "username", "") or "").lstrip("@").lower()
@@ -3105,6 +3106,122 @@ CHANNEL_POST_TOPICS = [
     {"category": "meditation", "topic": "Напиши пост о том, почему одним знакам зодиака легко медитировать, а другим сложно."},
 ]
 
+CHANNEL_MAGIC_HISTORY_TOPICS = [
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи исторический факт о Таро: старейшие сохранившиеся колоды появились в Северной Италии "
+            "в XV веке как игровые карты, а устойчивую связь с оккультизмом и гаданием Таро получило значительно позже, "
+            "особенно в конце XVIII века. Покажи, как менялся смысл карт, и не называй Таро наследием Древнего Египта."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о Джоне Ди: английском математике, астрологе и советнике Елизаветы I, который вместе "
+            "с Эдвардом Келли записывал опыты общения с ангелами через магическое зеркало и кристалл. "
+            "Отдели подтвержденные дневниками занятия от поздних легенд."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о британском Законе о колдовстве 1735 года: он отменил прежние законы об охоте на ведьм "
+            "и наказывал уже не за реальную магию, а за притворные заявления о сверхъестественных силах. "
+            "Упомяни, что закон оставался в силе до 1951 года, и объясни этот поворот в отношении государства к магии."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Разбери один точный факт о Салемских процессах 1692 года: обвиненных не сжигали; 19 человек повесили, "
+            "а Джайлс Кори умер под пыткой тяжестями. Пиши уважительно к жертвам и покажи, как массовый страх "
+            "создает мифы, переживающие реальные документы."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о древнеегипетском понятии хека: магию воспринимали как силу, встроенную в религию, лечение, "
+            "защиту и погребальные обряды, а не как отдельное запретное тайное искусство. "
+            "Объясни один бытовой пример через амулет или защитное заклинание."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о греко-римских табличках проклятий: просьбы и заклятия царапали на тонких листах свинца "
+            "и оставляли в могилах, колодцах или святилищах. Покажи, что такие тексты касались судов, любви, торговли "
+            "и состязаний, но не романтизируй вред другим людям."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о месопотамской серии ритуальных текстов «Маклу»: это древние аккадские обряды против "
+            "предполагаемого колдовства, включавшие ночные чтения и символическое уничтожение фигурок. "
+            "Покажи магию как часть исторического способа справляться со страхом и неопределенностью."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о «Молоте ведьм», напечатанном в 1486-1487 годах и связанном прежде всего с Генрихом Крамером. "
+            "Объясни, почему неверно без оговорок называть его официальным руководством всей католической церкви: "
+            "его статус и предложенные процедуры оспаривались уже современниками."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о процессе над пендлскими ведьмами 1612 года в Англии: он стал одним из самых подробно "
+            "задокументированных английских процессов благодаря опубликованному отчету Томаса Поттса. "
+            "Сделай акцент на том, как официальный текст формировал образ обвиненных для следующих поколений."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о Герметическом ордене Золотой Зари, основанном в Лондоне в 1888 году. "
+            "Коротко объясни, как общество объединило церемониальную магию, Каббалу, астрологию и Таро "
+            "и повлияло на западный оккультизм XX века."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о событиях 1848 года в Хайдсвилле и сестрах Фокс, с которых часто начинают историю "
+            "современного спиритуализма. Упомяни стуки, публичные сеансы и поздние признания и отречения, "
+            "чтобы показать, почему эта история остается спорной."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о европейских «знающих людях» и cunning folk: к ним обращались за лечением, поиском пропаж, "
+            "гаданием и защитой от предполагаемого колдовства. Покажи исторический парадокс: общество могло "
+            "одновременно пользоваться их услугами и бояться обвинений в магии."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи об исландской рукописи «Гальдрабок», составленной на рубеже XVI-XVII веков. "
+            "Покажи, как в ее заклинаниях соседствуют христианские молитвы, рунические мотивы и магические знаки, "
+            "не выдавая поздние интернет-легенды за содержание рукописи."
+        ),
+    },
+    {
+        "category": "magic_history",
+        "topic": (
+            "Расскажи о книге Реджинальда Скота «Открытие колдовства» 1584 года. "
+            "Автор сомневался во многих обвинениях против ведьм и описывал приемы фокусников, чтобы показать, "
+            "как обман или ошибка могли приниматься за магию. Свяжи факт с ценностью проверки источников."
+        ),
+    },
+]
+CHANNEL_POST_TOPICS.extend(CHANNEL_MAGIC_HISTORY_TOPICS)
+
 CHANNEL_POST_EXTRA_TOPICS = [
     ("astrology", "Астрология"),
     ("astrology", "Натальная карта"),
@@ -3408,13 +3525,14 @@ CHANNEL_WEEKLY_POST_SCHEDULE = {
             ),
         },
         {
-            "id": "day7_day_signs_vs_anxiety",
+            "id": "day7_day_magic_history",
             "time": "14:00",
-            "rubric": "Знаки и тревога",
-            "category": "mystic",
+            "rubric": "Магия в истории",
+            "category": "magic_history",
+            "topic_pool": CHANNEL_MAGIC_HISTORY_TOPICS,
             "topic": (
-                "Напиши пост '7 признаков, что это не знак, а тревога' или '5 признаков, что интуиция говорит тихо'. "
-                "Не делай сухой список, подай как живое наблюдение с ясным выводом."
+                "Расскажи один проверяемый исторический факт, связанный с магией. "
+                "Четко отделяй документированные сведения от легенд и поздних интерпретаций."
             ),
         },
         {
@@ -3507,9 +3625,10 @@ CHANNEL_SCHEDULE_STYLE_BY_ID = {
         "Дизайн текста: недельная навигация. Пиши как расклад-компас: что отпустить, что увидеть, куда направить внимание. "
         "Можно дать три смысловых строки, но без сухого списка."
     ),
-    "day7_day_signs_vs_anxiety": (
-        "Дизайн текста: трезвая эзотерика. Стиль чуть более прямой: мягко останови охоту за знаками, объясни, "
-        "как тревога маскируется под интуицию, и оставь простой критерий."
+    "day7_day_magic_history": (
+        "Дизайн текста: историческая миниатюра. Начни с конкретной даты, предмета, закона, рукописи или сцены, "
+        "затем объясни контекст и отдели документированный факт от популярной легенды. "
+        "Не превращай пост в лекцию и не выдавай преследования людей за доказательство существования магии."
     ),
     "day7_evening_week_summary": (
         "Дизайн текста: воскресное письмо канала. Итог недели должен звучать как спокойное подведение черты: "
@@ -3688,14 +3807,19 @@ CHANNEL_SCHEDULE_VISUAL_BY_ID = {
         "image_mood": "три карты, компас, блокнот, ощущение навигации",
         "image_queries": ["tarot cards compass notebook", "three tarot cards compass", "weekly tarot spread desk"],
     },
-    "day7_day_signs_vs_anxiety": {
-        "size": "700-950 символов, трезвая эзотерика",
-        "paragraphs": "4 абзаца, прямой тон без жесткости",
-        "formatting": "жирным 'знак' и 'тревога' только если уместно, курсив для одной внутренней фразы, блюр можно для критерия",
-        "emoji": "без эмодзи или 1 минимальный, настроение ясности",
-        "layout": "не список, а последовательное отрезвление",
-        "image_mood": "окно, туман, телефон, блокнот, человек возвращается к фактам",
-        "image_queries": ["foggy window notebook", "phone notebook window", "person writing by window"],
+    "day7_day_magic_history": {
+        "size": "650-900 символов, историческая миниатюра с одним главным фактом",
+        "paragraphs": "3-4 абзаца: деталь эпохи, факт, контекст, короткий вывод",
+        "formatting": "жирным имя, дату или название источника; курсивом можно выделить легенду, блюр не нужен",
+        "emoji": "0-1 уместный исторический символ, без театральной мистики",
+        "layout": "не список и не энциклопедическая справка; одна история читается как маленькая сцена",
+        "image_mood": "историческая рукопись, старинная гравюра, архивный документ, музейный магический предмет",
+        "image_queries": [
+            "historic magic manuscript museum",
+            "medieval manuscript archive",
+            "antique occult book museum",
+            "historic witchcraft document",
+        ],
     },
     "day7_evening_week_summary": {
         "size": "650-900 символов, воскресное письмо",
@@ -3717,6 +3841,7 @@ CHANNEL_GENERATED_IMAGE_SYMBOLS = {
     "crystals": ["◇", "△", "✧", "✦", "◆", "◈"],
     "divination": ["✦", "☽", "◆", "◇", "☉", "✧"],
     "mystic": ["✦", "☽", "◇", "✧", "☉", "◆"],
+    "magic_history": ["XV", "XVI", "XVII", "✦", "☽", "◆"],
     "default": ["✦", "☽", "◇", "✧", "☉", "◆"],
 }
 
@@ -3742,6 +3867,7 @@ CHANNEL_IMAGE_SCENES_BY_CATEGORY = {
     "karma": ["thread_and_scales", "pendulum_map"],
     "meditation": ["singing_bowl", "moon_window"],
     "mystic": ["singing_bowl", "crystal_ball", "tarot_spread", "crystal_altar", "pendulum_map"],
+    "magic_history": ["pocket_watch", "number_journal", "pendulum_map", "tarot_spread"],
     "default": ["crystal_ball", "tarot_spread", "natal_chart", "moon_window"],
 }
 
@@ -3760,6 +3886,8 @@ CHANNEL_USE_AI_IMAGE_BRIEF = getenv("CHANNEL_USE_AI_IMAGE_BRIEF", "true").strip(
 CHANNEL_IMAGE_MIN_BRIEF_SCORE = int(getenv("CHANNEL_IMAGE_MIN_BRIEF_SCORE", "20"))
 CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "9500000"))
 CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
+CHANNEL_TELEGRAM_IMAGE_MAX_SIDE = int(getenv("CHANNEL_TELEGRAM_IMAGE_MAX_SIDE", "2560"))
+CHANNEL_TELEGRAM_IMAGE_MAX_PIXELS = int(getenv("CHANNEL_TELEGRAM_IMAGE_MAX_PIXELS", "40000000"))
 MAX_RECENT_CHANNEL_IMAGE_KEYS = int(getenv("MAX_RECENT_CHANNEL_IMAGE_KEYS", "700"))
 CHANNEL_REQUIRE_IMAGE = getenv("CHANNEL_REQUIRE_IMAGE", "true").strip().lower() in {"1", "true", "yes", "on"}
 CHANNEL_REQUIRE_REAL_PHOTO = getenv("CHANNEL_REQUIRE_REAL_PHOTO", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -3876,6 +4004,7 @@ def _channel_image_label(category: str) -> str:
         "elements": "СТИХИИ",
         "mystic": "ПРАКТИКА",
         "meditation": "НАСТРОЙКА",
+        "magic_history": "МАГИЯ В ИСТОРИИ",
     }
     return labels.get(category, "ГОЛОС ЗВЕЗД")
 
@@ -3976,6 +4105,13 @@ CHANNEL_STOCK_IMAGE_QUERIES = {
         "crystal ball candle",
         "moonlight candle",
     ],
+    "magic_history": [
+        "historic magic manuscript museum",
+        "medieval manuscript archive",
+        "antique occult book museum",
+        "historic witchcraft document",
+        "renaissance magic engraving",
+    ],
     "default": [
         "moon night sky",
         "candle notebook",
@@ -4042,6 +4178,27 @@ CHANNEL_ALWAYS_BAD_IMAGE_TERMS = (
     "logo", "font", "lettering", "caption",
 )
 CHANNEL_IMAGE_SCENE_RULES = [
+    {
+        "id": "magic_history",
+        "needles": (
+            "истори", "рукопис", "манускрипт", "архив", "закон о колдовстве",
+            "процесс", "салем", "пендл", "джон ди", "маклу", "гальдрабок",
+        ),
+        "queries": [
+            "historic magic manuscript museum",
+            "medieval manuscript archive",
+            "antique occult book museum",
+            "historic witchcraft document",
+            "renaissance magic engraving",
+        ],
+        "required_groups": [
+            ("manuscript", "archive", "document", "book", "engraving"),
+            ("historic", "medieval", "antique", "renaissance", "museum"),
+        ],
+        "preferred_terms": ("parchment", "library", "collection", "old", "illustration"),
+        "negative_terms": ("modern witch", "costume", "halloween", "cosplay", "poster"),
+        "allow_nasa": False,
+    },
     {
         "id": "relationship_message",
         "needles": (
@@ -4707,19 +4864,55 @@ def _remember_channel_image(candidate: dict) -> None:
     save_channel_state(state)
 
 
-def _stock_image_ext(content_type: str, url: str) -> str:
-    content_type = (content_type or "").lower()
-    if "png" in content_type:
-        return ".png"
-    if "webp" in content_type:
-        return ".webp"
-    if "jpeg" in content_type or "jpg" in content_type:
-        return ".jpg"
-    path = url.split("?", 1)[0].lower()
-    for ext in (".jpg", ".jpeg", ".png", ".webp"):
-        if path.endswith(ext):
-            return ".jpg" if ext == ".jpeg" else ext
-    return ".jpg"
+def _store_telegram_channel_photo(data: bytes, source: str) -> str:
+    """Decode an external image and store a Telegram-safe RGB JPEG."""
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(BytesIO(data)) as source_image:
+            width, height = source_image.size
+            if width <= 0 or height <= 0:
+                raise ValueError(f"invalid dimensions {width}x{height}")
+            if width * height > CHANNEL_TELEGRAM_IMAGE_MAX_PIXELS:
+                raise ValueError(f"image has too many pixels: {width}x{height}")
+            if max(width, height) / min(width, height) > 20:
+                raise ValueError(f"unsupported aspect ratio: {width}x{height}")
+
+            if getattr(source_image, "is_animated", False):
+                source_image.seek(0)
+            image = ImageOps.exif_transpose(source_image)
+            image.load()
+
+        if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+            rgba = image.convert("RGBA")
+            background = Image.new("RGB", rgba.size, (255, 255, 255))
+            background.paste(rgba, mask=rgba.getchannel("A"))
+            image = background
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+
+        max_side = max(512, min(CHANNEL_TELEGRAM_IMAGE_MAX_SIDE, 4096))
+        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+
+        encoded = b""
+        for quality in (90, 84, 76):
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=quality, optimize=True, progressive=True)
+            encoded = output.getvalue()
+            if len(encoded) <= CHANNEL_STOCK_IMAGE_MAX_BYTES:
+                break
+        if not encoded or len(encoded) > CHANNEL_STOCK_IMAGE_MAX_BYTES:
+            raise ValueError(f"normalized JPEG is too large: {len(encoded)} bytes")
+
+        os.makedirs(CHANNEL_IMAGE_ASSET_DIR, exist_ok=True)
+        path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}.jpg")
+        with open(path, "wb") as f:
+            f.write(encoded)
+        _cleanup_generated_channel_images()
+        return path
+    except Exception as e:
+        print(f"[channel_image] invalid image from {source}: {e}")
+        return ""
 
 
 def _stock_json_headers(provider: str) -> dict:
@@ -5108,12 +5301,9 @@ async def _download_stock_image_candidate(
                 if content_type and not content_type.startswith("image/"):
                     print(f"[channel_image] download non-image from {candidate.get('source')}: {content_type}")
                     continue
-                ext = _stock_image_ext(content_type, url)
-                path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}{ext}")
-                with open(path, "wb") as f:
-                    f.write(data)
-                _cleanup_generated_channel_images()
-                return path
+                path = _store_telegram_channel_photo(data, candidate.get("source") or url[:120])
+                if path:
+                    return path
         except Exception as e:
             print(f"[channel_image] download error from {candidate.get('source')}: {e}")
     return ""
@@ -5549,6 +5739,7 @@ def _generate_local_channel_image_asset(
                 scene_pool.extend(["natal_chart", "astrolabe", "moon_window"])
 
         keyword_scenes = [
+            (("истори", "архив", "рукопис", "манускрипт", "суд", "закон"), ["pocket_watch", "number_journal", "pendulum_map"]),
             (("луна", "лунн", "сон", "сновид"), ["moon_window", "moon_calendar", "dream_journal"]),
             (("наталь", "зодиак", "планет", "астро"), ["natal_chart", "astrolabe"]),
             (("таро", "гадани", "расклад", "оракул"), ["tarot_spread", "crystal_ball", "pendulum_map"]),
@@ -5637,6 +5828,7 @@ def _select_ai_image_scene(topic_info: dict, author_info: dict | None = None) ->
             scene_pool.extend(["natal_chart", "astrolabe", "telescope_starmap", "moon_window"])
 
     keyword_scenes = [
+        (("истори", "архив", "рукопис", "манускрипт", "суд", "закон"), ["pocket_watch", "number_journal", "pendulum_map"]),
         (("луна", "лунн", "сон", "сновид"), ["moon_window", "telescope_starmap", "dream_journal"]),
         (("наталь", "зодиак", "планет", "астро", "созвезд"), ["natal_chart", "astrolabe", "telescope_starmap"]),
         (("таро", "гадани", "расклад", "оракул", "карты"), ["tarot_spread", "tarot_deck_box", "crystal_ball", "pendulum_map"]),
@@ -5814,12 +6006,7 @@ async def _generate_pollinations_channel_image(prompt: str) -> str:
                     print(f"[channel_image] Pollinations returned non-image: {content_type} {preview}")
                     return ""
 
-        ext = ".png" if "png" in content_type else ".webp" if "webp" in content_type else ".jpg"
-        path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}{ext}")
-        with open(path, "wb") as f:
-            f.write(data)
-        _cleanup_generated_channel_images()
-        return path
+        return _store_telegram_channel_photo(data, "pollinations")
     except Exception as e:
         print(f"[channel_image] Pollinations generation error: {e}")
         return ""
@@ -5956,9 +6143,26 @@ def _remember_channel_schedule_slot(slot_key: str) -> None:
 def _channel_topic_from_schedule_slot(slot: dict) -> dict:
     style = slot.get("style") or CHANNEL_SCHEDULE_STYLE_BY_ID.get(slot.get("id", ""), "")
     visual = slot.get("visual") or CHANNEL_SCHEDULE_VISUAL_BY_ID.get(slot.get("id", ""), {})
-    return {
+    selected_topic = {
         "category": slot.get("category", "mystic"),
         "topic": slot.get("topic", ""),
+    }
+    topic_pool = [
+        item for item in (slot.get("topic_pool") or [])
+        if isinstance(item, dict) and (item.get("topic") or "").strip()
+    ]
+    if topic_pool:
+        _sync_recent_topics_from_state()
+        fresh_topics = [
+            item for item in topic_pool
+            if _topic_key(item) not in RECENT_TOPIC_KEYS
+        ]
+        rng = random.Random(slot.get("slot_key") or slot.get("id", "channel_schedule"))
+        selected_topic = rng.choice(fresh_topics or topic_pool)
+
+    return {
+        "category": selected_topic.get("category", slot.get("category", "mystic")),
+        "topic": selected_topic.get("topic", slot.get("topic", "")),
         "promo": bool(slot.get("promo", False)),
         "schedule": {
             "id": slot.get("id", ""),
@@ -6817,11 +7021,21 @@ async def _notify_channel_publish_issue(reason: str) -> None:
         return
     _last_channel_publish_alert_at = now
     clean_reason = _redact_channel_publish_error(reason)
+    if "IMAGE_PROCESS_FAILED" in clean_reason.upper():
+        guidance = (
+            "Telegram could not decode the generated photo. "
+            "This is an image-file problem, not a CHANNEL_ID or administrator-rights problem."
+        )
+    else:
+        guidance = (
+            "Check that the main bot is an administrator of the channel and that "
+            "CHANNEL_ID still points to the channel."
+        )
     await notify_admin(
         "Channel autoposting failed.\n\n"
         f"CHANNEL_ID: {CHANNEL_ID or '-'}\n"
         f"Reason: {clean_reason}\n\n"
-        "Check that the main bot is an administrator of the channel and that CHANNEL_ID still points to the channel."
+        f"{guidance}"
     )
 
 
@@ -6901,6 +7115,15 @@ async def _send_channel_post_payload(body: str, parse_mode: str | None, image_pa
     await bot.send_message(CHANNEL_ID, body, parse_mode=parse_mode)
 
 
+def _is_telegram_image_error(error: Exception) -> bool:
+    message = str(error or "").upper()
+    return any(code in message for code in (
+        "IMAGE_PROCESS_FAILED",
+        "PHOTO_INVALID_DIMENSIONS",
+        "PHOTO_CONTENT_TYPE_INVALID",
+    ))
+
+
 async def post_to_telegram_channel(post: dict) -> bool:
     if not CHANNEL_ID:
         await _notify_channel_publish_issue("CHANNEL_ID is empty")
@@ -6916,6 +7139,10 @@ async def post_to_telegram_channel(post: dict) -> bool:
         await _send_channel_post_payload(text, "HTML", image_path)
         return True
     except Exception as e:
+        if image_path and _is_telegram_image_error(e):
+            print(f"[autoposting] Telegram rejected image {image_path}: {e}")
+            await _notify_channel_publish_issue(str(e))
+            return False
         print(f"[autoposting] Telegram rejected HTML, sending plain text: {e}")
         try:
             plain = _plain_channel_publish_text(text)
@@ -7044,6 +7271,9 @@ async def post_to_channel() -> bool:
         try:
             await _send_channel_post_payload(text, "HTML", image_path)
         except Exception as e:
+            if image_path and _is_telegram_image_error(e):
+                await _notify_channel_publish_issue(str(e))
+                return False
             # Если Telegram не принял HTML (битые теги), шлём чистый текст
             print(f"[Автопостинг] HTML отклонён Telegram, шлю plain: {e}")
             plain = _plain_channel_publish_text(text)
