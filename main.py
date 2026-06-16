@@ -27,6 +27,7 @@ from ckassa_payments import (
     make_order_id,
     payment_identity,
 )
+from promo_codes import PromoCodeStore
 from vk_publisher import is_vk_configured, post_channel_payload_to_vk_attempt
 from ok_publisher import (
     get_ok_config_issue,
@@ -73,10 +74,12 @@ MAIN_BOT_URL = f"https://t.me/{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "ht
 REVIEWS_FILE = "reviews.json"
 PENDING_REVIEWS_FILE = "pending_reviews.json"
 CKASSA_PAYMENTS_FILE = "ckassa_payments.json"
+PROMO_CODES_FILE = "promo_codes.sqlite3"
 CKASSA_POLL_INTERVAL_SEC = int(getenv("CKASSA_POLL_INTERVAL_SEC", "60"))
 CKASSA_CONFIG_ALERT_COOLDOWN_SEC = int(getenv("CKASSA_CONFIG_ALERT_COOLDOWN_SEC", "1800"))
 ckassa_client = CkassaClient()
 ckassa_store = CkassaPaymentStore(CKASSA_PAYMENTS_FILE)
+promo_store = PromoCodeStore(PROMO_CODES_FILE)
 CKASSA_STATE_LOCK = asyncio.Lock()
 _last_ckassa_provider_alert_at = 0.0
 
@@ -867,6 +870,7 @@ ABOUT_TEXT = (
 WAITING_SIGN_CHANGE = {}
 WAITING_TAROT_STORY = {}
 WAITING_ASTRO_STORY = {}
+WAITING_PROMOCODE = set()
 WAITING_REVIEW = {}        # {user_id: {"step": "topic"|"anon"|"name"|"text", ...}}
 ACTIVE_SESSIONS = {}
 # ACTIVE_SESSIONS: {user_id_str: {"tarologist": dict, "history": list, "busy": bool, "msg_count": int, "profanity_count": int}}
@@ -1040,6 +1044,7 @@ def get_main_keyboard():
 def get_consultations_keyboard():
     buttons = [
         [KeyboardButton(text="🎴 Тарологи"), KeyboardButton(text="⭐ Астрологи")],
+        [KeyboardButton(text="🎟 Ввести промокод")],
         [KeyboardButton(text="🏠 Главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, is_persistent=True)
@@ -1074,6 +1079,7 @@ def get_ckassa_payment_keyboard(pay_url: str, amount_text: str = "", order_id: s
     pay_text = f"💳 {amount_text}" if amount_text else "💳 Оплатить"
     rows = [
         [InlineKeyboardButton(text=pay_text, url=pay_url)],
+        [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="promo_start")],
     ]
     if order_id:
         rows.append([
@@ -1268,7 +1274,7 @@ def get_daily_free_limit(user_id: str) -> int:
     return FREE_SESSIONS_FIRST_DAY if first_day == today else FREE_SESSIONS_DAILY
 
 def increment_sessions_today(user_id: str):
-    """Увеличивает счётчик дневных сеансов. Списывает бонусный сеанс если базовый лимит исчерпан."""
+    """Увеличивает счётчик дневных сеансов и списывает платный источник после бесплатного лимита."""
     users = load_users()
     users.setdefault(user_id, {})
     today = _msk_now().date().isoformat()
@@ -1277,16 +1283,18 @@ def increment_sessions_today(user_id: str):
         daily = {"date": today, "count": 0}
     daily["count"] += 1
     users[user_id]["sessions_daily"] = daily
-    # Если превысили базовый лимит — списываем бонусный сеанс
+    # Если превысили базовый лимит — списываем: промо → бонус → оплата.
     base_limit = get_daily_free_limit(user_id)
     if daily["count"] > base_limit:
-        bonus = users[user_id].get("bonus_sessions", 0)
-        if bonus > 0:
-            users[user_id]["bonus_sessions"] = bonus - 1
-        else:
-            paid = users[user_id].get("paid_sessions", 0)
-            if paid > 0:
-                users[user_id]["paid_sessions"] = paid - 1
+        promo_left = promo_store.consume_session(user_id)
+        if promo_left is None:
+            bonus = users[user_id].get("bonus_sessions", 0)
+            if bonus > 0:
+                users[user_id]["bonus_sessions"] = bonus - 1
+            else:
+                paid = users[user_id].get("paid_sessions", 0)
+                if paid > 0:
+                    users[user_id]["paid_sessions"] = paid - 1
     save_users(users)
 
 def track_activity(user_id: str, action: str):
@@ -1311,6 +1319,9 @@ def get_paid_sessions(user_id: str) -> int:
     users = load_users()
     return users.get(user_id, {}).get("paid_sessions", 0)
 
+def get_promo_sessions(user_id: str) -> int:
+    return promo_store.get_balance(str(user_id))
+
 def add_paid_session_credit(user_id: str, count: int = 1) -> int:
     users = load_users()
     users.setdefault(user_id, {})
@@ -1325,9 +1336,42 @@ def get_free_sessions_remaining_today(user_id: str) -> int:
 def get_available_session_count(user_id: str) -> int:
     return (
         get_free_sessions_remaining_today(user_id)
+        + get_promo_sessions(user_id)
         + get_bonus_sessions(user_id)
         + get_paid_sessions(user_id)
     )
+
+def _session_word(count: int) -> str:
+    count = abs(int(count))
+    if count % 10 == 1 and count % 100 != 11:
+        return "сеанс"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "сеанса"
+    return "сеансов"
+
+def _available_session_parts(user_id: str) -> list[str]:
+    parts = []
+    free = get_free_sessions_remaining_today(user_id)
+    promo = get_promo_sessions(user_id)
+    bonus = get_bonus_sessions(user_id)
+    paid = get_paid_sessions(user_id)
+    if free > 0:
+        parts.append(f"бесплатных сегодня: {free}")
+    if promo > 0:
+        parts.append(f"по промокоду: {promo}")
+    if bonus > 0:
+        parts.append(f"бонусных: {bonus}")
+    if paid > 0:
+        parts.append(f"оплаченных: {paid}")
+    return parts
+
+def _available_session_note(user_id: str) -> str:
+    remaining = get_available_session_count(user_id)
+    if remaining <= 0:
+        return "Доступных сеансов сейчас нет."
+    parts = _available_session_parts(user_id)
+    detail = f" ({', '.join(parts)})" if parts else ""
+    return f"Доступно: {remaining} {_session_word(remaining)}{detail}."
 
 def has_available_session(user_id: str) -> bool:
     return get_available_session_count(user_id) > 0
@@ -7483,6 +7527,7 @@ async def go_home(message: Message):
         del WAITING_ASTRO_STORY[user_id]
     if user_id in WAITING_SIGN_CHANGE:
         del WAITING_SIGN_CHANGE[user_id]
+    WAITING_PROMOCODE.discard(user_id)
     WAITING_REVIEW.pop(user_id, None)
     if user_id in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[user_id]
@@ -7700,12 +7745,97 @@ async def compat_restart(callback: CallbackQuery):
 
 @dp.message(F.text == "🌟 Консультация")
 async def consultations_menu(message: Message):
-    user_id = message.from_user.id
+    user_id = str(message.from_user.id)
+    balance_line = _available_session_note(user_id)
     msg = await message.answer(
-        "🌟 *Консультация*\n\nВыбери специалиста:",
+        f"🌟 *Консультация*\n\n{balance_line}\n\nВыбери специалиста:",
         parse_mode="Markdown",
         reply_markup=get_consultations_keyboard()
     )
+
+async def _start_promo_input(message: Message, user_id: str) -> None:
+    if user_id in ACTIVE_SESSIONS:
+        await message.answer(
+            "Сначала заверши текущий сеанс, потом можно будет активировать промокод.",
+            reply_markup=get_session_keyboard(),
+        )
+        return
+    WAITING_TAROT_STORY.pop(user_id, None)
+    WAITING_ASTRO_STORY.pop(user_id, None)
+    WAITING_REVIEW.pop(user_id, None)
+    WAITING_PROMOCODE.add(user_id)
+    await message.answer(
+        "🎟 Введи промокод одним сообщением.\n\n"
+        "Если передумал, нажми «❌ Отменить» или вернись в главное меню.",
+        reply_markup=get_cancel_keyboard(),
+    )
+
+@dp.message(F.text == "🎟 Ввести промокод")
+async def promo_code_prompt(message: Message):
+    await _start_promo_input(message, str(message.from_user.id))
+
+@dp.callback_query(F.data == "promo_start")
+async def promo_code_prompt_callback(callback: CallbackQuery):
+    if callback.message:
+        await _start_promo_input(callback.message, str(callback.from_user.id))
+    await callback.answer()
+
+def _promo_activation_error_text(reason: str) -> str:
+    return {
+        "invalid_code": "Промокод выглядит странно. Проверь, что в нём только латинские буквы, цифры, дефис или подчёркивание.",
+        "not_found": "Не нашёл такой промокод. Проверь символы и попробуй ещё раз.",
+        "inactive": "Этот промокод уже отключён.",
+        "expired": "Срок действия этого промокода истёк.",
+        "already_used": "Ты уже активировал этот промокод раньше.",
+        "exhausted": "Этот промокод уже использовали максимальное количество раз.",
+    }.get(reason, "Не получилось активировать промокод. Попробуй ещё раз чуть позже.")
+
+async def _handle_promo_code_input(message: Message) -> None:
+    user_id = str(message.from_user.id)
+    try:
+        result = promo_store.activate_code(
+            message.text or "",
+            user_id=user_id,
+            username=message.from_user.username or "",
+            full_name=message.from_user.full_name or "",
+        )
+    except Exception as e:
+        print(f"[promo] activation failed for user {user_id}: {e}")
+        asyncio.create_task(notify_admin(f"[promo] Activation failed for user {user_id}: {e}"))
+        await message.answer(
+            "Не получилось проверить промокод из-за технической ошибки. Попробуй чуть позже.",
+            reply_markup=get_consultations_keyboard(),
+        )
+        return
+    if not result.ok:
+        await message.answer(
+            f"{_promo_activation_error_text(result.reason)}\n\n"
+            "Можешь ввести другой код или нажать «❌ Отменить».",
+            reply_markup=get_cancel_keyboard(),
+        )
+        return
+
+    WAITING_PROMOCODE.discard(user_id)
+    total_available = get_available_session_count(user_id)
+    await message.answer(
+        f"✅ Промокод {result.code} активирован.\n\n"
+        f"Начислено: {result.sessions} {_session_word(result.sessions)}.\n"
+        f"Промо-сеансов осталось: {result.balance}.\n"
+        f"Всего доступно: {total_available} {_session_word(total_available)}.\n\n"
+        "Теперь можно выбрать специалиста.",
+        reply_markup=get_consultations_keyboard(),
+    )
+    user_label = (
+        f"@{message.from_user.username}" if message.from_user.username
+        else (message.from_user.full_name or f"ID {user_id}")
+    )
+    asyncio.create_task(notify_admin(
+        f"🎟 Активирован промокод\n"
+        f"Код: {result.code}\n"
+        f"Пользователь: {user_label} [ID {user_id}]\n"
+        f"Начислено сеансов: {result.sessions}\n"
+        f"Промо-баланс пользователя: {result.balance}"
+    ))
 
 @dp.callback_query(F.data == "ckassa_check")
 async def ckassa_check_payment(callback: CallbackQuery):
@@ -7781,6 +7911,7 @@ async def ckassa_refresh_invoice(callback: CallbackQuery):
 @dp.message(F.text.in_({"🎴 Тарологи", "🎴 Задать вопрос тарологу"}))
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
+    WAITING_PROMOCODE.discard(user_id)
     remaining = get_available_session_count(user_id)
     is_admin = message.from_user.id == ADMIN_ID
 
@@ -7790,19 +7921,14 @@ async def tarot_list(message: Message):
         limit_note = (
             "\n\n🔒 *Лимит сеансов исчерпан.* "
             "Выбери специалиста, и я дам ссылку на оплату консультации. "
+            "Если у тебя есть промокод, введи его в разделе консультаций. "
             f"Бонусных сеансов: {bonus}.{hint}"
         )
     elif not is_admin:
-        bonus = get_bonus_sessions(user_id)
-        paid = get_paid_sessions(user_id)
-        available_parts = []
-        if bonus > 0:
-            available_parts.append(f"бонусных: {bonus}")
-        if paid > 0:
-            available_parts.append(f"оплаченных: {paid}")
+        available_parts = _available_session_parts(user_id)
         bonus_note = f" (из них {', '.join(available_parts)})" if available_parts else ""
         limit_note = (
-            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* сеанса{bonus_note}. "
+            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* {_session_word(remaining)}{bonus_note}. "
             "Пригласи друга — получи ещё!"
         )
     else:
@@ -7851,6 +7977,7 @@ async def ask_tarot(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
+    WAITING_PROMOCODE.discard(user_id)
     if callback.from_user.id != ADMIN_ID and not has_available_session(user_id):
         await offer_ckassa_payment(callback.message, callback.from_user, "tarot", tarot_id)
         await callback.answer()
@@ -7879,6 +8006,7 @@ async def ask_tarot(callback: CallbackQuery):
 @dp.message(F.text == "⭐ Астрологи")
 async def astro_list(message: Message):
     user_id = str(message.from_user.id)
+    WAITING_PROMOCODE.discard(user_id)
     remaining = get_available_session_count(user_id)
     is_admin = message.from_user.id == ADMIN_ID
 
@@ -7888,19 +8016,14 @@ async def astro_list(message: Message):
         limit_note = (
             "\n\n🔒 *Лимит сеансов исчерпан.* "
             "Выбери специалиста, и я дам ссылку на оплату консультации. "
+            "Если у тебя есть промокод, введи его в разделе консультаций. "
             f"Бонусных сеансов: {bonus}.{hint}"
         )
     elif not is_admin:
-        bonus = get_bonus_sessions(user_id)
-        paid = get_paid_sessions(user_id)
-        available_parts = []
-        if bonus > 0:
-            available_parts.append(f"бонусных: {bonus}")
-        if paid > 0:
-            available_parts.append(f"оплаченных: {paid}")
+        available_parts = _available_session_parts(user_id)
         bonus_note = f" (из них {', '.join(available_parts)})" if available_parts else ""
         limit_note = (
-            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* сеанса{bonus_note}. "
+            f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* {_session_word(remaining)}{bonus_note}. "
             "Пригласи друга — получи ещё!"
         )
     else:
@@ -7949,6 +8072,7 @@ async def ask_astro(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
+    WAITING_PROMOCODE.discard(user_id)
     if callback.from_user.id != ADMIN_ID and not has_available_session(user_id):
         await offer_ckassa_payment(callback.message, callback.from_user, "astro", astro_id)
         await callback.answer()
@@ -7980,10 +8104,12 @@ async def cancel_tarot(message: Message):
         del WAITING_TAROT_STORY[user_id]
     if user_id in WAITING_ASTRO_STORY:
         del WAITING_ASTRO_STORY[user_id]
+    WAITING_PROMOCODE.discard(user_id)
     msg = await message.answer("Отменено.", reply_markup=get_main_keyboard())
 
 @dp.message(F.text == "⭐ Отзывы")
 async def show_reviews(message: Message):
+    WAITING_PROMOCODE.discard(str(message.from_user.id))
     write_btn = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✍️ Оставить отзыв", callback_data="write_review")
     ]])
@@ -8012,6 +8138,7 @@ async def show_more_reviews(callback: CallbackQuery):
 @dp.callback_query(F.data == "write_review")
 async def review_start(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
+    WAITING_PROMOCODE.discard(user_id)
     if user_id in ACTIVE_SESSIONS:
         await callback.answer("Сначала заверши текущий сеанс.", show_alert=True)
         return
@@ -8401,6 +8528,10 @@ async def handle_story(message: Message):
             u["full_name"] = message.from_user.full_name or ""
             users[user_id] = u
             save_users(users)
+
+    if user_id in WAITING_PROMOCODE:
+        await _handle_promo_code_input(message)
+        return
 
     # ====== ОТВЕТ НА ЗАПРОС ОБ ОПЫТЕ КОНСУЛЬТАЦИИ (инициирован админом) ======
     feedback_entry = _load_waiting_feedback().get(user_id)

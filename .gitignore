@@ -2,6 +2,7 @@
 pending_answers.json
 active_sessions.json
 ckassa_payments.json
+promo_codes.sqlite3*
 channel_state.json
 generated_channel_images/
 __pycache__/

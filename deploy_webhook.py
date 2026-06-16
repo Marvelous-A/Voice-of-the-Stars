@@ -39,6 +39,7 @@ CODE_FILES = [
     "main.py",
     "mainAdmin.py",
     "ckassa_payments.py",
+    "promo_codes.py",
     "requirements.txt",
     "descriptions.json",
 ]
@@ -56,6 +57,7 @@ RUNTIME_SEED_FILES = [
     "active_sessions.json",
     "pending_answers.json",
     "ckassa_payments.json",
+    "promo_codes.sqlite3",
 ]
 
 # Чтобы мусорные сканеры не могли подвесить однопоточный сервер:

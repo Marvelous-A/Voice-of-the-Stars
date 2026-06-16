@@ -26,6 +26,7 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 from ckassa_payments import format_kopeks_amount
 from dotenv import load_dotenv
+from promo_codes import DuplicatePromoCode, PromoCodeStore, normalize_promo_code
 
 load_dotenv()
 
@@ -50,6 +51,7 @@ CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
 TAROT_HISTORY_FILE = "tarot_history.json"
 ASTRO_HISTORY_FILE = "astro_history.json"
 WAITING_FEEDBACK_FILE = "waiting_feedback.json"
+PROMO_CODES_FILE = "promo_codes.sqlite3"
 
 DIALOGS_PER_PAGE = 8
 MESSAGES_PER_PAGE = 6
@@ -83,6 +85,7 @@ _SPECIALIST_NAME_CACHE: dict[tuple[str, str], str] = {}
 
 # Кэш username основного бота — получаем через getMe при старте
 MAIN_BOT_USERNAME: str = ""
+promo_store = PromoCodeStore(PROMO_CODES_FILE)
 
 # ====== КНОПКИ =======
 BTN_STATS = "📊 Статистика"
@@ -92,12 +95,14 @@ BTN_REQUESTS = "📩 Консультации"
 BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_FEEDBACK = "💌 Запросить отзыв"
+BTN_PROMOCODES = "🎟 Промокоды"
 BTN_CHANNEL_POST = "📢 Сгенерировать пост"
 BTN_QUICK_LINKS = "🔗 Быстрые ссылки"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
 
 CHANNEL_POST_LOCK = asyncio.Lock()
+PROMO_CREATE_STATE: dict[int, dict] = {}
 
 
 def _short_admin_error(text: str, limit: int = 900) -> str:
@@ -151,7 +156,7 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
             [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_USERS)],
             [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
-            [KeyboardButton(text=BTN_REFRESH)],
+            [KeyboardButton(text=BTN_PROMOCODES), KeyboardButton(text=BTN_REFRESH)],
         ],
         resize_keyboard=True,
     )
@@ -377,6 +382,101 @@ def render_pending_review(review_id: str, review: dict) -> str:
     )
 
 
+def _session_word(count: int) -> str:
+    count = abs(int(count))
+    if count % 10 == 1 and count % 100 != 11:
+        return "сеанс"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "сеанса"
+    return "сеансов"
+
+
+def _format_promo_expires(expires_at: str | None) -> str:
+    if not expires_at:
+        return "без срока"
+    try:
+        return datetime.fromisoformat(expires_at).strftime("%d.%m.%Y %H:%M")
+    except ValueError:
+        return expires_at
+
+
+def _parse_promo_expiry(text: str) -> str | None:
+    raw = (text or "").strip().lower()
+    if raw in {"", "-", "нет", "без срока", "бессрочно"}:
+        return None
+    if raw.isdigit():
+        days = int(raw)
+        if days <= 0 or days > 3650:
+            raise ValueError("days out of range")
+        dt = (datetime.now() + timedelta(days=days)).replace(hour=23, minute=59, second=59, microsecond=0)
+        return dt.isoformat()
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(raw, fmt).replace(hour=23, minute=59, second=59)
+            if dt < datetime.now():
+                raise ValueError("date in past")
+            return dt.isoformat()
+        except ValueError:
+            continue
+    raise ValueError("invalid date")
+
+
+def _parse_positive_int(text: str, *, max_value: int) -> int:
+    try:
+        value = int((text or "").strip())
+    except ValueError:
+        raise ValueError("not an integer")
+    if value <= 0 or value > max_value:
+        raise ValueError("out of range")
+    return value
+
+
+def promo_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Сгенерировать код", callback_data="promo_create_auto")],
+        [InlineKeyboardButton(text="✍️ Создать свой код", callback_data="promo_create_manual")],
+        [InlineKeyboardButton(text="📋 Активные промокоды", callback_data="promo_list")],
+    ])
+
+
+def promo_codes_list_keyboard(records: list[dict]) -> InlineKeyboardMarkup | None:
+    rows = []
+    for record in records[:10]:
+        code = record["code"]
+        rows.append([InlineKeyboardButton(text=f"🚫 Отключить {code}", callback_data=f"promo_disable:{code}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+def render_promo_summary() -> str:
+    summary = promo_store.summary()
+    return (
+        "🎟 *Промокоды*\n\n"
+        f"Активных кодов: *{summary['active_codes']}*\n"
+        f"Всего создано: *{summary['total_codes']}*\n"
+        f"Активаций: *{summary['activations']}*\n"
+        f"Неиспользованных промо-сеансов у пользователей: *{summary['unused_sessions']}*\n\n"
+        "Создай код для одного человека или общий код с несколькими активациями."
+    )
+
+
+def render_promo_record(record: dict) -> str:
+    sessions = int(record.get("sessions", 0))
+    max_activations = int(record.get("max_activations", 0))
+    activations = int(record.get("activations_count", 0))
+    left = max(0, max_activations - activations)
+    status = "активен" if int(record.get("is_active", 0)) else "отключён"
+    if left == 0:
+        status = "исчерпан"
+    note = record.get("note") or "—"
+    return (
+        f"`{record['code']}` — {sessions} {_session_word(sessions)}\n"
+        f"  Статус: {status}\n"
+        f"  Активации: {activations}/{max_activations}, осталось: {left}\n"
+        f"  Срок: {_format_promo_expires(record.get('expires_at'))}\n"
+        f"  Комментарий: {note}"
+    )
+
+
 # ====== РЕНДЕРЫ ======
 def render_stats() -> str:
     users = load_users()
@@ -428,6 +528,7 @@ def render_stats() -> str:
     came_by_referral = sum(1 for u in users.values() if u.get("referred_by"))
     earned_total = format_kopeks_amount(earnings.get("total_kopeks"))
     earned_count = int(earnings.get("orders_count", 0) or 0)
+    promo_summary = promo_store.summary()
 
     return (
         f"📊 *Статистика бота «Голос Звёзд»*\n"
@@ -449,6 +550,10 @@ def render_stats() -> str:
         f"💰 *Заработанные деньги*\n"
         f"  Всего: *{earned_total}*\n"
         f"  Оплаченных чеков: *{earned_count}*\n\n"
+        f"🎟 *Промокоды*\n"
+        f"  Активных кодов: *{promo_summary['active_codes']}*\n"
+        f"  Активаций: *{promo_summary['activations']}*\n"
+        f"  Неиспользованных промо-сеансов: *{promo_summary['unused_sessions']}*\n\n"
         f"🎁 *Реферальная система*\n"
         f"  Всего приглашений: *{total_referrals}*\n"
         f"  Пришли по реферальной ссылке: *{came_by_referral}*\n"
@@ -518,6 +623,7 @@ def render_user_detail(uid: str, data: dict) -> str:
     joined_str = datetime.fromisoformat(joined).strftime("%d.%m.%Y %H:%M") if joined else "—"
     last_seen = activity.get("last_seen", "")
     last_seen_str = datetime.fromisoformat(last_seen).strftime("%d.%m.%Y %H:%M") if last_seen else "—"
+    promo_sessions = promo_store.get_balance(uid)
 
     if username:
         user_label = f"@{username}"
@@ -544,6 +650,7 @@ def render_user_detail(uid: str, data: dict) -> str:
         f"🎁 *Реферальная система:*\n"
         f"  Приглашено друзей: {data.get('referrals_total', 0)}\n"
         f"  Бонусных сеансов осталось: {data.get('bonus_sessions', 0)}\n"
+        f"  Промо-сеансов осталось: {promo_sessions}\n"
         f"  Пришёл по ссылке от: {data.get('referred_by', '—')}"
     )
 
@@ -939,6 +1046,7 @@ async def start(message: Message):
 def _reset_input_state(admin_id: int) -> None:
     PENDING_INPUT.pop(admin_id, None)
     WAITING_REVIEW_EDIT.pop(admin_id, None)
+    PROMO_CREATE_STATE.pop(admin_id, None)
 
 
 @dp.message(F.text == BTN_REFRESH)
@@ -1030,6 +1138,76 @@ async def handle_status(message: Message):
         f"Время: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
         parse_mode="Markdown",
     )
+
+
+@dp.message(F.text == BTN_PROMOCODES)
+async def handle_promocodes(message: Message):
+    _reset_input_state(message.from_user.id)
+    await message.answer(
+        render_promo_summary(),
+        parse_mode="Markdown",
+        reply_markup=promo_menu_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "promo_create_auto")
+async def cb_promo_create_auto(callback: CallbackQuery):
+    admin_id = callback.from_user.id
+    _reset_input_state(admin_id)
+    PROMO_CREATE_STATE[admin_id] = {"auto": True}
+    PENDING_INPUT[admin_id] = "promo_sessions"
+    await callback.message.answer(
+        "Сколько сеансов должен давать промокод?\n\n"
+        "Например: `1`, `3` или `5`.",
+        parse_mode="Markdown",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "promo_create_manual")
+async def cb_promo_create_manual(callback: CallbackQuery):
+    admin_id = callback.from_user.id
+    _reset_input_state(admin_id)
+    PROMO_CREATE_STATE[admin_id] = {"auto": False}
+    PENDING_INPUT[admin_id] = "promo_code"
+    await callback.message.answer(
+        "Введи промокод латиницей.\n\n"
+        "Можно использовать буквы, цифры, дефис и подчёркивание. Например: `LENA3`.",
+        parse_mode="Markdown",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "promo_list")
+async def cb_promo_list(callback: CallbackQuery):
+    records = promo_store.list_codes(include_inactive=False, limit=10)
+    if not records:
+        await callback.message.answer("Активных промокодов пока нет.", reply_markup=promo_menu_keyboard())
+        await callback.answer()
+        return
+    text = "📋 *Активные промокоды*\n\n" + "\n\n".join(render_promo_record(r) for r in records)
+    await callback.message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=promo_codes_list_keyboard(records),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("promo_disable:"))
+async def cb_promo_disable(callback: CallbackQuery):
+    raw_code = callback.data.split(":", 1)[1]
+    try:
+        code = normalize_promo_code(raw_code)
+    except ValueError:
+        await callback.answer("Некорректный код.", show_alert=True)
+        return
+    disabled = promo_store.disable_code(code)
+    if disabled:
+        await callback.message.answer(f"🚫 Промокод {code} отключён.")
+        await callback.answer("Отключён")
+    else:
+        await callback.answer("Код уже отключён или не найден.", show_alert=True)
 
 
 def render_request_card(req: dict) -> str:
@@ -1624,10 +1802,120 @@ async def cb_delete_user_confirm(callback: CallbackQuery):
     await callback.answer("Готово")
 
 
+async def _handle_promo_wizard_input(message: Message, pending: str) -> bool:
+    admin_id = message.from_user.id
+    text = (message.text or "").strip()
+    if text.lower() in {"отмена", "cancel"}:
+        _reset_input_state(admin_id)
+        await message.answer("Создание промокода отменено.", reply_markup=get_admin_keyboard())
+        return True
+
+    state = PROMO_CREATE_STATE.setdefault(admin_id, {})
+
+    if pending == "promo_code":
+        try:
+            code = normalize_promo_code(text)
+        except ValueError:
+            await message.answer(
+                "Код не подходит. Используй 3-32 символа: латинские буквы, цифры, дефис или подчёркивание."
+            )
+            return True
+        if promo_store.get_code(code):
+            await message.answer("Такой промокод уже есть. Введи другой код.")
+            return True
+        state["code"] = code
+        PENDING_INPUT[admin_id] = "promo_sessions"
+        await message.answer("Сколько сеансов будет давать этот промокод?")
+        return True
+
+    if pending == "promo_sessions":
+        try:
+            sessions = _parse_positive_int(text, max_value=1000)
+        except ValueError:
+            await message.answer("Введи число от 1 до 1000.")
+            return True
+        state["sessions"] = sessions
+        PENDING_INPUT[admin_id] = "promo_max"
+        await message.answer(
+            "Сколько раз можно активировать этот код?\n\n"
+            "Для одного человека напиши `1`. Для общего промокода — нужный лимит.",
+            parse_mode="Markdown",
+        )
+        return True
+
+    if pending == "promo_max":
+        try:
+            max_activations = _parse_positive_int(text, max_value=100000)
+        except ValueError:
+            await message.answer("Введи число от 1 до 100000.")
+            return True
+        state["max_activations"] = max_activations
+        PENDING_INPUT[admin_id] = "promo_expires"
+        await message.answer(
+            "Срок действия промокода.\n\n"
+            "Напиши `-` если без срока, число дней вроде `7`, дату `31.12.2026` или `2026-12-31`.",
+            parse_mode="Markdown",
+        )
+        return True
+
+    if pending == "promo_expires":
+        try:
+            state["expires_at"] = _parse_promo_expiry(text)
+        except ValueError:
+            await message.answer("Не понял срок. Напиши `-`, число дней или дату в формате `31.12.2026`.", parse_mode="Markdown")
+            return True
+        PENDING_INPUT[admin_id] = "promo_note"
+        await message.answer(
+            "Комментарий для себя: кому или зачем выдан код.\n\n"
+            "Если комментарий не нужен, напиши `-`.",
+            parse_mode="Markdown",
+        )
+        return True
+
+    if pending == "promo_note":
+        note = "" if text in {"", "-"} else text[:300]
+        try:
+            record = promo_store.create_code(
+                code=None if state.get("auto", True) else state.get("code"),
+                sessions=state["sessions"],
+                max_activations=state["max_activations"],
+                expires_at=state.get("expires_at"),
+                note=note,
+            )
+        except DuplicatePromoCode:
+            state.pop("code", None)
+            state["auto"] = False
+            PENDING_INPUT[admin_id] = "promo_code"
+            await message.answer("Такой промокод уже есть. Введи другой код.")
+            return True
+
+        _reset_input_state(admin_id)
+        sessions = int(record["sessions"])
+        await message.answer(
+            "✅ *Промокод создан*\n\n"
+            f"Код: `{record['code']}`\n"
+            f"Сеансов: *{sessions}* {_session_word(sessions)}\n"
+            f"Активаций: *{record['max_activations']}*\n"
+            f"Срок: {_format_promo_expires(record.get('expires_at'))}\n\n"
+            "Теперь можешь отправить этот код человеку.",
+            parse_mode="Markdown",
+            reply_markup=promo_menu_keyboard(),
+        )
+        return True
+
+    return False
+
+
 # Свободный ввод: ожидание запроса «Найти пользователя» или нового текста отзыва.
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_free_text(message: Message):
     admin_id = message.from_user.id
+
+    pending = PENDING_INPUT.get(admin_id)
+    if pending and pending.startswith("promo_"):
+        handled = await _handle_promo_wizard_input(message, pending)
+        if handled:
+            return
 
     review_id = WAITING_REVIEW_EDIT.get(admin_id)
     if review_id:
@@ -1650,7 +1938,6 @@ async def handle_free_text(message: Message):
         )
         return
 
-    pending = PENDING_INPUT.get(admin_id)
     if pending == "user_query":
         PENDING_INPUT.pop(admin_id, None)
         query = (message.text or "").strip()
