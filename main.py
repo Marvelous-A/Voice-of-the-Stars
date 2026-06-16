@@ -1319,9 +1319,22 @@ def add_paid_session_credit(user_id: str, count: int = 1) -> int:
     save_users(users)
     return users[user_id]["paid_sessions"]
 
+def get_free_sessions_remaining_today(user_id: str) -> int:
+    return max(0, get_daily_free_limit(user_id) - get_sessions_today(user_id))
+
+def get_available_session_count(user_id: str) -> int:
+    return (
+        get_free_sessions_remaining_today(user_id)
+        + get_bonus_sessions(user_id)
+        + get_paid_sessions(user_id)
+    )
+
+def has_available_session(user_id: str) -> bool:
+    return get_available_session_count(user_id) > 0
+
 def get_effective_session_limit(user_id: str) -> int:
-    """Общий лимит сеансов на сегодня = бесплатные + бонусные + оплаченные."""
-    return get_daily_free_limit(user_id) + get_bonus_sessions(user_id) + get_paid_sessions(user_id)
+    """Сколько сеансов пользователь может начать прямо сейчас."""
+    return get_available_session_count(user_id)
 
 def _ckassa_amount_button_text() -> str:
     return f"💳 {_ckassa_sale_amount_text()}"
@@ -1333,7 +1346,7 @@ def _needs_ckassa_payment(user_id: str | int) -> bool:
     except (TypeError, ValueError):
         pass
     user_id = str(user_id)
-    return get_sessions_today(user_id) >= get_effective_session_limit(user_id)
+    return not has_available_session(user_id)
 
 def _payment_specialist_name(specialist_type: str, specialist_id: str) -> str:
     if specialist_type == "tarot":
@@ -7714,7 +7727,7 @@ async def ckassa_check_payment(callback: CallbackQuery):
         await callback.answer("Оплата подтверждена.")
         return
 
-    if get_sessions_today(user_id) < get_effective_session_limit(user_id):
+    if has_available_session(user_id):
         await callback.message.answer(
             "У тебя уже есть доступный сеанс. Выбери специалиста в разделе консультаций.",
             reply_markup=get_consultations_keyboard(),
@@ -7768,9 +7781,7 @@ async def ckassa_refresh_invoice(callback: CallbackQuery):
 @dp.message(F.text.in_({"🎴 Тарологи", "🎴 Задать вопрос тарологу"}))
 async def tarot_list(message: Message):
     user_id = str(message.from_user.id)
-    used = get_sessions_today(user_id)
-    effective_limit = get_effective_session_limit(user_id)
-    remaining = max(0, effective_limit - used)
+    remaining = get_available_session_count(user_id)
     is_admin = message.from_user.id == ADMIN_ID
 
     if not is_admin and remaining == 0:
@@ -7781,9 +7792,15 @@ async def tarot_list(message: Message):
             "Выбери специалиста, и я дам ссылку на оплату консультации. "
             f"Бонусных сеансов: {bonus}.{hint}"
         )
-    elif not is_admin and remaining <= effective_limit:
+    elif not is_admin:
         bonus = get_bonus_sessions(user_id)
-        bonus_note = f" (из них бонусных: {bonus})" if bonus > 0 else ""
+        paid = get_paid_sessions(user_id)
+        available_parts = []
+        if bonus > 0:
+            available_parts.append(f"бонусных: {bonus}")
+        if paid > 0:
+            available_parts.append(f"оплаченных: {paid}")
+        bonus_note = f" (из них {', '.join(available_parts)})" if available_parts else ""
         limit_note = (
             f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* сеанса{bonus_note}. "
             "Пригласи друга — получи ещё!"
@@ -7834,7 +7851,7 @@ async def ask_tarot(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= get_effective_session_limit(user_id):
+    if callback.from_user.id != ADMIN_ID and not has_available_session(user_id):
         await offer_ckassa_payment(callback.message, callback.from_user, "tarot", tarot_id)
         await callback.answer()
         return
@@ -7862,9 +7879,7 @@ async def ask_tarot(callback: CallbackQuery):
 @dp.message(F.text == "⭐ Астрологи")
 async def astro_list(message: Message):
     user_id = str(message.from_user.id)
-    used = get_sessions_today(user_id)
-    effective_limit = get_effective_session_limit(user_id)
-    remaining = max(0, effective_limit - used)
+    remaining = get_available_session_count(user_id)
     is_admin = message.from_user.id == ADMIN_ID
 
     if not is_admin and remaining == 0:
@@ -7875,9 +7890,15 @@ async def astro_list(message: Message):
             "Выбери специалиста, и я дам ссылку на оплату консультации. "
             f"Бонусных сеансов: {bonus}.{hint}"
         )
-    elif not is_admin and remaining <= effective_limit:
+    elif not is_admin:
         bonus = get_bonus_sessions(user_id)
-        bonus_note = f" (из них бонусных: {bonus})" if bonus > 0 else ""
+        paid = get_paid_sessions(user_id)
+        available_parts = []
+        if bonus > 0:
+            available_parts.append(f"бонусных: {bonus}")
+        if paid > 0:
+            available_parts.append(f"оплаченных: {paid}")
+        bonus_note = f" (из них {', '.join(available_parts)})" if available_parts else ""
         limit_note = (
             f"\n\n⚠️ *Внимание:* у тебя осталось *{remaining}* сеанса{bonus_note}. "
             "Пригласи друга — получи ещё!"
@@ -7928,7 +7949,7 @@ async def ask_astro(callback: CallbackQuery):
         return
 
     user_id = str(callback.from_user.id)
-    if callback.from_user.id != ADMIN_ID and get_sessions_today(user_id) >= get_effective_session_limit(user_id):
+    if callback.from_user.id != ADMIN_ID and not has_available_session(user_id):
         await offer_ckassa_payment(callback.message, callback.from_user, "astro", astro_id)
         await callback.answer()
         return
