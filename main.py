@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import re
 import random
@@ -3949,10 +3950,10 @@ UNSPLASH_ACCESS_KEY = getenv("UNSPLASH_ACCESS_KEY", getenv("UNSPLASH_API_KEY", "
 CHANNEL_STOCK_IMAGE_TIMEOUT = int(getenv("CHANNEL_STOCK_IMAGE_TIMEOUT", "35"))
 CHANNEL_STOCK_IMAGE_PAGE_SIZE = int(getenv("CHANNEL_STOCK_IMAGE_PAGE_SIZE", "20"))
 CHANNEL_STOCK_IMAGE_MAX_PAGE = int(getenv("CHANNEL_STOCK_IMAGE_MAX_PAGE", "18"))
-CHANNEL_STOCK_IMAGE_POOL_TARGET = int(getenv("CHANNEL_STOCK_IMAGE_POOL_TARGET", "18"))
-CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS = int(getenv("CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS", "4"))
+CHANNEL_STOCK_IMAGE_POOL_TARGET = int(getenv("CHANNEL_STOCK_IMAGE_POOL_TARGET", "36"))
+CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS = int(getenv("CHANNEL_STOCK_IMAGE_QUERY_ATTEMPTS", "10"))
 CHANNEL_USE_AI_IMAGE_BRIEF = getenv("CHANNEL_USE_AI_IMAGE_BRIEF", "true").strip().lower() in {"1", "true", "yes", "on"}
-CHANNEL_IMAGE_MIN_BRIEF_SCORE = int(getenv("CHANNEL_IMAGE_MIN_BRIEF_SCORE", "20"))
+CHANNEL_IMAGE_MIN_BRIEF_SCORE = int(getenv("CHANNEL_IMAGE_MIN_BRIEF_SCORE", "32"))
 CHANNEL_STOCK_IMAGE_MAX_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MAX_BYTES", "9500000"))
 CHANNEL_STOCK_IMAGE_MIN_BYTES = int(getenv("CHANNEL_STOCK_IMAGE_MIN_BYTES", "6000"))
 CHANNEL_TELEGRAM_IMAGE_MAX_SIDE = int(getenv("CHANNEL_TELEGRAM_IMAGE_MAX_SIDE", "2560"))
@@ -3967,11 +3968,18 @@ POLLINATIONS_IMAGE_MODEL = getenv("POLLINATIONS_IMAGE_MODEL", "flux")
 POLLINATIONS_IMAGE_TIMEOUT = int(getenv("POLLINATIONS_IMAGE_TIMEOUT", "90"))
 TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 RECENT_TOPIC_KEYS: list[str] = []
-MAX_RECENT_TOPICS = 8
+MAX_RECENT_TOPICS = int(getenv("MAX_RECENT_TOPICS", "48"))
 RECENT_CONTENT_SIGNATURES: list[str] = []
-MAX_RECENT_CONTENT_SIGNATURES = 14
+MAX_RECENT_CONTENT_SIGNATURES = int(getenv("MAX_RECENT_CONTENT_SIGNATURES", "84"))
 RECENT_CHANNEL_POST_SAMPLES: list[str] = []
-MAX_RECENT_CHANNEL_POST_SAMPLES = 6
+MAX_RECENT_CHANNEL_POST_SAMPLES = int(getenv("MAX_RECENT_CHANNEL_POST_SAMPLES", "60"))
+MAX_RECENT_CHANNEL_POST_RECORDS = int(getenv("MAX_RECENT_CHANNEL_POST_RECORDS", "160"))
+CHANNEL_POST_HISTORY_DAYS = int(getenv("CHANNEL_POST_HISTORY_DAYS", "45"))
+CHANNEL_TEXT_SIMILARITY_THRESHOLD = float(getenv("CHANNEL_TEXT_SIMILARITY_THRESHOLD", "0.58"))
+MAX_RECENT_CHANNEL_IMAGE_HASHES = int(getenv("MAX_RECENT_CHANNEL_IMAGE_HASHES", "900"))
+CHANNEL_IMAGE_HASH_HISTORY_DAYS = int(getenv("CHANNEL_IMAGE_HASH_HISTORY_DAYS", "90"))
+CHANNEL_IMAGE_DHASH_DISTANCE = int(getenv("CHANNEL_IMAGE_DHASH_DISTANCE", "7"))
+CHANNEL_IMAGE_AHASH_DISTANCE = int(getenv("CHANNEL_IMAGE_AHASH_DISTANCE", "5"))
 
 
 def load_channel_state() -> dict:
@@ -3988,6 +3996,120 @@ def save_channel_state(state: dict) -> None:
             json.dump(state, f, ensure_ascii=False)
     except Exception as e:
         print(f"[channel_state] save error: {e}")
+
+
+CHANNEL_POST_STOPWORDS = {
+    "это", "как", "что", "чтобы", "если", "или", "для", "про", "при", "над", "под", "без",
+    "уже", "еще", "ещё", "только", "когда", "где", "вам", "вас", "тебя", "тебе", "твое",
+    "твоя", "твой", "свои", "себя", "очень", "можно", "нужно", "один", "одна", "одно",
+    "два", "три", "день", "сегодня", "внутри", "будет", "были", "был", "была", "есть",
+    "нет", "чем", "все", "всё", "всех", "вот", "так", "тоже", "между", "после", "перед",
+    "голос", "звезд", "звёзд", "таро", "астрология", "бот", "личный", "вопрос", "разбор",
+    "пост", "написан", "тарологом", "астрологом",
+}
+
+
+def _channel_state_recent_cutoff(days: int) -> datetime:
+    return _msk_now() - timedelta(days=max(1, days))
+
+
+def _parse_channel_state_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone(timedelta(hours=3))).replace(tzinfo=None)
+        return parsed
+    except Exception:
+        return None
+
+
+def _plain_channel_post_text(text: str) -> str:
+    text = re.sub(r"<br\s*/?>", " ", text or "", flags=re.IGNORECASE)
+    text = re.sub(r"</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>", " ", text)
+    text = html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _channel_text_tokens(text: str) -> list[str]:
+    plain = _plain_channel_post_text(text).lower().replace("ё", "е")
+    tokens = re.findall(r"[а-яa-z0-9]{3,}", plain)
+    return [token for token in tokens if token not in CHANNEL_POST_STOPWORDS]
+
+
+def _channel_text_signature_tokens(text: str, limit: int = 18) -> list[str]:
+    counts: dict[str, int] = {}
+    for token in _channel_text_tokens(text):
+        counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [token for token, _count in ranked[:limit]]
+
+
+def _channel_token_similarity(left: list[str] | set[str], right: list[str] | set[str]) -> float:
+    left_set = set(left)
+    right_set = set(right)
+    if not left_set or not right_set:
+        return 0.0
+    return len(left_set & right_set) / len(left_set | right_set)
+
+
+def _channel_text_similarity(text: str, record: dict) -> float:
+    tokens = _channel_text_signature_tokens(text, limit=24)
+    record_tokens = record.get("tokens") or []
+    token_score = _channel_token_similarity(tokens, record_tokens)
+
+    sample = str(record.get("sample") or "")
+    current_start = _plain_channel_post_text(text)[:120].lower().replace("ё", "е")
+    record_start = _plain_channel_post_text(sample)[:120].lower().replace("ё", "е")
+    start_score = 0.0
+    if current_start and record_start:
+        current_words = set(re.findall(r"[а-яa-z0-9]{3,}", current_start))
+        record_words = set(re.findall(r"[а-яa-z0-9]{3,}", record_start))
+        start_score = _channel_token_similarity(current_words, record_words)
+
+    return max(token_score, (token_score * 0.7) + (start_score * 0.3))
+
+
+def _channel_recent_post_records(state: dict | None = None, days: int | None = None) -> list[dict]:
+    state = state if state is not None else load_channel_state()
+    cutoff = _channel_state_recent_cutoff(days or CHANNEL_POST_HISTORY_DAYS)
+    records = []
+    for item in state.get("recent_post_records", []) or []:
+        if not isinstance(item, dict):
+            continue
+        created_at = _parse_channel_state_datetime(str(item.get("at") or ""))
+        if created_at and created_at < cutoff:
+            continue
+        records.append(item)
+    return records[-MAX_RECENT_CHANNEL_POST_RECORDS:]
+
+
+def _channel_trim_post_records(records: list[dict]) -> list[dict]:
+    cutoff = _channel_state_recent_cutoff(CHANNEL_POST_HISTORY_DAYS)
+    trimmed = []
+    for item in records or []:
+        created_at = _parse_channel_state_datetime(str(item.get("at") or ""))
+        if created_at and created_at < cutoff:
+            continue
+        if isinstance(item, dict):
+            trimmed.append(item)
+    return trimmed[-MAX_RECENT_CHANNEL_POST_RECORDS:]
+
+
+def _channel_similar_recent_post(text: str, content_plan: dict | None = None) -> tuple[float, dict | None]:
+    schedule = (content_plan or {}).get("schedule") or {}
+    category = (content_plan or {}).get("category") or ""
+    best_score = 0.0
+    best_record = None
+    for record in _channel_recent_post_records():
+        score = _channel_text_similarity(text, record)
+        if schedule.get("id") and record.get("schedule_id") == schedule.get("id"):
+            score += 0.08
+        if category and record.get("category") == category:
+            score += 0.04
+        if score > best_score:
+            best_score = score
+            best_record = record
+    return best_score, best_record
 
 
 def _channel_image_font(size: int, bold: bool = False):
@@ -4530,20 +4652,20 @@ def _normalise_channel_image_brief(raw: dict | None) -> dict:
     brief["queries"] = _channel_unique_texts(
         _channel_image_query_clean(query)
         for query in (raw.get("queries") or raw.get("search_queries") or raw.get("image_queries") or [])
-    )[:8]
+    )[:12]
 
     required_groups = raw.get("required_groups")
     if not required_groups:
         required_groups = raw.get("required_terms") or raw.get("must_have_terms") or []
-    brief["required_groups"] = _channel_image_term_groups(required_groups)[:5]
+    brief["required_groups"] = _channel_image_term_groups(required_groups)[:8]
     brief["preferred_terms"] = _channel_unique_texts(
         str(term).lower()
         for term in (raw.get("preferred_terms") or raw.get("keywords") or raw.get("soft_terms") or [])
-    )[:12]
+    )[:16]
     brief["negative_terms"] = _channel_unique_texts(
         list(CHANNEL_ALWAYS_BAD_IMAGE_TERMS)
         + [str(term).lower() for term in (raw.get("negative_terms") or raw.get("avoid_terms") or [])]
-    )[:28]
+    )[:36]
     brief["allow_nasa"] = bool(raw.get("allow_nasa"))
     brief["strict"] = bool(raw.get("strict") or brief["queries"] or brief["required_groups"])
     brief["source"] = str(raw.get("source") or "ai").strip() or "ai"
@@ -4555,20 +4677,20 @@ def _merge_channel_image_briefs(primary: dict, fallback: dict) -> dict:
     merged["scene_ru"] = primary.get("scene_ru") or fallback.get("scene_ru") or ""
     merged["queries"] = _channel_unique_texts(
         list(primary.get("queries") or []) + list(fallback.get("queries") or []),
-        limit=10,
+        limit=14,
     )
     merged["required_groups"] = _channel_image_term_groups(
         list(primary.get("required_groups") or []) + list(fallback.get("required_groups") or [])
-    )[:7]
+    )[:9]
     merged["preferred_terms"] = _channel_unique_texts(
         list(primary.get("preferred_terms") or []) + list(fallback.get("preferred_terms") or []),
-        limit=18,
+        limit=22,
     )
     merged["negative_terms"] = _channel_unique_texts(
         list(CHANNEL_ALWAYS_BAD_IMAGE_TERMS)
         + list(primary.get("negative_terms") or [])
         + list(fallback.get("negative_terms") or []),
-        limit=34,
+        limit=40,
     )
     merged["allow_nasa"] = bool(primary.get("allow_nasa") or fallback.get("allow_nasa"))
     merged["strict"] = bool(primary.get("strict") or fallback.get("strict"))
@@ -4665,18 +4787,21 @@ async def _build_channel_image_brief(
         return rule_brief
 
     visual = ((content_plan or {}).get("schedule") or topic_info.get("schedule") or {}).get("visual") or {}
-    post_plain = _plain_channel_text_for_image(post_text)[:1800]
+    post_plain = _plain_channel_text_for_image(post_text)[:2800]
     prompt = (
         "Ты подбираешь brief для поиска реальной фотографии к посту Telegram-канала.\n"
-        "Нужно не мистическое настроение вообще, а конкретная сцена, которая видимо отражает смысл текста.\n"
+        "Готовый текст поста - главный источник. Тема и расписание вторичны.\n"
+        "Нужно не мистическое настроение вообще, а конкретная сцена, которая видимо отражает смысл именно этого текста.\n"
+        "Вытащи из текста предметы, место, действие, эмоциональную ситуацию и главный образ. "
         "Предпочитай бытовые предметы, место и действие. Таро, Луну, свечи, звезды и карты используй только если они реально центральны в посте.\n"
+        "Запросы должны быть конкретными: не 'moon' и не 'candle', а сцена из 4-8 слов с предметом, местом и действием.\n"
         "Ответь строго JSON без markdown и без пояснений.\n\n"
         "Поля JSON:\n"
         "- scene_ru: короткое описание сцены на русском.\n"
-        "- search_queries: 4-6 английских запросов для Pexels/Unsplash/Openverse, каждый 3-7 слов.\n"
-        "- required_terms: 3-7 английских слов или коротких фраз, которые должны быть в метаданных или запросе.\n"
-        "- preferred_terms: 4-10 английских слов для мягкого ранжирования.\n"
-        "- negative_terms: 3-10 английских слов, чего избегать.\n"
+        "- search_queries: 6-8 английских запросов для Pexels/Unsplash/Openverse, каждый 4-8 слов, без абстрактной эзотерики.\n"
+        "- required_terms: 4-8 английских слов или коротких фраз, которые должны быть в метаданных или запросе.\n"
+        "- preferred_terms: 6-12 английских слов для мягкого ранжирования.\n"
+        "- negative_terms: 5-12 английских слов, чего избегать.\n"
         "- allow_nasa: true только если нужна реальная Луна, планеты, космос, созвездия или астрономия.\n"
         "- strict: true.\n\n"
         "Запреты для картинки: readable text, quotes, posters, typography, logos, memes, screenshots.\n\n"
@@ -4742,6 +4867,53 @@ def _specific_channel_image_queries(text: str) -> list[str]:
                 "moonlight bedroom window",
                 "notebook on bedside table",
                 "night window moon",
+                "glass of water bedside table",
+            ],
+        ),
+        (
+            ("сообщени", "переписк", "телефон", "ответ", "молчани", "ок"),
+            [
+                "smartphone on table evening window",
+                "person holding phone by window",
+                "phone message blurred screen table",
+                "mobile phone coffee table evening",
+                "woman waiting by window phone",
+            ],
+        ),
+        (
+            ("метро", "поезд", "станци", "вагон", "платформ"),
+            [
+                "subway platform morning people",
+                "empty metro train station",
+                "person standing subway platform",
+                "commuter train window reflection",
+            ],
+        ),
+        (
+            ("чайник", "кухн", "окно", "чашк", "подоконник"),
+            [
+                "kettle steam kitchen window",
+                "person standing by kitchen window",
+                "tea cup windowsill morning",
+                "kitchen table cup window light",
+            ],
+        ),
+        (
+            ("двер", "порог", "ключ", "развил", "выбор", "решени"),
+            [
+                "open door hallway light",
+                "keys on table decision",
+                "person standing at crossroads",
+                "two doors hallway decision",
+            ],
+        ),
+        (
+            ("вода", "стакан", "лужа", "дожд", "река"),
+            [
+                "glass of water on table light",
+                "rainy window water glass",
+                "water reflection on floor",
+                "misty river morning path",
             ],
         ),
         (
@@ -4834,7 +5006,12 @@ def _channel_stock_image_queries(
         specific_queries = _specific_channel_image_queries(combined_text)
         category_queries = list(CHANNEL_STOCK_IMAGE_QUERIES.get(category) or CHANNEL_STOCK_IMAGE_QUERIES["default"])
         random.shuffle(category_queries)
-        queries = brief_queries + visual_queries + specific_queries + category_queries
+        if visual_brief and visual_brief.get("strict") and brief_queries:
+            queries = brief_queries + visual_queries + specific_queries
+            if len(queries) < 6:
+                queries.extend(category_queries[:max(0, 6 - len(queries))])
+        else:
+            queries = brief_queries + visual_queries + specific_queries + category_queries
         if provider in {"openverse", "wikimedia"} and not (visual_brief or {}).get("strict"):
             queries.extend(CHANNEL_BROAD_REAL_PHOTO_QUERIES)
     if provider == "nasa":
@@ -4900,6 +5077,87 @@ def _channel_stock_provider_order(
     return providers
 
 
+def _channel_image_hash_distance(left: str, right: str) -> int:
+    try:
+        return (int(str(left), 16) ^ int(str(right), 16)).bit_count()
+    except Exception:
+        return 999
+
+
+def _channel_image_hashes_from_image(image) -> dict[str, str]:
+    try:
+        from PIL import Image, ImageOps
+
+        gray = ImageOps.exif_transpose(image).convert("L")
+        dhash_image = gray.resize((9, 8), Image.Resampling.LANCZOS)
+        pixels = list(dhash_image.getdata())
+        dhash_value = 0
+        for y in range(8):
+            row = pixels[y * 9:(y + 1) * 9]
+            for x in range(8):
+                dhash_value = (dhash_value << 1) | (1 if row[x] > row[x + 1] else 0)
+
+        ahash_image = gray.resize((8, 8), Image.Resampling.LANCZOS)
+        ahash_pixels = list(ahash_image.getdata())
+        average = sum(ahash_pixels) / max(1, len(ahash_pixels))
+        ahash_value = 0
+        for pixel in ahash_pixels:
+            ahash_value = (ahash_value << 1) | (1 if pixel > average else 0)
+        return {
+            "dhash": f"{dhash_value:016x}",
+            "ahash": f"{ahash_value:016x}",
+        }
+    except Exception as e:
+        print(f"[channel_image] hash error: {e}")
+        return {}
+
+
+def _recent_channel_image_hashes() -> list[dict]:
+    state = load_channel_state()
+    cutoff = _channel_state_recent_cutoff(CHANNEL_IMAGE_HASH_HISTORY_DAYS)
+    hashes = []
+    for item in state.get("recent_image_hashes", []) or []:
+        if not isinstance(item, dict):
+            continue
+        created_at = _parse_channel_state_datetime(str(item.get("at") or ""))
+        if created_at and created_at < cutoff:
+            continue
+        if item.get("dhash") or item.get("ahash"):
+            hashes.append(item)
+    return hashes[-MAX_RECENT_CHANNEL_IMAGE_HASHES:]
+
+
+def _is_recent_channel_image_hash(image_hashes: dict[str, str]) -> bool:
+    if not image_hashes:
+        return False
+    for item in _recent_channel_image_hashes():
+        dhash_distance = 999
+        if image_hashes.get("dhash") and item.get("dhash"):
+            dhash_distance = _channel_image_hash_distance(image_hashes["dhash"], item["dhash"])
+            if dhash_distance <= CHANNEL_IMAGE_DHASH_DISTANCE:
+                return True
+        if image_hashes.get("ahash") and item.get("ahash"):
+            ahash_distance = _channel_image_hash_distance(image_hashes["ahash"], item["ahash"])
+            if ahash_distance <= CHANNEL_IMAGE_AHASH_DISTANCE and dhash_distance <= CHANNEL_IMAGE_DHASH_DISTANCE * 2:
+                return True
+    return False
+
+
+def _remember_channel_image_hashes(image_hashes: dict[str, str], source: str = "") -> None:
+    if not image_hashes:
+        return
+    state = load_channel_state()
+    recent = _recent_channel_image_hashes()
+    recent.append({
+        "at": _msk_now().isoformat(),
+        "source": str(source or "")[:80],
+        "dhash": image_hashes.get("dhash", ""),
+        "ahash": image_hashes.get("ahash", ""),
+    })
+    state["recent_image_hashes"] = recent[-MAX_RECENT_CHANNEL_IMAGE_HASHES:]
+    save_channel_state(state)
+
+
 def _recent_channel_image_keys() -> set[str]:
     state = load_channel_state()
     keys = state.get("recent_image_keys", []) or []
@@ -4962,6 +5220,10 @@ def _store_telegram_channel_photo(data: bytes, source: str) -> str:
 
         max_side = max(512, min(CHANNEL_TELEGRAM_IMAGE_MAX_SIDE, 4096))
         image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        image_hashes = _channel_image_hashes_from_image(image)
+        if _is_recent_channel_image_hash(image_hashes):
+            print(f"[channel_image] rejected visually repeated image from {source}")
+            return ""
 
         encoded = b""
         for quality in (90, 84, 76):
@@ -4977,6 +5239,7 @@ def _store_telegram_channel_photo(data: bytes, source: str) -> str:
         path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}.jpg")
         with open(path, "wb") as f:
             f.write(encoded)
+        _remember_channel_image_hashes(image_hashes, source)
         _cleanup_generated_channel_images()
         return path
     except Exception as e:
@@ -5052,40 +5315,45 @@ def _stock_candidate_relevance_score(candidate: dict, visual_brief: dict | None 
         if source == "nasa" and not visual_brief.get("allow_nasa"):
             score -= 45
         if visual_brief.get("strict") and query.strip() in CHANNEL_GENERIC_IMAGE_QUERIES:
-            score -= 28
+            score -= 38
 
-        for group in (visual_brief.get("required_groups") or [])[:7]:
+        required_hits = 0
+        for group in (visual_brief.get("required_groups") or [])[:9]:
             terms = [str(term or "").lower() for term in group if str(term or "").strip()]
             if not terms:
                 continue
             if _channel_image_contains_any(metadata_haystack, terms):
-                score += 18
+                score += 24
+                required_hits += 1
             elif _channel_image_contains_any(query, terms):
-                score += 7
+                score += 10
+                required_hits += 1
             else:
-                score -= 14
+                score -= 18
+        if visual_brief.get("strict") and visual_brief.get("required_groups") and required_hits == 0:
+            score -= 20
 
         preferred_hits = 0
-        for term in (visual_brief.get("preferred_terms") or [])[:18]:
+        for term in (visual_brief.get("preferred_terms") or [])[:22]:
             term = str(term or "").lower().strip()
             if not term:
                 continue
             if term in metadata_haystack:
-                score += 5
+                score += 6
                 preferred_hits += 1
             elif term in query:
-                score += 2
+                score += 3
                 preferred_hits += 1
-        score += min(preferred_hits, 5)
+        score += min(preferred_hits, 7)
 
-        for term in (visual_brief.get("negative_terms") or [])[:34]:
+        for term in (visual_brief.get("negative_terms") or [])[:40]:
             term = str(term or "").lower().strip()
             if not term:
                 continue
             if term in metadata_haystack:
-                score -= 16
+                score -= 18
             elif term in query:
-                score -= 7
+                score -= 8
 
     if any(token in query for token in ("family", "photo", "album", "suitcase", "dresser", "drawer")):
         good = ("family", "photo", "photos", "album", "scrapbook", "vintage", "elderly", "portrait", "drawer", "dresser", "suitcase")
@@ -6209,6 +6477,124 @@ def _remember_channel_schedule_slot(slot_key: str) -> None:
     save_channel_state(state)
 
 
+CHANNEL_WEEKLY_INTERACTIVE_SETS = {
+    "tarot_card_choice": [
+        {
+            "id": "moon_temperance_strength",
+            "pick": "Сделай интерактив: предложи выбрать карту 1, 2 или 3. Карты задай явно: 1 - Луна, 2 - Умеренность, 3 - Сила. Не раскрывай значения, не зови в бота, только создай атмосферу и попроси сохранить выбранный номер до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний интерактив с картами: 1 - Луна, 2 - Умеренность, 3 - Сила. Для каждой карты дай 2-3 живых предложения: что заметить в себе сегодня и какой маленький шаг сделать. Не продавай бота.",
+        },
+        {
+            "id": "hermit_star_justice",
+            "pick": "Сделай интерактив: предложи выбрать карту 1, 2 или 3. Карты задай явно: 1 - Отшельник, 2 - Звезда, 3 - Справедливость. Не раскрывай значения, не зови в бота, только создай атмосферу и попроси сохранить выбранный номер до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний интерактив с картами: 1 - Отшельник, 2 - Звезда, 3 - Справедливость. Для каждой карты дай 2-3 живых предложения: что заметить в себе сегодня и какой маленький шаг сделать. Не продавай бота.",
+        },
+        {
+            "id": "magician_priestess_chariot",
+            "pick": "Сделай интерактив: предложи выбрать карту 1, 2 или 3. Карты задай явно: 1 - Маг, 2 - Верховная Жрица, 3 - Колесница. Не раскрывай значения, не зови в бота, только создай атмосферу и попроси сохранить выбранный номер до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний интерактив с картами: 1 - Маг, 2 - Верховная Жрица, 3 - Колесница. Для каждой карты дай 2-3 живых предложения: что заметить в себе сегодня и какой маленький шаг сделать. Не продавай бота.",
+        },
+        {
+            "id": "empress_hanged_sun",
+            "pick": "Сделай интерактив: предложи выбрать карту 1, 2 или 3. Карты задай явно: 1 - Императрица, 2 - Повешенный, 3 - Солнце. Не раскрывай значения, не зови в бота, только создай атмосферу и попроси сохранить выбранный номер до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний интерактив с картами: 1 - Императрица, 2 - Повешенный, 3 - Солнце. Для каждой карты дай 2-3 живых предложения: что заметить в себе сегодня и какой маленький шаг сделать. Не продавай бота.",
+        },
+        {
+            "id": "lovers_wheel_tower",
+            "pick": "Сделай интерактив: предложи выбрать карту 1, 2 или 3. Карты задай явно: 1 - Влюбленные, 2 - Колесо Фортуны, 3 - Башня. Не раскрывай значения, не зови в бота, только создай атмосферу и попроси сохранить выбранный номер до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний интерактив с картами: 1 - Влюбленные, 2 - Колесо Фортуны, 3 - Башня. Для каждой карты дай 2-3 живых предложения: что заметить в себе сегодня и какой маленький шаг сделать. Не продавай бота.",
+        },
+    ],
+    "phrase_choice": [
+        {
+            "id": "waiting_mistake_answer",
+            "pick": "Сделай интерактив: предложи выбрать фразу, которая сильнее откликается. Варианты: 1 - 'я устала ждать', 2 - 'я боюсь ошибиться', 3 - 'я уже знаю ответ'. Не раскрывай значения до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний выбор фраз: 1 - 'я устала ждать', 2 - 'я боюсь ошибиться', 3 - 'я уже знаю ответ'. Для каждой фразы дай короткий психологично-эзотерический смысл и маленькое действие на день.",
+        },
+        {
+            "id": "hold_past_need_clarity",
+            "pick": "Сделай интерактив: предложи выбрать фразу, которая сильнее откликается. Варианты: 1 - 'я держусь за прошлое', 2 - 'мне нужна ясность', 3 - 'я устала решать за двоих'. Не раскрывай значения до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний выбор фраз: 1 - 'я держусь за прошлое', 2 - 'мне нужна ясность', 3 - 'я устала решать за двоих'. Для каждой фразы дай короткий психологично-эзотерический смысл и маленькое действие на день.",
+        },
+        {
+            "id": "quiet_step_boundary",
+            "pick": "Сделай интерактив: предложи выбрать фразу, которая сильнее откликается. Варианты: 1 - 'мне нужна пауза', 2 - 'я хочу сделать шаг', 3 - 'мне пора поставить границу'. Не раскрывай значения до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний выбор фраз: 1 - 'мне нужна пауза', 2 - 'я хочу сделать шаг', 3 - 'мне пора поставить границу'. Для каждой фразы дай короткий психологично-эзотерический смысл и маленькое действие на день.",
+        },
+        {
+            "id": "trust_stop_choose",
+            "pick": "Сделай интерактив: предложи выбрать фразу, которая сильнее откликается. Варианты: 1 - 'я могу себе доверять', 2 - 'пора остановиться', 3 - 'я выбираю себя'. Не раскрывай значения до завтрашней расшифровки.",
+            "decode": "Расшифруй вчерашний выбор фраз: 1 - 'я могу себе доверять', 2 - 'пора остановиться', 3 - 'я выбираю себя'. Для каждой фразы дай короткий психологично-эзотерический смысл и маленькое действие на день.",
+        },
+    ],
+}
+
+CHANNEL_SCHEDULE_INTERACTIVE_GROUPS = {
+    "day1_evening_pick_card": ("tarot_card_choice", "pick"),
+    "day2_evening_card_decode": ("tarot_card_choice", "decode"),
+    "day5_evening_pick_phrase": ("phrase_choice", "pick"),
+    "day6_morning_phrase_decode": ("phrase_choice", "decode"),
+}
+
+
+def _channel_week_key_from_slot(slot: dict, group_id: str) -> str:
+    slot_key = str(slot.get("slot_key") or "")
+    date_text = slot_key.split(":", 1)[0] if ":" in slot_key else ""
+    try:
+        slot_date = datetime.fromisoformat(date_text).date()
+    except Exception:
+        slot_date = _msk_now().date()
+    year, week, _weekday = slot_date.isocalendar()
+    return f"{year}-W{week:02d}:{group_id}"
+
+
+def _select_channel_interactive_variant(slot: dict) -> dict | None:
+    group_info = CHANNEL_SCHEDULE_INTERACTIVE_GROUPS.get(slot.get("id", ""))
+    if not group_info:
+        return None
+    group_id, mode = group_info
+    variants = CHANNEL_WEEKLY_INTERACTIVE_SETS.get(group_id) or []
+    if not variants:
+        return None
+
+    state = load_channel_state()
+    selections = state.get("weekly_interactive_variants")
+    if not isinstance(selections, dict):
+        selections = {}
+    recent_key = f"recent_interactive_variants:{group_id}"
+    recent = [
+        str(item)
+        for item in state.get(recent_key, []) or []
+        if str(item).strip()
+    ][-max(1, len(variants) - 1):]
+
+    week_key = _channel_week_key_from_slot(slot, group_id)
+    selected_id = selections.get(week_key)
+    selected = next((item for item in variants if item.get("id") == selected_id), None)
+    if not selected:
+        fresh = [item for item in variants if item.get("id") not in recent]
+        rng = random.Random(week_key)
+        selected = rng.choice(fresh or variants)
+        selections[week_key] = selected["id"]
+        if selected["id"] in recent:
+            recent.remove(selected["id"])
+        recent.append(selected["id"])
+        state["weekly_interactive_variants"] = {
+            key: value
+            for key, value in selections.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+        state[recent_key] = recent[-max(1, len(variants) - 1):]
+        save_channel_state(state)
+
+    return {
+        "id": selected.get("id", ""),
+        "topic": selected.get(mode, ""),
+        "group": group_id,
+        "mode": mode,
+    }
+
+
 def _channel_topic_from_schedule_slot(slot: dict) -> dict:
     style = slot.get("style") or CHANNEL_SCHEDULE_STYLE_BY_ID.get(slot.get("id", ""), "")
     visual = slot.get("visual") or CHANNEL_SCHEDULE_VISUAL_BY_ID.get(slot.get("id", ""), {})
@@ -6229,6 +6615,13 @@ def _channel_topic_from_schedule_slot(slot: dict) -> dict:
         rng = random.Random(slot.get("slot_key") or slot.get("id", "channel_schedule"))
         selected_topic = rng.choice(fresh_topics or topic_pool)
 
+    variant = _select_channel_interactive_variant(slot)
+    if variant and variant.get("topic"):
+        selected_topic = {
+            "category": slot.get("category", selected_topic.get("category", "mystic")),
+            "topic": variant["topic"],
+        }
+
     return {
         "category": selected_topic.get("category", slot.get("category", "mystic")),
         "topic": selected_topic.get("topic", slot.get("topic", "")),
@@ -6241,6 +6634,8 @@ def _channel_topic_from_schedule_slot(slot: dict) -> dict:
             "visual": visual,
             "slot_key": slot.get("slot_key", ""),
             "weekday": slot.get("weekday"),
+            "variant_id": (variant or {}).get("id", ""),
+            "variant_group": (variant or {}).get("group", ""),
         },
     }
 
@@ -6343,6 +6738,13 @@ def _content_signature(content_plan: dict | None) -> str:
     if not content_plan:
         return ""
     parts = []
+    schedule = content_plan.get("schedule") or {}
+    schedule_id = schedule.get("id") if isinstance(schedule, dict) else ""
+    schedule_variant = schedule.get("variant_id") if isinstance(schedule, dict) else ""
+    if schedule_id:
+        parts.append(f"schedule:{schedule_id}")
+    if schedule_variant:
+        parts.append(f"variant:{schedule_variant}")
     for key in ("rubric", "format", "tone", "hook", "layout", "ending"):
         value = content_plan.get(key) or {}
         value_id = value.get("id") if isinstance(value, dict) else ""
@@ -6357,7 +6759,11 @@ def _channel_post_sample(text: str) -> str:
     return text[:220]
 
 
-def _remember_channel_content(content_plan: dict | None, text: str) -> None:
+def _remember_channel_content(
+    content_plan: dict | None,
+    text: str,
+    topic_info: dict | None = None,
+) -> None:
     _sync_recent_content_from_state()
     signature = _content_signature(content_plan)
     if signature:
@@ -6378,6 +6784,24 @@ def _remember_channel_content(content_plan: dict | None, text: str) -> None:
     state = load_channel_state()
     state["recent_content_signatures"] = RECENT_CONTENT_SIGNATURES
     state["recent_post_samples"] = RECENT_CHANNEL_POST_SAMPLES
+
+    schedule = (content_plan or {}).get("schedule") or (topic_info or {}).get("schedule") or {}
+    records = _channel_trim_post_records(state.get("recent_post_records", []) or [])
+    plain = _plain_channel_post_text(text)
+    if plain:
+        record = {
+            "at": _msk_now().isoformat(),
+            "sample": plain[:360],
+            "tokens": _channel_text_signature_tokens(plain, limit=24),
+            "topic_key": _topic_key(topic_info or {}),
+            "category": (topic_info or {}).get("category") or (content_plan or {}).get("category") or "",
+            "schedule_id": schedule.get("id", "") if isinstance(schedule, dict) else "",
+            "schedule_rubric": schedule.get("rubric", "") if isinstance(schedule, dict) else "",
+            "schedule_variant": schedule.get("variant_id", "") if isinstance(schedule, dict) else "",
+            "content_signature": signature,
+        }
+        records.append(record)
+        state["recent_post_records"] = _channel_trim_post_records(records)
     save_channel_state(state)
 
 
@@ -6933,14 +7357,37 @@ def _channel_content_plan_prompt(content_plan: dict | None) -> str:
 
 def _recent_channel_posts_prompt() -> str:
     _sync_recent_content_from_state()
-    samples = RECENT_CHANNEL_POST_SAMPLES[-3:]
+    records = _channel_recent_post_records()
+    samples = [
+        str(record.get("sample") or "").strip()
+        for record in records[-12:]
+        if str(record.get("sample") or "").strip()
+    ]
+    if not samples and RECENT_CHANNEL_POST_SAMPLES:
+        samples = RECENT_CHANNEL_POST_SAMPLES[-12:]
     if not samples:
         return ""
-    lines = "\n".join(f"{idx + 1}. {sample}" for idx, sample in enumerate(samples))
+
+    lines = "\n".join(f"{idx + 1}. {sample[:220]}" for idx, sample in enumerate(samples))
+    recent_slots = []
+    seen_slots = set()
+    for record in reversed(records):
+        slot = str(record.get("schedule_rubric") or record.get("schedule_id") or "").strip()
+        if not slot or slot in seen_slots:
+            continue
+        seen_slots.add(slot)
+        recent_slots.append(slot)
+        if len(recent_slots) >= 10:
+            break
+    slot_line = ""
+    if recent_slots:
+        slot_line = "Недавно уже звучали рубрики/мотивы: " + ", ".join(recent_slots) + ".\n"
     return (
         "ПАМЯТЬ КАНАЛА:\n"
         f"Последние посты начинались или звучали примерно так:\n{lines}\n"
-        "Не повторяй их начало, главную метафору, структуру и финальный вопрос. "
+        f"{slot_line}"
+        "Не повторяй их начало, главную метафору, бытовую сцену, набор вариантов, структуру и финальный вопрос. "
+        "Если слот похож на старый, меняй конкретику: карту, предмет, место действия, конфликт, действие дня и образ картинки. "
         "Разнообразие нужно через новый ракурс, а не через ухудшение смысла.\n"
     )
 
@@ -6986,16 +7433,36 @@ async def generate_channel_post(
         "- Симметричные идеальные тройки ('это, это и это'). Пиши неровно, как живой человек, а не как аналитический отчёт.\n"
         "- Приветствия в начале поста.\n"
     )
-    prompt = f"{prompt}\n{CHANNEL_AI_META_BAN_PROMPT}\n"
-    text = await ask_ai(prompt, max_tokens=800)
-    if not text:
-        return ""
-    text = clean_markdown(text)
-    text = strip_channel_ai_meta_wrappers(text)
-    text = sanitize_html_for_telegram(text)
-    text = strip_channel_ai_meta_wrappers(text)
-    text = sanitize_html_for_telegram(text)
-    return text
+    base_prompt = f"{prompt}\n{CHANNEL_AI_META_BAN_PROMPT}\n"
+    retry_note = ""
+    for attempt in range(3):
+        text = await ask_ai(f"{base_prompt}{retry_note}", max_tokens=800)
+        if not text:
+            return ""
+        text = clean_markdown(text)
+        text = strip_channel_ai_meta_wrappers(text)
+        text = sanitize_html_for_telegram(text)
+        text = strip_channel_ai_meta_wrappers(text)
+        text = sanitize_html_for_telegram(text)
+
+        similarity, similar_record = _channel_similar_recent_post(text, content_plan)
+        if similarity < CHANNEL_TEXT_SIMILARITY_THRESHOLD or attempt == 2:
+            if similarity >= CHANNEL_TEXT_SIMILARITY_THRESHOLD:
+                print(
+                    "[channel_content] accepting closest available text "
+                    f"after retries; similarity={similarity:.2f}"
+                )
+            return text
+
+        sample = str((similar_record or {}).get("sample") or "")[:260]
+        print(f"[channel_content] regenerated similar post, similarity={similarity:.2f}")
+        retry_note = (
+            "\n\nПРЕДЫДУЩИЙ ВАРИАНТ ОТКЛОНЕН КАК СЛИШКОМ ПОХОЖИЙ НА НЕДАВНИЙ ПОСТ.\n"
+            f"Похожий недавний пост: {sample}\n"
+            "Сгенерируй заново: другая бытовая сцена, другой первый абзац, другой главный образ, "
+            "другой финальный вопрос. Не используй тот же набор карт, фраз, предметов или действий.\n"
+        )
+    return ""
 
 
 def _mark_channel_post_time(msk) -> None:
@@ -7279,7 +7746,11 @@ async def publish_channel_post() -> bool:
             msk = _msk_now()
             topic_info = post["topic_info"]
             _remember_channel_topic(topic_info)
-            _remember_channel_content(post.get("content_plan"), post.get("core_text", post.get("text", "")))
+            _remember_channel_content(
+                post.get("content_plan"),
+                post.get("core_text", post.get("text", "")),
+                post.get("topic_info") or {},
+            )
             _remember_channel_schedule_slot((post.get("schedule") or {}).get("slot_key", ""))
             topic_preview = _topic_key(topic_info)[:80]
             targets = ",".join(name for name, posted in results.items() if posted) or "-"
@@ -7350,7 +7821,7 @@ async def post_to_channel() -> bool:
 
         msk = _msk_now()
         _remember_channel_topic(topic_info)
-        _remember_channel_content(content_plan, core_text)
+        _remember_channel_content(content_plan, core_text, topic_info)
         schedule_slot_key = ((topic_info.get("schedule") or {}).get("slot_key") or "")
         _remember_channel_schedule_slot(schedule_slot_key)
         topic_preview = _topic_key(topic_info)[:80]

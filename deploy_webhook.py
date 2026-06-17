@@ -58,6 +58,7 @@ RUNTIME_SEED_FILES = [
     "pending_answers.json",
     "ckassa_payments.json",
     "promo_codes.sqlite3",
+    "channel_state.json",
 ]
 
 # Чтобы мусорные сканеры не могли подвесить однопоточный сервер:
