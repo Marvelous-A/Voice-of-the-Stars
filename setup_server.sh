@@ -85,6 +85,7 @@ echo "=== Копируем код в /home/bot/ ==="
 mkdir -p /home/bot
 cp /root/Voice-of-the-Stars/main.py /home/bot/main.py
 cp /root/Voice-of-the-Stars/mainAdmin.py /home/bot/mainAdmin.py
+cp /root/Voice-of-the-Stars/admin_projects.py /home/bot/admin_projects.py
 cp /root/Voice-of-the-Stars/ckassa_payments.py /home/bot/ckassa_payments.py
 cp /root/Voice-of-the-Stars/requirements.txt /home/bot/requirements.txt
 cp /root/Voice-of-the-Stars/descriptions.json /home/bot/descriptions.json 2>/dev/null || true

@@ -1,7 +1,8 @@
 """
-Админ-бот «Голос Звёзд» — отдельный Telegram-бот для администратора.
+Общий админ-бот для проектов «Голос Звёзд» и «ЭХО».
 
 Здесь живут:
+  • стартовый выбор управляемого проекта
   • все служебные уведомления (новая регистрация, перезапуск, ежедневный отчёт)
   • команды /users, /user, /stats — оформлены как кнопки, а не слэш-команды
   • быстрый доступ к статусу сервиса
@@ -18,6 +19,7 @@ from datetime import datetime, timedelta
 from os import getenv
 
 import main as main_app
+from admin_projects import EchoStatsError, load_echo_stats, render_echo_stats
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
@@ -38,6 +40,10 @@ PROXY_URL = getenv("PROXY_URL", "")
 MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
 CHANNEL_ID = main_app.CHANNEL_ID  # напр. "@VoiceOfTheStars"
 MAIN_BOT_URL = getenv("MAIN_BOT_URL", "")
+ECHO_DATABASE_PATH = getenv(
+    "ECHO_DATABASE_PATH",
+    "/var/lib/echo-dialog-bot/echo.db",
+).strip()
 
 if not ADMIN_BOT_TOKEN:
     raise SystemExit("ADMIN_BOT_TOKEN не задан в .env — создайте бота в @BotFather и пропишите токен.")
@@ -74,6 +80,11 @@ dp.callback_query.filter(F.from_user.id == ADMIN_ID)
 # Память: {admin_id: "user_query"} — ждём ввод ID/@username после кнопки «Найти пользователя»
 PENDING_INPUT: dict[int, str] = {}
 
+# Текущий раздел админ-панели. Выбор сбрасывается при каждом /start.
+ACTIVE_PROJECT: dict[int, str] = {}
+PROJECT_VOICE = "voice"
+PROJECT_ECHO = "echo"
+
 # {admin_id: review_id} — администратор редактирует текст отзыва
 WAITING_REVIEW_EDIT: dict[int, str] = {}
 
@@ -88,6 +99,9 @@ MAIN_BOT_USERNAME: str = ""
 promo_store = PromoCodeStore(PROMO_CODES_FILE)
 
 # ====== КНОПКИ =======
+BTN_PROJECT_VOICE = "🌟 Голос звёзд"
+BTN_PROJECT_ECHO = "🫧 Эхо"
+BTN_PROJECTS = "⬅️ К выбору бота"
 BTN_STATS = "📊 Статистика"
 BTN_USERS = "👥 Все пользователи"
 BTN_FIND = "🔍 Найти пользователя"
@@ -157,9 +171,39 @@ def get_admin_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_USERS)],
             [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
             [KeyboardButton(text=BTN_PROMOCODES), KeyboardButton(text=BTN_REFRESH)],
+            [KeyboardButton(text=BTN_PROJECTS)],
         ],
         resize_keyboard=True,
     )
+
+
+def get_projects_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_PROJECT_VOICE)],
+            [KeyboardButton(text=BTN_PROJECT_ECHO)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_echo_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_current_keyboard(admin_id: int) -> ReplyKeyboardMarkup:
+    project = ACTIVE_PROJECT.get(admin_id)
+    if project == PROJECT_VOICE:
+        return get_admin_keyboard()
+    if project == PROJECT_ECHO:
+        return get_echo_keyboard()
+    return get_projects_keyboard()
 
 
 def build_links_markup() -> InlineKeyboardMarkup | None:
@@ -1033,13 +1077,14 @@ def build_dialog_txt(dtype: str, user_id: str, spec_id: str) -> tuple[bytes, str
 # ====== ХЭНДЛЕРЫ ======
 @dp.message(CommandStart())
 async def start(message: Message):
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT.pop(message.from_user.id, None)
     await unpin_admin_messages(message.chat.id)
     await message.answer(
-        "🛠 *Админ-панель «Голос Звёзд»*\n\n"
-        "Здесь только твои служебные уведомления и команды.\n"
-        "Пользуйся кнопками ниже.",
+        "🛠 *Общая админ-панель*\n\n"
+        "Выбери бота, с которым хочешь работать:",
         parse_mode="Markdown",
-        reply_markup=get_admin_keyboard(),
+        reply_markup=get_projects_keyboard(),
     )
 
 
@@ -1047,6 +1092,38 @@ def _reset_input_state(admin_id: int) -> None:
     PENDING_INPUT.pop(admin_id, None)
     WAITING_REVIEW_EDIT.pop(admin_id, None)
     PROMO_CREATE_STATE.pop(admin_id, None)
+
+
+@dp.message(F.text == BTN_PROJECT_VOICE)
+async def handle_project_voice(message: Message):
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT[message.from_user.id] = PROJECT_VOICE
+    await message.answer(
+        "🌟 *Голос звёзд*\n\nВыбери действие:",
+        parse_mode="Markdown",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+@dp.message(F.text == BTN_PROJECT_ECHO)
+async def handle_project_echo(message: Message):
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT[message.from_user.id] = PROJECT_ECHO
+    await message.answer(
+        "🫧 *Эхо*\n\nПока здесь доступна статистика:",
+        parse_mode="Markdown",
+        reply_markup=get_echo_keyboard(),
+    )
+
+
+@dp.message(F.text == BTN_PROJECTS)
+async def handle_projects(message: Message):
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT.pop(message.from_user.id, None)
+    await message.answer(
+        "Выбери бота:",
+        reply_markup=get_projects_keyboard(),
+    )
 
 
 @dp.message(F.text == BTN_REFRESH)
@@ -1065,6 +1142,21 @@ async def handle_quick_links(message: Message):
 @dp.message(F.text == BTN_STATS)
 async def handle_stats(message: Message):
     _reset_input_state(message.from_user.id)
+    if ACTIVE_PROJECT.get(message.from_user.id) == PROJECT_ECHO:
+        try:
+            stats = await asyncio.to_thread(load_echo_stats, ECHO_DATABASE_PATH)
+        except EchoStatsError as error:
+            await message.answer(
+                "⚠️ Не удалось получить статистику «Эхо».\n\n"
+                f"{error}\n\n"
+                "Проверь переменную ECHO_DATABASE_PATH в окружении админ-бота."
+            )
+            return
+        await message.answer(render_echo_stats(stats), parse_mode="HTML")
+        return
+    if ACTIVE_PROJECT.get(message.from_user.id) != PROJECT_VOICE:
+        await message.answer("Сначала выбери бота:", reply_markup=get_projects_keyboard())
+        return
     await message.answer(render_stats(), parse_mode="Markdown")
 
 
@@ -1962,7 +2054,10 @@ async def handle_free_text(message: Message):
         DIALOG_SEARCH_STATE[admin_id] = query
         await show_dialogs_list(message, admin_id, "all", 0)
         return
-    await message.answer("Выбери действие кнопкой 👇", reply_markup=get_admin_keyboard())
+    await message.answer(
+        "Выбери действие кнопкой 👇",
+        reply_markup=get_current_keyboard(admin_id),
+    )
 
 
 # ====== ЗАПУСК ======
