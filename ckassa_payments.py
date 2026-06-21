@@ -1,7 +1,7 @@
 import json
 import os
-import random
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,6 +13,7 @@ import aiohttp
 DEFAULT_BASE_URL = "https://api2.ckassa.ru/api-shop/rs/open"
 DEMO_BASE_URL = "https://demo-api2.ckassa.ru/api-shop/rs/open"
 MSK = timezone(timedelta(hours=3))
+ORDER_ID_PREFIX = "71"
 
 
 class CkassaPaymentError(Exception):
@@ -470,7 +471,8 @@ def normalize_phone(value: str) -> str:
 def make_order_id(user_id: str | int) -> str:
     user_part = re.sub(r"\D+", "", str(user_id))[-10:] or "00000"
     stamp = datetime.now(MSK).strftime("%Y%m%d%H%M%S")
-    return f"{stamp}{user_part}{random.randint(1000, 9999)}"
+    nonce = secrets.randbelow(900_000) + 100_000
+    return f"{ORDER_ID_PREFIX}{stamp}{user_part}{nonce}"
 
 
 def format_ckassa_datetime(value: datetime) -> str:
@@ -491,12 +493,106 @@ def extract_payment_order_id(payment: dict[str, Any]) -> str | None:
 def payment_identity(payment: dict[str, Any]) -> str:
     reg_pay_num = payment.get("regPayNum")
     if reg_pay_num:
-        return f"regPayNum:{reg_pay_num}"
+        state = str(payment.get("state") or "unknown").upper()
+        return f"regPayNum:{reg_pay_num}:{state}"
     order_id = extract_payment_order_id(payment) or "unknown"
     state = payment.get("state") or "unknown"
     amount = payment.get("amount") or "0"
     created = payment.get("createDate") or payment.get("created") or ""
     return f"payment:{order_id}:{state}:{amount}:{created}"
+
+
+def payment_validation_error(
+    payment: dict[str, Any],
+    *,
+    expected_amount_kopeks: int,
+    expected_telegram_id: str | int,
+    expected_serv_code: str = "",
+) -> str | None:
+    amount = extract_payment_amount_kopeks(payment)
+    if amount is None:
+        return "Ckassa did not return the payment amount"
+    if amount != int(expected_amount_kopeks):
+        return f"payment amount {amount} does not match order amount {expected_amount_kopeks}"
+
+    payer_id = extract_payment_telegram_id(payment)
+    if payer_id is None:
+        return "Ckassa did not return the Telegram payer ID"
+    if payer_id != str(expected_telegram_id):
+        return f"Telegram payer {payer_id} does not match order user {expected_telegram_id}"
+
+    actual_serv_code = _extract_named_scalar(payment, "servcode", "servicecode")
+    if actual_serv_code and expected_serv_code and actual_serv_code != str(expected_serv_code):
+        return (
+            f"payment service {actual_serv_code} does not match "
+            f"order service {expected_serv_code}"
+        )
+    return None
+
+
+def extract_payment_amount_kopeks(payment: dict[str, Any]) -> int | None:
+    raw = payment.get("amount")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        text = str(raw).strip().replace(",", ".")
+        value = float(text)
+    except (TypeError, ValueError):
+        return None
+    if value < 0 or not value.is_integer():
+        return None
+    return int(value)
+
+
+def extract_payment_telegram_id(payment: dict[str, Any]) -> str | None:
+    direct = _extract_named_scalar(
+        payment,
+        "tginvpayer",
+        "telegramid",
+        "telegram_id",
+    )
+    direct_digits = re.sub(r"\D+", "", direct)
+    if direct_digits:
+        return direct_digits
+
+    for field in ("properties", "property", "map"):
+        properties = payment.get(field)
+        named = _extract_named_scalar(
+            properties,
+            "tginvpayer",
+            "telegramid",
+            "telegram_id",
+        )
+        named_digits = re.sub(r"\D+", "", named)
+        if named_digits:
+            return named_digits
+        if isinstance(properties, list) and len(properties) >= 3:
+            value = properties[2]
+            if isinstance(value, dict):
+                value = value.get("value", "")
+            positional_digits = re.sub(r"\D+", "", str(value))
+            if positional_digits:
+                return positional_digits
+    return None
+
+
+def _extract_named_scalar(container: Any, *names: str) -> str:
+    wanted = {name.replace("_", "").lower() for name in names}
+    if isinstance(container, dict):
+        for key, value in container.items():
+            normalized = str(key).replace("_", "").lower()
+            if normalized in wanted:
+                if isinstance(value, dict):
+                    value = value.get("value", "")
+                return str(value or "").strip()
+    elif isinstance(container, list):
+        for item in container:
+            if not isinstance(item, dict):
+                continue
+            normalized = str(item.get("name", "")).replace("_", "").lower()
+            if normalized in wanted:
+                return str(item.get("value", "") or "").strip()
+    return ""
 
 
 def _extract_order_id_from_properties(props: Any) -> str | None:

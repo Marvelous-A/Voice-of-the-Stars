@@ -27,6 +27,7 @@ from ckassa_payments import (
     format_kopeks_amount,
     make_order_id,
     payment_identity,
+    payment_validation_error,
 )
 from promo_codes import PromoCodeStore
 from vk_publisher import is_vk_configured, post_channel_payload_to_vk_attempt
@@ -1572,11 +1573,30 @@ async def process_ckassa_payment_updates(notify_users: bool = True) -> list[dict
             order_id = extract_payment_order_id(payment)
             state = str(payment.get("state") or "").upper()
             if not order_id:
-                ckassa_store.mark_payment_seen(payment_key)
+                continue
+            order = ckassa_store.get_order(order_id)
+            if not order:
+                # A shared Ckassa account can also return payments created by
+                # another bot. Only the bot that owns the exact local order may
+                # handle the event.
                 continue
             if not ckassa_store.mark_payment_seen(payment_key):
                 continue
             if state == "PAYED":
+                validation_error = payment_validation_error(
+                    payment,
+                    expected_amount_kopeks=int(order.get("amount_kopeks", 0)),
+                    expected_telegram_id=str(order.get("user_id", "")),
+                    expected_serv_code=ckassa_client.config.serv_code,
+                )
+                if validation_error:
+                    await notify_admin(
+                        "[Ckassa SECURITY] Payment quarantined in Voice of the Stars\n"
+                        f"order_id={order_id}\n"
+                        f"regPayNum={payment.get('regPayNum', '')}\n"
+                        f"reason={validation_error}"
+                    )
+                    continue
                 order = ckassa_store.mark_order_paid(order_id, payment)
                 if order and await credit_paid_order(order, notify_user=notify_users):
                     credited.append(order)
