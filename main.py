@@ -70,6 +70,7 @@ def normalize_channel_id(channel_id: str) -> str:
 
 CHANNEL_ID = normalize_channel_id(getenv("CHANNEL_ID", "@VoiceOfTheStars"))        # ID или @username канала для автопостинга
 CHANNEL_URL = f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID and CHANNEL_ID.startswith("@") else ""
+CHANNEL_POSTING_ENABLED = getenv("CHANNEL_POSTING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC = int(getenv("CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC", "21600"))
 MAIN_BOT_USERNAME = getenv("MAIN_BOT_USERNAME", "VoiceOfTheStarsBot").lstrip("@")
 MAIN_BOT_URL = f"https://t.me/{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "https://t.me/VoiceOfTheStarsBot"
@@ -7711,12 +7712,17 @@ async def post_to_telegram_channel(post: dict) -> bool:
 
 
 def has_configured_publish_target() -> bool:
-    return bool(CHANNEL_ID or is_vk_configured() or is_ok_configured())
+    return bool(CHANNEL_POSTING_ENABLED and (CHANNEL_ID or is_vk_configured() or is_ok_configured()))
 
 
 async def publish_channel_post() -> bool:
     publish_result = {"configured": {}, "results": {}, "errors": {}}
     _set_channel_publish_result(publish_result)
+    if not CHANNEL_POSTING_ENABLED:
+        publish_result["errors"]["all"] = "Channel posting is disabled"
+        _set_channel_publish_result(publish_result)
+        print("[autoposting] channel posting is disabled")
+        return False
     try:
         telegram_configured = bool(CHANNEL_ID)
         vk_configured = is_vk_configured()
@@ -7799,6 +7805,9 @@ async def publish_channel_post() -> bool:
 
 async def post_to_channel() -> bool:
     """Генерирует и отправляет пост в канал с подобранной по теме картинкой."""
+    if not CHANNEL_POSTING_ENABLED:
+        print("[autoposting] channel posting is disabled")
+        return False
     if not CHANNEL_ID:
         return False
     try:
@@ -7892,7 +7901,7 @@ async def scheduler():
             await send_morning_notifications()
 
         # Автопостинг по редакционной недельной сетке: 09:00, 14:00, 19:30 МСК.
-        if CHANNEL_ACTIVE_HOURS[0] <= msk.hour < CHANNEL_ACTIVE_HOURS[1]:
+        if CHANNEL_POSTING_ENABLED and CHANNEL_ACTIVE_HOURS[0] <= msk.hour < CHANNEL_ACTIVE_HOURS[1]:
             if _select_due_channel_schedule_slot(msk):
                 posted = await publish_channel_post()
                 if posted:
