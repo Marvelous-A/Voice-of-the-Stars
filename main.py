@@ -70,7 +70,7 @@ def normalize_channel_id(channel_id: str) -> str:
 
 CHANNEL_ID = normalize_channel_id(getenv("CHANNEL_ID", "@VoiceOfTheStars"))        # ID или @username канала для автопостинга
 CHANNEL_URL = f"https://t.me/{CHANNEL_ID.lstrip('@')}" if CHANNEL_ID and CHANNEL_ID.startswith("@") else ""
-CHANNEL_POSTING_ENABLED = getenv("CHANNEL_POSTING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_POSTING_ENABLED = getenv("CHANNEL_POSTING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC = int(getenv("CHANNEL_PUBLISH_ALERT_COOLDOWN_SEC", "21600"))
 MAIN_BOT_USERNAME = getenv("MAIN_BOT_USERNAME", "VoiceOfTheStarsBot").lstrip("@")
 MAIN_BOT_URL = f"https://t.me/{MAIN_BOT_USERNAME}" if MAIN_BOT_USERNAME else "https://t.me/VoiceOfTheStarsBot"
