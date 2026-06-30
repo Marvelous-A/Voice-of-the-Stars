@@ -1,0 +1,1 @@
+"""AdminBot tests."""

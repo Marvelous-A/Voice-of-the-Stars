@@ -7,7 +7,7 @@
   • команды /users, /user, /stats — оформлены как кнопки, а не слэш-команды
   • быстрый доступ к статусу сервиса
 
-Отправку уведомлений делает основной бот (main.py) через notify_admin(),
+Отправку уведомлений делает основной Voice-бот через notify_admin(),
 используя токен из переменной ADMIN_BOT_TOKEN.
 """
 
@@ -15,22 +15,35 @@ import asyncio
 import json
 import os
 import re
+import time
+import uuid
 from datetime import datetime, timedelta
 from os import getenv
+from pathlib import Path
 
-import main as main_app
-from admin_projects import EchoStatsError, load_echo_stats, render_echo_stats
+from admin_projects import (
+    EchoStatsError,
+    NeboStatsError,
+    load_echo_stats,
+    load_nebo_stats,
+    render_echo_stats,
+    render_nebo_stats,
+)
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
 from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile,
                            InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
-from ckassa_payments import format_kopeks_amount
-from dotenv import load_dotenv
+from project_runtime import (
+    ECHO_DATABASE_PATH,
+    NEBO_DATABASE_PATH,
+    VOICE_DATA_DIR,
+    load_voice_main,
+    voice_working_directory,
+)
+from ckassa_payments import CkassaPaymentStore, format_kopeks_amount
 from promo_codes import DuplicatePromoCode, PromoCodeStore, normalize_promo_code
-
-load_dotenv()
 
 ADMIN_BOT_TOKEN = getenv("ADMIN_BOT_TOKEN", "")
 ADMIN_ID = int(getenv("ADMIN_ID", "0"))
@@ -38,26 +51,23 @@ PROXY_URL = getenv("PROXY_URL", "")
 
 # Для закреплённого сообщения со ссылками
 MAIN_BOT_TOKEN = getenv("BOT_TOKEN", "")
-CHANNEL_ID = main_app.CHANNEL_ID  # напр. "@VoiceOfTheStars"
+CHANNEL_ID = getenv("CHANNEL_ID", "@VoiceOfTheStars").strip()
 MAIN_BOT_URL = getenv("MAIN_BOT_URL", "")
-ECHO_DATABASE_PATH = getenv(
-    "ECHO_DATABASE_PATH",
-    "/var/lib/echo-dialog-bot/echo.db",
-).strip()
 
 if not ADMIN_BOT_TOKEN:
     raise SystemExit("ADMIN_BOT_TOKEN не задан в .env — создайте бота в @BotFather и пропишите токен.")
 if not ADMIN_ID:
     raise SystemExit("ADMIN_ID не задан в .env.")
 
-USERS_FILE = "users.json"
-REVIEWS_FILE = "reviews.json"
-PENDING_REVIEWS_FILE = "pending_reviews.json"
-CONSULTATION_REQUESTS_FILE = "consultation_requests.json"
-TAROT_HISTORY_FILE = "tarot_history.json"
-ASTRO_HISTORY_FILE = "astro_history.json"
-WAITING_FEEDBACK_FILE = "waiting_feedback.json"
-PROMO_CODES_FILE = "promo_codes.sqlite3"
+USERS_FILE = VOICE_DATA_DIR / "users.json"
+REVIEWS_FILE = VOICE_DATA_DIR / "reviews.json"
+PENDING_REVIEWS_FILE = VOICE_DATA_DIR / "pending_reviews.json"
+CONSULTATION_REQUESTS_FILE = VOICE_DATA_DIR / "consultation_requests.json"
+TAROT_HISTORY_FILE = VOICE_DATA_DIR / "tarot_history.json"
+ASTRO_HISTORY_FILE = VOICE_DATA_DIR / "astro_history.json"
+WAITING_FEEDBACK_FILE = VOICE_DATA_DIR / "waiting_feedback.json"
+PROMO_CODES_FILE = VOICE_DATA_DIR / "promo_codes.sqlite3"
+CKASSA_PAYMENTS_FILE = VOICE_DATA_DIR / "ckassa_payments.json"
 
 DIALOGS_PER_PAGE = 8
 MESSAGES_PER_PAGE = 6
@@ -84,6 +94,15 @@ PENDING_INPUT: dict[int, str] = {}
 ACTIVE_PROJECT: dict[int, str] = {}
 PROJECT_VOICE = "voice"
 PROJECT_ECHO = "echo"
+PROJECT_NEBO = "nebo"
+ACTIVE_VOICE_MENU: dict[int, str] = {}
+VOICE_MENU_HOME = "home"
+VOICE_MENU_CHANNEL = "channel"
+VOICE_MENU_USERS = "users"
+VOICE_MENU_CONSULTATIONS = "consultations"
+VOICE_MENU_REVIEWS = "reviews"
+VOICE_MENU_PROMOS = "promos"
+VOICE_MENU_SERVICE = "service"
 
 # {admin_id: review_id} — администратор редактирует текст отзыва
 WAITING_REVIEW_EDIT: dict[int, str] = {}
@@ -97,11 +116,20 @@ _SPECIALIST_NAME_CACHE: dict[tuple[str, str], str] = {}
 # Кэш username основного бота — получаем через getMe при старте
 MAIN_BOT_USERNAME: str = ""
 promo_store = PromoCodeStore(PROMO_CODES_FILE)
+ckassa_store = CkassaPaymentStore(str(CKASSA_PAYMENTS_FILE))
 
 # ====== КНОПКИ =======
 BTN_PROJECT_VOICE = "🌟 Голос звёзд"
 BTN_PROJECT_ECHO = "🫧 Эхо"
+BTN_PROJECT_NEBO = "🌤 Небо рядом"
 BTN_PROJECTS = "⬅️ К выбору бота"
+BTN_VOICE_HOME = "⬅️ Голос звёзд"
+BTN_MENU_CHANNEL = "📢 Канал"
+BTN_MENU_USERS = "👥 Пользователи"
+BTN_MENU_CONSULTATIONS = "💬 Консультации"
+BTN_MENU_REVIEWS = "⭐ Отзывы"
+BTN_MENU_PROMOS = "🎟 Промо"
+BTN_MENU_SERVICE = "⚙️ Сервис"
 BTN_STATS = "📊 Статистика"
 BTN_USERS = "👥 Все пользователи"
 BTN_FIND = "🔍 Найти пользователя"
@@ -110,12 +138,15 @@ BTN_DIALOGS = "💬 Переписки"
 BTN_PENDING = "⭐ Отзывы на модерации"
 BTN_FEEDBACK = "💌 Запросить отзыв"
 BTN_PROMOCODES = "🎟 Промокоды"
-BTN_CHANNEL_POST = "📢 Сгенерировать пост"
+BTN_CHANNEL_POST = "📢 Предпросмотр поста"
+BTN_CHANNEL_POST_OLD = "📢 Сгенерировать пост"
+BTN_CHANNEL_NEWS_CHECK = "📰 Проверить новости"
 BTN_QUICK_LINKS = "🔗 Быстрые ссылки"
 BTN_STATUS = "ℹ️ Статус"
 BTN_REFRESH = "🔄 Обновить меню"
 
 CHANNEL_POST_LOCK = asyncio.Lock()
+PENDING_CHANNEL_PREVIEWS: dict[str, dict] = {}
 PROMO_CREATE_STATE: dict[int, dict] = {}
 
 
@@ -162,19 +193,220 @@ def _format_channel_publish_status(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _load_voice_channel_app():
+    main_app = load_voice_main()
+    if not hasattr(main_app, "build_channel_post"):
+        raise RuntimeError("В модуле Voice нет функции build_channel_post().")
+    return main_app
+
+
+def _cleanup_channel_previews(main_app=None) -> None:
+    ttl = int(getattr(main_app, "CHANNEL_PREVIEW_TTL_SEC", 1800) or 1800)
+    now = time.monotonic()
+    expired = [
+        preview_id
+        for preview_id, payload in PENDING_CHANNEL_PREVIEWS.items()
+        if now - float(payload.get("created_at", 0.0)) > ttl
+    ]
+    for preview_id in expired:
+        PENDING_CHANNEL_PREVIEWS.pop(preview_id, None)
+
+
+def _channel_preview_keyboard(preview_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"chprev:pub:{preview_id}"),
+            InlineKeyboardButton(text="🔄 Перегенерировать", callback_data=f"chprev:regen:{preview_id}"),
+        ],
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"chprev:skip:{preview_id}")],
+    ])
+
+
+def _voice_absolute_path(path: str) -> str:
+    if not path:
+        return ""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return str(candidate)
+    return str((VOICE_DATA_DIR / candidate).resolve())
+
+
+def _resolve_channel_preview_image_path(main_app, post: dict) -> str:
+    try:
+        resolver = getattr(main_app, "_resolve_channel_post_image_path", None)
+        with voice_working_directory():
+            image_path = resolver(post) if callable(resolver) else (post.get("image_path") or "")
+    except Exception as error:
+        print(f"[admin_channel_preview] image resolve error: {error}")
+        image_path = post.get("image_path") or ""
+
+    absolute_path = _voice_absolute_path(str(image_path or ""))
+    return absolute_path if absolute_path and Path(absolute_path).exists() else ""
+
+
+def _plain_channel_preview_text(main_app, text: str) -> str:
+    plain = getattr(main_app, "_plain_channel_publish_text", None)
+    if callable(plain):
+        return plain(text)
+    return re.sub(r"</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>", "", text or "")
+
+
+def _channel_preview_meta(main_app, post: dict, image_path: str, note: str = "") -> str:
+    topic_info = post.get("topic_info") or {}
+    article = post.get("news_article") or {}
+    author_info = post.get("author_info") or {}
+    specialist = author_info.get("specialist") or {}
+    caption_limit = int(getattr(main_app, "TELEGRAM_PHOTO_CAPTION_LIMIT", 1024) or 1024)
+    lines = [
+        "Предпросмотр поста",
+        f"Тип: {'новость' if article else 'сгенерированный пост'}",
+        f"Категория: {topic_info.get('category', '-')}",
+        f"Длина подписи: {len(post.get('text') or '')}/{caption_limit}",
+        f"Картинка: {'есть' if image_path else 'нет'}",
+    ]
+    if article:
+        lines.append(f"Источник: {article.get('source', '-')}")
+        if article.get("url"):
+            lines.append(f"URL: {article.get('url')}")
+    if specialist:
+        lines.append(f"Автор: {specialist.get('name')} ({author_info.get('type')})")
+    meta = "\n".join(lines)
+    return f"{note}\n\n{meta}" if note else meta
+
+
+async def _send_channel_preview(chat_id: int, main_app, post: dict, preview_id: str, note: str = "") -> None:
+    image_path = _resolve_channel_preview_image_path(main_app, post)
+    meta = _channel_preview_meta(main_app, post, image_path, note)
+    try:
+        await bot.send_message(chat_id, meta, disable_web_page_preview=True)
+    except Exception as error:
+        print(f"[admin_channel_preview] meta send error: {error}")
+
+    text = post.get("text") or ""
+    keyboard = _channel_preview_keyboard(preview_id)
+    caption_limit = int(getattr(main_app, "TELEGRAM_PHOTO_CAPTION_LIMIT", 1024) or 1024)
+    try:
+        if image_path:
+            photo = FSInputFile(image_path)
+            if len(text) <= caption_limit:
+                await bot.send_photo(chat_id, photo=photo, caption=text, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                await bot.send_photo(chat_id, photo=photo)
+                await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
+        else:
+            await bot.send_message(chat_id, text or "Пост без текста", parse_mode="HTML", reply_markup=keyboard)
+    except Exception as error:
+        print(f"[admin_channel_preview] html send error: {error}")
+        await bot.send_message(chat_id, _plain_channel_preview_text(main_app, text), reply_markup=keyboard)
+
+
+def _format_next_channel_slot(main_app, posted_at) -> str:
+    try:
+        next_slot = main_app.next_channel_schedule_slot_after(posted_at)
+    except Exception as error:
+        print(f"[admin_channel_preview] next slot error: {error}")
+        next_slot = None
+    if not next_slot:
+        return "по ближайшему слоту редакционной сетки"
+    slot = next_slot.get("slot") or {}
+    return f"{next_slot['at'].strftime('%d.%m.%Y %H:%M')} МСК, рубрика: {slot.get('rubric', 'пост')}"
+
+
 def get_admin_keyboard() -> ReplyKeyboardMarkup:
+    return get_voice_home_keyboard()
+
+
+def get_voice_home_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_STATUS)],
-            [KeyboardButton(text=BTN_CHANNEL_POST), KeyboardButton(text=BTN_QUICK_LINKS)],
-            [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
-            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_USERS)],
-            [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
-            [KeyboardButton(text=BTN_PROMOCODES), KeyboardButton(text=BTN_REFRESH)],
+            [KeyboardButton(text=BTN_MENU_CHANNEL), KeyboardButton(text=BTN_MENU_USERS)],
+            [KeyboardButton(text=BTN_MENU_CONSULTATIONS), KeyboardButton(text=BTN_MENU_REVIEWS)],
+            [KeyboardButton(text=BTN_MENU_PROMOS), KeyboardButton(text=BTN_MENU_SERVICE)],
             [KeyboardButton(text=BTN_PROJECTS)],
         ],
         resize_keyboard=True,
     )
+
+
+def get_voice_channel_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_CHANNEL_POST)],
+            [KeyboardButton(text=BTN_CHANNEL_NEWS_CHECK), KeyboardButton(text=BTN_QUICK_LINKS)],
+            [KeyboardButton(text=BTN_VOICE_HOME), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_voice_users_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_USERS)],
+            [KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_VOICE_HOME), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_voice_consultations_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_REQUESTS), KeyboardButton(text=BTN_DIALOGS)],
+            [KeyboardButton(text=BTN_FEEDBACK)],
+            [KeyboardButton(text=BTN_VOICE_HOME), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_voice_reviews_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_PENDING), KeyboardButton(text=BTN_FEEDBACK)],
+            [KeyboardButton(text=BTN_VOICE_HOME), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_voice_promos_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_PROMOCODES)],
+            [KeyboardButton(text=BTN_VOICE_HOME), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_voice_service_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_REFRESH)],
+            [KeyboardButton(text=BTN_QUICK_LINKS)],
+            [KeyboardButton(text=BTN_VOICE_HOME), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def get_voice_keyboard(admin_id: int) -> ReplyKeyboardMarkup:
+    menu = ACTIVE_VOICE_MENU.get(admin_id, VOICE_MENU_HOME)
+    if menu == VOICE_MENU_CHANNEL:
+        return get_voice_channel_keyboard()
+    if menu == VOICE_MENU_USERS:
+        return get_voice_users_keyboard()
+    if menu == VOICE_MENU_CONSULTATIONS:
+        return get_voice_consultations_keyboard()
+    if menu == VOICE_MENU_REVIEWS:
+        return get_voice_reviews_keyboard()
+    if menu == VOICE_MENU_PROMOS:
+        return get_voice_promos_keyboard()
+    if menu == VOICE_MENU_SERVICE:
+        return get_voice_service_keyboard()
+    return get_voice_home_keyboard()
 
 
 def get_projects_keyboard() -> ReplyKeyboardMarkup:
@@ -182,6 +414,7 @@ def get_projects_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_PROJECT_VOICE)],
             [KeyboardButton(text=BTN_PROJECT_ECHO)],
+            [KeyboardButton(text=BTN_PROJECT_NEBO)],
         ],
         resize_keyboard=True,
     )
@@ -197,12 +430,24 @@ def get_echo_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def get_nebo_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def get_current_keyboard(admin_id: int) -> ReplyKeyboardMarkup:
     project = ACTIVE_PROJECT.get(admin_id)
     if project == PROJECT_VOICE:
-        return get_admin_keyboard()
+        return get_voice_keyboard(admin_id)
     if project == PROJECT_ECHO:
         return get_echo_keyboard()
+    if project == PROJECT_NEBO:
+        return get_nebo_keyboard()
     return get_projects_keyboard()
 
 
@@ -285,7 +530,7 @@ def load_consultation_requests() -> list:
 
 def load_earnings() -> dict:
     try:
-        return main_app.ckassa_store.get_earnings()
+        return ckassa_store.get_earnings()
     except Exception as e:
         print(f"[load_earnings] {e}")
         return {"total_kopeks": 0, "orders_count": 0}
@@ -1079,6 +1324,7 @@ def build_dialog_txt(dtype: str, user_id: str, spec_id: str) -> tuple[bytes, str
 async def start(message: Message):
     _reset_input_state(message.from_user.id)
     ACTIVE_PROJECT.pop(message.from_user.id, None)
+    ACTIVE_VOICE_MENU.pop(message.from_user.id, None)
     await unpin_admin_messages(message.chat.id)
     await message.answer(
         "🛠 *Общая админ-панель*\n\n"
@@ -1094,14 +1340,26 @@ def _reset_input_state(admin_id: int) -> None:
     PROMO_CREATE_STATE.pop(admin_id, None)
 
 
+async def _show_voice_menu(message: Message, menu: str, title: str) -> None:
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT[message.from_user.id] = PROJECT_VOICE
+    ACTIVE_VOICE_MENU[message.from_user.id] = menu
+    await message.answer(
+        title,
+        parse_mode="Markdown",
+        reply_markup=get_voice_keyboard(message.from_user.id),
+    )
+
+
 @dp.message(F.text == BTN_PROJECT_VOICE)
 async def handle_project_voice(message: Message):
     _reset_input_state(message.from_user.id)
     ACTIVE_PROJECT[message.from_user.id] = PROJECT_VOICE
+    ACTIVE_VOICE_MENU[message.from_user.id] = VOICE_MENU_HOME
     await message.answer(
         "🌟 *Голос звёзд*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_keyboard(),
+        reply_markup=get_voice_home_keyboard(),
     )
 
 
@@ -1109,6 +1367,7 @@ async def handle_project_voice(message: Message):
 async def handle_project_echo(message: Message):
     _reset_input_state(message.from_user.id)
     ACTIVE_PROJECT[message.from_user.id] = PROJECT_ECHO
+    ACTIVE_VOICE_MENU.pop(message.from_user.id, None)
     await message.answer(
         "🫧 *Эхо*\n\nПока здесь доступна статистика:",
         parse_mode="Markdown",
@@ -1116,13 +1375,89 @@ async def handle_project_echo(message: Message):
     )
 
 
+@dp.message(F.text == BTN_PROJECT_NEBO)
+async def handle_project_nebo(message: Message):
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT[message.from_user.id] = PROJECT_NEBO
+    ACTIVE_VOICE_MENU.pop(message.from_user.id, None)
+    await message.answer(
+        "🌤 *Небо рядом*\n\nЗдесь доступна статистика пользователей и рассылки:",
+        parse_mode="Markdown",
+        reply_markup=get_nebo_keyboard(),
+    )
+
+
 @dp.message(F.text == BTN_PROJECTS)
 async def handle_projects(message: Message):
     _reset_input_state(message.from_user.id)
     ACTIVE_PROJECT.pop(message.from_user.id, None)
+    ACTIVE_VOICE_MENU.pop(message.from_user.id, None)
     await message.answer(
         "Выбери бота:",
         reply_markup=get_projects_keyboard(),
+    )
+
+
+@dp.message(F.text == BTN_VOICE_HOME)
+async def handle_voice_home(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_HOME,
+        "🌟 *Голос звёзд*\n\nВыбери раздел:",
+    )
+
+
+@dp.message(F.text == BTN_MENU_CHANNEL)
+async def handle_voice_channel_menu(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_CHANNEL,
+        "📢 *Канал*\n\nПредпросмотр, новости и быстрые ссылки.",
+    )
+
+
+@dp.message(F.text == BTN_MENU_USERS)
+async def handle_voice_users_menu(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_USERS,
+        "👥 *Пользователи*\n\nПоиск, список и статистика.",
+    )
+
+
+@dp.message(F.text == BTN_MENU_CONSULTATIONS)
+async def handle_voice_consultations_menu(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_CONSULTATIONS,
+        "💬 *Консультации*\n\nЗаявки, переписки и запрос отзыва.",
+    )
+
+
+@dp.message(F.text == BTN_MENU_REVIEWS)
+async def handle_voice_reviews_menu(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_REVIEWS,
+        "⭐ *Отзывы*\n\nМодерация и запросы отзывов.",
+    )
+
+
+@dp.message(F.text == BTN_MENU_PROMOS)
+async def handle_voice_promos_menu(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_PROMOS,
+        "🎟 *Промокоды*\n\nСоздание и управление кодами.",
+    )
+
+
+@dp.message(F.text == BTN_MENU_SERVICE)
+async def handle_voice_service_menu(message: Message):
+    await _show_voice_menu(
+        message,
+        VOICE_MENU_SERVICE,
+        "⚙️ *Сервис*\n\nСтатус, ссылки и обновление меню.",
     )
 
 
@@ -1130,7 +1465,7 @@ async def handle_projects(message: Message):
 async def handle_refresh(message: Message):
     _reset_input_state(message.from_user.id)
     await unpin_admin_messages(message.chat.id)
-    await message.answer("Меню обновлено 👇", reply_markup=get_admin_keyboard())
+    await message.answer("Меню обновлено 👇", reply_markup=get_current_keyboard(message.from_user.id))
 
 
 @dp.message(F.text == BTN_QUICK_LINKS)
@@ -1142,6 +1477,18 @@ async def handle_quick_links(message: Message):
 @dp.message(F.text == BTN_STATS)
 async def handle_stats(message: Message):
     _reset_input_state(message.from_user.id)
+    if ACTIVE_PROJECT.get(message.from_user.id) == PROJECT_NEBO:
+        try:
+            stats = await asyncio.to_thread(load_nebo_stats, NEBO_DATABASE_PATH)
+        except NeboStatsError as error:
+            await message.answer(
+                "⚠️ Не удалось получить статистику «Небо рядом».\n\n"
+                f"{error}\n\n"
+                "Проверь переменную NEBO_DATABASE_PATH в окружении админ-бота."
+            )
+            return
+        await message.answer(render_nebo_stats(stats), parse_mode="HTML")
+        return
     if ACTIVE_PROJECT.get(message.from_user.id) == PROJECT_ECHO:
         try:
             stats = await asyncio.to_thread(load_echo_stats, ECHO_DATABASE_PATH)
@@ -1160,42 +1507,213 @@ async def handle_stats(message: Message):
     await message.answer(render_stats(), parse_mode="Markdown")
 
 
-@dp.message(F.text == BTN_CHANNEL_POST)
-async def handle_channel_post(message: Message):
+async def _start_channel_preview(message: Message):
     _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT[message.from_user.id] = PROJECT_VOICE
+    ACTIVE_VOICE_MENU[message.from_user.id] = VOICE_MENU_CHANNEL
+    try:
+        main_app = _load_voice_channel_app()
+    except Exception as error:
+        await message.answer(
+            f"⚠️ Не удалось загрузить модуль публикации Voice:\n{error}",
+            reply_markup=get_voice_channel_keyboard(),
+        )
+        return
+
     if not main_app.has_configured_publish_target():
-        await message.answer("⚠️ Не настроен Telegram-канал для публикации. Проверь CHANNEL_ID в .env.")
+        await message.answer(
+            "⚠️ Не настроена публикация в канал/VK/OK. Проверь CHANNEL_ID и доступы в .env.",
+            reply_markup=get_voice_channel_keyboard(),
+        )
         return
 
     if CHANNEL_POST_LOCK.locked():
-        await message.answer("⏳ Пост уже генерируется. Дождись завершения текущей публикации.")
+        await message.answer("⏳ Пост уже собирается или публикуется. Дождись завершения текущего действия.")
         return
 
     async with CHANNEL_POST_LOCK:
-        status = await message.answer("📢 Генерирую пост для канала и подбираю картинку...")
-        posted = await main_app.publish_channel_post()
-        publish_status = _format_channel_publish_status(main_app.get_last_channel_publish_result())
-        if not posted:
-            details = f"\n\n{publish_status}" if publish_status else ""
+        status = await message.answer(
+            "📢 Собираю предпросмотр поста и подбираю картинку...",
+            reply_markup=get_voice_channel_keyboard(),
+        )
+        _cleanup_channel_previews(main_app)
+        with voice_working_directory():
+            post = await main_app.build_channel_post()
+        if not post:
             await status.edit_text(
-                "⚠️ Не удалось опубликовать пост. Проверь логи основного бота, токены ИИ и доступы к площадкам."
-                f"{details}"
+                "⚠️ Не удалось собрать пост. Проверь логи основного бота, токены ИИ и кнопку «Проверить новости»."
             )
             return
 
-        posted_at = main_app._msk_now()
-        main_app._mark_channel_post_time(posted_at)
-        next_slot = main_app.next_channel_schedule_slot_after(posted_at)
-        next_post_text = (
-            f"{next_slot['at'].strftime('%d.%m.%Y %H:%M')} МСК, рубрика: {next_slot['slot'].get('rubric', 'пост')}"
-            if next_slot else "по ближайшему слоту редакционной сетки"
-        )
-        details = f"\n\n{publish_status}" if publish_status else ""
+        preview_id = uuid.uuid4().hex[:10]
+        PENDING_CHANNEL_PREVIEWS[preview_id] = {
+            "created_at": time.monotonic(),
+            "post": post,
+            "skip_news_keys": set(),
+        }
         await status.edit_text(
-            "✅ Пост обработан."
-            f"{details}\n\n"
-            f"Следующий автоматический пост: {next_post_text}."
+            "✅ Предпросмотр готов. Ниже текст, картинка и кнопки управления."
         )
+        await _send_channel_preview(message.chat.id, main_app, post, preview_id)
+
+
+@dp.message(F.text.regexp(r"^/(channel_preview|post_preview)(\s|$)"))
+async def channel_preview_command(message: Message):
+    await _start_channel_preview(message)
+
+
+@dp.message(F.text.in_({BTN_CHANNEL_POST, BTN_CHANNEL_POST_OLD}))
+async def handle_channel_post(message: Message):
+    await _start_channel_preview(message)
+
+
+async def _send_channel_news_check(message: Message):
+    _reset_input_state(message.from_user.id)
+    ACTIVE_PROJECT[message.from_user.id] = PROJECT_VOICE
+    ACTIVE_VOICE_MENU[message.from_user.id] = VOICE_MENU_CHANNEL
+    try:
+        main_app = _load_voice_channel_app()
+    except Exception as error:
+        await message.answer(f"⚠️ Не удалось загрузить модуль публикации Voice:\n{error}")
+        return
+
+    checker = getattr(main_app, "_channel_news_check_report", None)
+    if not callable(checker):
+        await message.answer("⚠️ В основном боте нет проверки новостных источников.")
+        return
+    if CHANNEL_POST_LOCK.locked():
+        await message.answer("⏳ Сейчас идёт сборка или публикация поста. Запусти проверку чуть позже.")
+        return
+
+    async with CHANNEL_POST_LOCK:
+        status = await message.answer("📰 Проверяю источники новостей...")
+        with voice_working_directory():
+            report = await checker()
+        await status.edit_text(report, disable_web_page_preview=True)
+
+
+@dp.message(F.text.regexp(r"^/(channel_news_check|news_check)(\s|$)"))
+async def channel_news_check_command(message: Message):
+    await _send_channel_news_check(message)
+
+
+@dp.message(F.text == BTN_CHANNEL_NEWS_CHECK)
+async def handle_channel_news_check(message: Message):
+    await _send_channel_news_check(message)
+
+
+@dp.callback_query(F.data.startswith("chprev:"))
+async def channel_preview_callback(callback: CallbackQuery):
+    _cleanup_channel_previews()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+
+    action, preview_id = parts[1], parts[2]
+    payload = PENDING_CHANNEL_PREVIEWS.get(preview_id)
+    if not payload:
+        await callback.answer("Предпросмотр устарел", show_alert=True)
+        return
+    if not callback.message:
+        await callback.answer("Сообщение недоступно", show_alert=True)
+        return
+
+    try:
+        main_app = _load_voice_channel_app()
+    except Exception as error:
+        await callback.answer("Не удалось загрузить Voice", show_alert=True)
+        await callback.message.answer(f"⚠️ Не удалось загрузить модуль публикации Voice:\n{error}")
+        return
+
+    _cleanup_channel_previews(main_app)
+    post = payload.get("post") or {}
+
+    if action == "pub":
+        if CHANNEL_POST_LOCK.locked():
+            await callback.answer("Уже выполняю действие с постом", show_alert=True)
+            return
+        await callback.answer("Публикую...")
+        async with CHANNEL_POST_LOCK:
+            with voice_working_directory():
+                ok = await main_app.publish_channel_post(post)
+                publish_status = _format_channel_publish_status(main_app.get_last_channel_publish_result())
+                if ok:
+                    posted_at = main_app._msk_now()
+                    main_app._mark_channel_post_time(posted_at)
+                    next_post_text = _format_next_channel_slot(main_app, posted_at)
+                else:
+                    next_post_text = ""
+
+        details = f"\n\n{publish_status}" if publish_status else ""
+        if ok:
+            PENDING_CHANNEL_PREVIEWS.pop(preview_id, None)
+            await callback.message.answer(
+                "✅ Пост опубликован."
+                f"{details}\n\n"
+                f"Следующий автоматический пост: {next_post_text}.",
+                reply_markup=get_voice_channel_keyboard(),
+            )
+        else:
+            await callback.message.answer(
+                "⚠️ Не удалось опубликовать пост. Проверь последний результат публикации."
+                f"{details}",
+                reply_markup=get_voice_channel_keyboard(),
+            )
+        return
+
+    if action == "regen":
+        if CHANNEL_POST_LOCK.locked():
+            await callback.answer("Уже выполняю действие с постом", show_alert=True)
+            return
+        await callback.answer("Собираю новый вариант...")
+        async with CHANNEL_POST_LOCK:
+            skip_news_keys = payload.get("skip_news_keys")
+            if not isinstance(skip_news_keys, set):
+                skip_news_keys = set(skip_news_keys or [])
+            article = post.get("news_article") or {}
+            with voice_working_directory():
+                url_key = article.get("url_key") or main_app._channel_news_url_key(article.get("url", ""))
+                if url_key:
+                    skip_news_keys.add(url_key)
+                new_post = await main_app.build_channel_post(skip_news_keys=skip_news_keys)
+
+            if not new_post:
+                await callback.message.answer(
+                    "⚠️ Не удалось собрать новый вариант.",
+                    reply_markup=get_voice_channel_keyboard(),
+                )
+                return
+
+            payload["post"] = new_post
+            payload["created_at"] = time.monotonic()
+            payload["skip_news_keys"] = skip_news_keys
+            await _send_channel_preview(callback.message.chat.id, main_app, new_post, preview_id, "Новый вариант")
+        return
+
+    if action == "skip":
+        if CHANNEL_POST_LOCK.locked():
+            await callback.answer("Уже выполняю действие с постом", show_alert=True)
+            return
+        article = post.get("news_article") or {}
+        async with CHANNEL_POST_LOCK:
+            if article:
+                with voice_working_directory():
+                    main_app._remember_channel_news(
+                        article,
+                        post.get("core_text", post.get("text", "")),
+                        post.get("image_path", ""),
+                    )
+                    main_app._log_channel_news_rejection("admin_skipped", article)
+            PENDING_CHANNEL_PREVIEWS.pop(preview_id, None)
+        await callback.answer("Пропущено")
+        await callback.message.answer(
+            "⏭ Предпросмотр пропущен.",
+            reply_markup=get_voice_channel_keyboard(),
+        )
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
 
 
 @dp.message(F.text == BTN_USERS)
@@ -2079,10 +2597,10 @@ async def fetch_main_bot_username() -> str:
 
 async def main():
     global MAIN_BOT_USERNAME
-    print("[mainAdmin] Админ-бот запускается…")
+    print("[AdminBot] Админ-бот запускается…")
     MAIN_BOT_USERNAME = await fetch_main_bot_username()
     if MAIN_BOT_USERNAME:
-        print(f"[mainAdmin] username основного бота: @{MAIN_BOT_USERNAME}")
+        print(f"[AdminBot] username основного бота: @{MAIN_BOT_USERNAME}")
     await dp.start_polling(bot)
 
 
