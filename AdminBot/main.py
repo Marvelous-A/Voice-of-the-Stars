@@ -16,6 +16,7 @@ import json
 import os
 import re
 import time
+import traceback
 import uuid
 from datetime import datetime, timedelta
 from os import getenv
@@ -191,6 +192,17 @@ def _format_channel_publish_status(result: dict) -> str:
     if extra_errors:
         lines.extend(extra_errors)
     return "\n".join(lines)
+
+
+def _format_channel_admin_error(main_app, error: Exception, limit: int = 700) -> str:
+    text = str(error).strip() or error.__class__.__name__
+    redacter = getattr(main_app, "_redact_channel_publish_error", None)
+    if callable(redacter):
+        try:
+            text = redacter(text)
+        except Exception:
+            pass
+    return _short_admin_error(text, limit)
 
 
 def _load_voice_channel_app():
@@ -1537,8 +1549,18 @@ async def _start_channel_preview(message: Message):
             reply_markup=get_voice_channel_keyboard(),
         )
         _cleanup_channel_previews(main_app)
-        with voice_working_directory():
-            post = await main_app.build_channel_post()
+        try:
+            with voice_working_directory():
+                post = await main_app.build_channel_post()
+        except Exception as error:
+            print(f"[admin_channel_preview] build error: {error}")
+            traceback.print_exc()
+            await status.edit_text(
+                "⚠️ Не удалось собрать предпросмотр из-за технической ошибки.\n\n"
+                f"{_format_channel_admin_error(main_app, error)}\n\n"
+                "Проверь логи `tarot-admin.service` и кнопку «Проверить новости»."
+            )
+            return
         if not post:
             await status.edit_text(
                 "⚠️ Не удалось собрать пост. Проверь логи основного бота, токены ИИ и кнопку «Проверить новости»."
@@ -1672,11 +1694,21 @@ async def channel_preview_callback(callback: CallbackQuery):
             if not isinstance(skip_news_keys, set):
                 skip_news_keys = set(skip_news_keys or [])
             article = post.get("news_article") or {}
-            with voice_working_directory():
-                url_key = article.get("url_key") or main_app._channel_news_url_key(article.get("url", ""))
-                if url_key:
-                    skip_news_keys.add(url_key)
-                new_post = await main_app.build_channel_post(skip_news_keys=skip_news_keys)
+            try:
+                with voice_working_directory():
+                    url_key = article.get("url_key") or main_app._channel_news_url_key(article.get("url", ""))
+                    if url_key:
+                        skip_news_keys.add(url_key)
+                    new_post = await main_app.build_channel_post(skip_news_keys=skip_news_keys)
+            except Exception as error:
+                print(f"[admin_channel_preview] regen build error: {error}")
+                traceback.print_exc()
+                await callback.message.answer(
+                    "⚠️ Не удалось собрать новый вариант из-за технической ошибки.\n\n"
+                    f"{_format_channel_admin_error(main_app, error)}",
+                    reply_markup=get_voice_channel_keyboard(),
+                )
+                return
 
             if not new_post:
                 await callback.message.answer(
