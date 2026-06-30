@@ -292,6 +292,43 @@ def validate_admin_candidate(candidate_dir: str) -> bool:
     return True
 
 
+def write_admin_service_unit() -> bool:
+    unit_path = "/etc/systemd/system/tarot-admin.service"
+    unit_text = f"""[Unit]
+Description=Shared Telegram Admin Bot
+After=network.target tarot-bot.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory={ADMIN_DIR}
+ExecStart={ADMIN_VENV_PYTHON} -u {os.path.join(ADMIN_DIR, "main.py")}
+Restart=always
+RestartSec=5
+EnvironmentFile=-{os.path.join(BOT_DIR, ".env")}
+EnvironmentFile=-{os.path.join(ADMIN_DIR, ".env")}
+Environment=VOICE_APP_DIR={BOT_DIR}
+Environment=VOICE_DATA_DIR={BOT_DIR}
+Environment=ECHO_DATABASE_PATH=/var/lib/echo-dialog-bot/echo.db
+Environment=NEBO_DATABASE_PATH=/var/lib/nebo-alert-bot/bot.sqlite3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+"""
+    try:
+        with open(unit_path, "w", encoding="utf-8") as service_file:
+            service_file.write(unit_text)
+    except OSError as error:
+        print(f"=== AdminBot deploy aborted: cannot write {unit_path}: {error} ===", flush=True)
+        return False
+
+    subprocess.run(["systemctl", "daemon-reload"], check=False)
+    subprocess.run(["systemctl", "enable", "tarot-admin.service"], check=False)
+    print(f"Updated {unit_path}", flush=True)
+    return True
+
+
 def deploy_admin_bot() -> bool:
     if not os.path.isdir(ADMIN_SOURCE_DIR):
         print("=== AdminBot source directory is missing; skipping AdminBot deploy ===", flush=True)
@@ -318,6 +355,8 @@ def deploy_admin_bot() -> bool:
             shutil.copytree(tests_src, tests_dst, dirs_exist_ok=True)
             print(f"Copied AdminBot tests -> {tests_dst}", flush=True)
 
+    if not write_admin_service_unit():
+        return False
     subprocess.run(["systemctl", "restart", "tarot-admin.service"], check=False)
     print("=== AdminBot restarted ===", flush=True)
     return True
