@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Вечерняя Москва",
+    "url": "https://vm.ru/tag/894541-ezoterika",
+    "base": "https://vm.ru"
+  },
+  {
+    "name": "WomanHit",
+    "url": "https://www.womanhit.ru/tag/ezoterika/",
+    "base": "https://www.womanhit.ru"
+  },
+  {
+    "name": "Woman.ru",
+    "url": "https://www.woman.ru/",
+    "base": "https://www.woman.ru"
+  },
+  {
+    "name": "Marie Claire",
+    "url": "https://www.marieclaire.ru/horoscopes/",
+    "base": "https://www.marieclaire.ru"
+  },
+  {
+    "name": "7Дней",
+    "url": "https://7days.ru/astro/horoscope/",
+    "base": "https://7days.ru"
+  },
+  {
+    "name": "DailyHoro",
+    "url": "https://dailyhoro.ru/article/",
+    "base": "https://dailyhoro.ru"
+  }
+]

@@ -9,11 +9,13 @@ import subprocess
 import smtplib
 import time
 import uuid
+import hashlib
 from io import BytesIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlparse
 
 import aiohttp
 from ckassa_payments import (
@@ -91,7 +93,7 @@ session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
-# ====== Отдельный админ-бот (mainAdmin) для уведомлений ======
+# ====== Отдельный проект AdminBot для уведомлений ======
 ADMIN_BOT_TOKEN = getenv("ADMIN_BOT_TOKEN", "")
 admin_session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else AiohttpSession()
 admin_bot = Bot(token=ADMIN_BOT_TOKEN, session=admin_session) if ADMIN_BOT_TOKEN else None
@@ -1763,7 +1765,7 @@ def save_user_astro_message(user_id: str, astro_id: str, role: str, text: str):
     save_astro_history(history)
 
 # ====== ОТЗЫВЫ: ОЖИДАЮЩИЕ МОДЕРАЦИИ ======
-# Модерация (публикация/отклонение/редактирование) выполняется в админ-боте (mainAdmin.py).
+# Модерация (публикация/отклонение/редактирование) выполняется в проекте AdminBot.
 def load_pending_reviews() -> dict:
     if os.path.exists(PENDING_REVIEWS_FILE):
         try:
@@ -1823,7 +1825,7 @@ async def _notify_new_user(message):
 
 async def send_review_notification(review_id: str, review: dict):
     """Отправляет email и Telegram-уведомление администратору о новом отзыве.
-    Модерация выполняется в админ-боте (mainAdmin.py) по кнопке «⭐ Отзывы на модерации»."""
+    Модерация выполняется в AdminBot по кнопке «⭐ Отзывы на модерации»."""
     date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
     subject = "⭐ Новый отзыв на бот «Голос Звёзд»"
     body = (
@@ -3991,16 +3993,113 @@ TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 RECENT_TOPIC_KEYS: list[str] = []
 MAX_RECENT_TOPICS = int(getenv("MAX_RECENT_TOPICS", "48"))
 RECENT_CONTENT_SIGNATURES: list[str] = []
-MAX_RECENT_CONTENT_SIGNATURES = int(getenv("MAX_RECENT_CONTENT_SIGNATURES", "84"))
+MAX_RECENT_CONTENT_SIGNATURES = int(getenv("MAX_RECENT_CONTENT_SIGNATURES", "500"))
 RECENT_CHANNEL_POST_SAMPLES: list[str] = []
-MAX_RECENT_CHANNEL_POST_SAMPLES = int(getenv("MAX_RECENT_CHANNEL_POST_SAMPLES", "60"))
-MAX_RECENT_CHANNEL_POST_RECORDS = int(getenv("MAX_RECENT_CHANNEL_POST_RECORDS", "160"))
-CHANNEL_POST_HISTORY_DAYS = int(getenv("CHANNEL_POST_HISTORY_DAYS", "45"))
+MAX_RECENT_CHANNEL_POST_SAMPLES = int(getenv("MAX_RECENT_CHANNEL_POST_SAMPLES", "500"))
+MAX_RECENT_CHANNEL_POST_RECORDS = int(getenv("MAX_RECENT_CHANNEL_POST_RECORDS", "5000"))
+CHANNEL_POST_HISTORY_DAYS = int(getenv("CHANNEL_POST_HISTORY_DAYS", "3650"))
 CHANNEL_TEXT_SIMILARITY_THRESHOLD = float(getenv("CHANNEL_TEXT_SIMILARITY_THRESHOLD", "0.58"))
-MAX_RECENT_CHANNEL_IMAGE_HASHES = int(getenv("MAX_RECENT_CHANNEL_IMAGE_HASHES", "900"))
-CHANNEL_IMAGE_HASH_HISTORY_DAYS = int(getenv("CHANNEL_IMAGE_HASH_HISTORY_DAYS", "90"))
+MAX_RECENT_CHANNEL_IMAGE_HASHES = int(getenv("MAX_RECENT_CHANNEL_IMAGE_HASHES", "5000"))
+CHANNEL_IMAGE_HASH_HISTORY_DAYS = int(getenv("CHANNEL_IMAGE_HASH_HISTORY_DAYS", "3650"))
 CHANNEL_IMAGE_DHASH_DISTANCE = int(getenv("CHANNEL_IMAGE_DHASH_DISTANCE", "7"))
 CHANNEL_IMAGE_AHASH_DISTANCE = int(getenv("CHANNEL_IMAGE_AHASH_DISTANCE", "5"))
+MAX_ALL_CHANNEL_POST_TEXT_HASHES = int(getenv("MAX_ALL_CHANNEL_POST_TEXT_HASHES", "20000"))
+
+CHANNEL_NEWS_ENABLED = getenv("CHANNEL_NEWS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_NEWS_TARGET_PER_DAY = int(getenv("CHANNEL_NEWS_TARGET_PER_DAY", "3"))
+CHANNEL_NEWS_FRESH_DAYS = int(getenv("CHANNEL_NEWS_FRESH_DAYS", "14"))
+CHANNEL_NEWS_HISTORY_DAYS = int(getenv("CHANNEL_NEWS_HISTORY_DAYS", "3650"))
+CHANNEL_NEWS_MAX_HISTORY = int(getenv("CHANNEL_NEWS_MAX_HISTORY", "5000"))
+CHANNEL_NEWS_TIMEOUT = int(getenv("CHANNEL_NEWS_TIMEOUT", "25"))
+CHANNEL_NEWS_MAX_ARTICLE_BYTES = int(getenv("CHANNEL_NEWS_MAX_ARTICLE_BYTES", "1800000"))
+CHANNEL_NEWS_MAX_CANDIDATES_PER_SOURCE = int(getenv("CHANNEL_NEWS_MAX_CANDIDATES_PER_SOURCE", "14"))
+CHANNEL_NEWS_MAX_ARTICLES_TO_CHECK = int(getenv("CHANNEL_NEWS_MAX_ARTICLES_TO_CHECK", "34"))
+CHANNEL_NEWS_MIN_RELEVANCE_SCORE = int(getenv("CHANNEL_NEWS_MIN_RELEVANCE_SCORE", "24"))
+CHANNEL_NEWS_TITLE_SIMILARITY_THRESHOLD = float(getenv("CHANNEL_NEWS_TITLE_SIMILARITY_THRESHOLD", "0.64"))
+CHANNEL_NEWS_IMAGE_MIN_BYTES = int(getenv("CHANNEL_NEWS_IMAGE_MIN_BYTES", "12000"))
+CHANNEL_NEWS_REQUIRE_PAGE_IMAGE = getenv("CHANNEL_NEWS_REQUIRE_PAGE_IMAGE", "true").strip().lower() in {"1", "true", "yes", "on"}
+CHANNEL_NEWS_MAX_PER_SOURCE_PER_DAY = int(getenv("CHANNEL_NEWS_MAX_PER_SOURCE_PER_DAY", "2"))
+CHANNEL_NEWS_SOURCES_FILE = getenv("CHANNEL_NEWS_SOURCES_FILE", "news_sources.json").strip()
+CHANNEL_NEWS_REJECTION_LOG_LIMIT = int(getenv("CHANNEL_NEWS_REJECTION_LOG_LIMIT", "300"))
+CHANNEL_NEWS_CHECK_LIMIT = int(getenv("CHANNEL_NEWS_CHECK_LIMIT", "10"))
+CHANNEL_NEWS_MAX_CONSECUTIVE = int(getenv("CHANNEL_NEWS_MAX_CONSECUTIVE", "2"))
+CHANNEL_AUTHOR_POSTS_MIN_PER_DAY = int(getenv("CHANNEL_AUTHOR_POSTS_MIN_PER_DAY", "1"))
+CHANNEL_PREVIEW_TTL_SEC = int(getenv("CHANNEL_PREVIEW_TTL_SEC", "1800"))
+CHANNEL_NEWS_USER_AGENT = getenv(
+    "CHANNEL_NEWS_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+)
+CHANNEL_NEWS_SOURCE_DEFAULTS = [
+    {
+        "name": "Вечерняя Москва",
+        "url": "https://vm.ru/tag/894541-ezoterika",
+        "base": "https://vm.ru",
+    },
+    {
+        "name": "WomanHit",
+        "url": "https://www.womanhit.ru/tag/ezoterika/",
+        "base": "https://www.womanhit.ru",
+    },
+    {
+        "name": "Woman.ru",
+        "url": "https://www.woman.ru/",
+        "base": "https://www.woman.ru",
+    },
+    {
+        "name": "Marie Claire",
+        "url": "https://www.marieclaire.ru/horoscopes/",
+        "base": "https://www.marieclaire.ru",
+    },
+    {
+        "name": "7Дней",
+        "url": "https://7days.ru/astro/horoscope/",
+        "base": "https://7days.ru",
+    },
+    {
+        "name": "DailyHoro",
+        "url": "https://dailyhoro.ru/article/",
+        "base": "https://dailyhoro.ru",
+    },
+]
+
+
+def _channel_news_sources_file_path() -> str:
+    if not CHANNEL_NEWS_SOURCES_FILE:
+        return ""
+    if os.path.isabs(CHANNEL_NEWS_SOURCES_FILE):
+        return CHANNEL_NEWS_SOURCES_FILE
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), CHANNEL_NEWS_SOURCES_FILE)
+
+
+def _load_channel_news_sources() -> list[dict]:
+    path = _channel_news_sources_file_path()
+    if path and os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw_sources = json.load(f)
+            sources = []
+            for item in raw_sources if isinstance(raw_sources, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                url = str(item.get("url") or "").strip()
+                base = str(item.get("base") or "").strip()
+                if not name or not url:
+                    continue
+                if not base:
+                    parsed = urlparse(url)
+                    base = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else url
+                sources.append({"name": name, "url": url, "base": base})
+            if sources:
+                return sources
+        except Exception as e:
+            print(f"[channel_news] sources file error: {e}")
+    return [dict(item) for item in CHANNEL_NEWS_SOURCE_DEFAULTS]
+
+
+CHANNEL_NEWS_SOURCES = _load_channel_news_sources()
+PENDING_CHANNEL_PREVIEWS: dict[str, dict] = {}
 
 
 def load_channel_state() -> dict:
@@ -4049,6 +4148,14 @@ def _plain_channel_post_text(text: str) -> str:
     text = re.sub(r"</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>", " ", text)
     text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _channel_text_hash(text: str) -> str:
+    plain = _plain_channel_post_text(text).lower().replace("ё", "е")
+    plain = re.sub(r"\s+", " ", plain).strip()
+    if not plain:
+        return ""
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest()[:24]
 
 
 def _channel_text_tokens(text: str) -> list[str]:
@@ -4117,6 +4224,18 @@ def _channel_trim_post_records(records: list[dict]) -> list[dict]:
 
 
 def _channel_similar_recent_post(text: str, content_plan: dict | None = None) -> tuple[float, dict | None]:
+    plain = _plain_channel_post_text(text)
+    current_hash = _channel_text_hash(plain)
+    if current_hash:
+        state = load_channel_state()
+        all_hashes = {
+            str(item)
+            for item in state.get("all_post_text_hashes", []) or []
+            if str(item).strip()
+        }
+        if current_hash in all_hashes:
+            return 1.0, {"sample": plain[:360], "exact_text_hash": True}
+
     schedule = (content_plan or {}).get("schedule") or {}
     category = (content_plan or {}).get("category") or ""
     best_score = 0.0
@@ -5268,6 +5387,772 @@ def _store_telegram_channel_photo(data: bytes, source: str) -> str:
         return ""
 
 
+CHANNEL_NEWS_KEYWORD_WEIGHTS = {
+    "эзотер": 22,
+    "астролог": 20,
+    "гороскоп": 18,
+    "таро": 18,
+    "зодиак": 16,
+    "нумеролог": 16,
+    "ретроград": 14,
+    "меркур": 12,
+    "полнолун": 12,
+    "новолун": 12,
+    "лун": 10,
+    "сонник": 12,
+    "вещие сны": 12,
+    "примет": 10,
+    "ритуал": 10,
+    "магич": 10,
+    "мистич": 10,
+    "карта желаний": 12,
+    "экстрасенс": 10,
+}
+CHANNEL_NEWS_BAD_TITLE_TERMS = (
+    "рецепт", "диета", "макияж", "маникюр", "одежд", "сериал", "фильм",
+    "актрис", "певиц", "спорт", "политик", "авто", "ремонт", "кредит",
+)
+CHANNEL_NEWS_BAD_URL_CHUNKS = (
+    "/tag/", "/tags/", "/author/", "/authors/", "/search", "/privacy", "/about",
+    "/advert", "/rss", "/login", "/profile", "/video/", "/photo/",
+)
+CHANNEL_NEWS_BAD_IMAGE_TERMS = (
+    "logo", "logos", "avatar", "userpic", "sprite", "icon", "favicon", "placeholder",
+    "banner", "button", "pixel", "counter", "watermark",
+)
+CHANNEL_NEWS_DATE_BOUND_TERMS = (
+    "сегодня", "завтра", "послезавтра", "на день", "на неделю", "на выходные",
+    "гороскоп на", "карта дня", "расклад на", "лунный календарь", "полнолуние",
+    "новолуние", "ретроградный", "июнь", "июля", "август", "сентябр", "октябр",
+    "ноябр", "декабр", "январ", "феврал", "март", "апрел", "мая",
+)
+CHANNEL_NEWS_MONTHS = {
+    "января": 1,
+    "февраля": 2,
+    "марта": 3,
+    "апреля": 4,
+    "мая": 5,
+    "июня": 6,
+    "июля": 7,
+    "августа": 8,
+    "сентября": 9,
+    "октября": 10,
+    "ноября": 11,
+    "декабря": 12,
+}
+
+
+def _channel_news_headers(referer: str = "", accept: str = "text/html,application/xhtml+xml") -> dict:
+    headers = {
+        "User-Agent": CHANNEL_NEWS_USER_AGENT,
+        "Accept": accept,
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.5",
+    }
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
+def _html_attr(tag: str, attr_name: str) -> str:
+    match = re.search(rf"\b{re.escape(attr_name)}\s*=\s*([\"'])(.*?)\1", tag or "", flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return html.unescape(match.group(2)).strip()
+    match = re.search(rf"\b{re.escape(attr_name)}\s*=\s*([^\s>]+)", tag or "", flags=re.IGNORECASE)
+    return html.unescape(match.group(1)).strip().strip("\"'") if match else ""
+
+
+def _strip_channel_news_html(raw_html: str) -> str:
+    text = re.sub(r"<script\b[^>]*>.*?</script>", " ", raw_html or "", flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<noscript\b[^>]*>.*?</noscript>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<br\s*/?>|</p>|</div>|</li>|</h[1-6]>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</?[a-zA-Z][a-zA-Z0-9\-]*(?:\s[^>]*)?>", " ", text)
+    text = html.unescape(text)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _channel_news_clean_text(text: str, limit: int = 280) -> str:
+    text = _strip_channel_news_html(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if limit and len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].rstrip() + "..."
+    return text
+
+
+def _channel_news_meta_content(page_html: str, *keys: str) -> str:
+    wanted = {key.lower() for key in keys if key}
+    for tag in re.findall(r"<meta\b[^>]*>", page_html or "", flags=re.IGNORECASE | re.DOTALL):
+        key = (_html_attr(tag, "property") or _html_attr(tag, "name") or _html_attr(tag, "itemprop")).lower()
+        if key in wanted:
+            content = _html_attr(tag, "content")
+            if content:
+                return _channel_news_clean_text(content, limit=600)
+    return ""
+
+
+def _channel_news_link_href(page_html: str, rel_name: str) -> str:
+    rel_name = rel_name.lower()
+    for tag in re.findall(r"<link\b[^>]*>", page_html or "", flags=re.IGNORECASE | re.DOTALL):
+        rel = _html_attr(tag, "rel").lower()
+        if rel_name in rel.split():
+            return _html_attr(tag, "href")
+    return ""
+
+
+def _channel_news_url_key(url: str) -> str:
+    parsed = urlparse(url or "")
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    path = re.sub(r"/+$", "", parsed.path or "/")
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{path}"
+
+
+def _channel_news_same_domain(url: str, source: dict) -> bool:
+    parsed = urlparse(url or "")
+    base = urlparse(source.get("base") or source.get("url") or "")
+    if not parsed.netloc or not base.netloc:
+        return False
+    return parsed.netloc.lower().lstrip("www.") == base.netloc.lower().lstrip("www.")
+
+
+def _channel_news_allowed_url(url: str, source: dict) -> bool:
+    parsed = urlparse(url or "")
+    if parsed.scheme not in {"http", "https"} or not _channel_news_same_domain(url, source):
+        return False
+    lowered = (parsed.path or "").lower()
+    if any(chunk in lowered for chunk in CHANNEL_NEWS_BAD_URL_CHUNKS):
+        return False
+    if re.search(r"\.(jpg|jpeg|png|gif|webp|svg|pdf|zip|mp4|mp3|avi|mov)$", lowered):
+        return False
+    return True
+
+
+def _channel_news_relevance_score(title: str, url: str = "", extra: str = "") -> int:
+    haystack = f"{title} {url} {extra}".lower().replace("ё", "е")
+    score = 0
+    for keyword, weight in CHANNEL_NEWS_KEYWORD_WEIGHTS.items():
+        if keyword.replace("ё", "е") in haystack:
+            score += weight
+    if any(chunk in haystack for chunk in ("horoscope", "astro", "ezoter", "tarot")):
+        score += 12
+    score -= sum(18 for term in CHANNEL_NEWS_BAD_TITLE_TERMS if term in haystack)
+    if len(_channel_text_tokens(title)) < 3:
+        score -= 20
+    return score
+
+
+def _extract_channel_news_list_candidates(source: dict, page_html: str, source_index: int) -> list[dict]:
+    candidates = []
+    seen = set()
+    base_url = source.get("base") or source.get("url") or ""
+    for match in re.finditer(r"<a\b([^>]*)>(.*?)</a>", page_html or "", flags=re.IGNORECASE | re.DOTALL):
+        attrs, body = match.groups()
+        href = _html_attr(attrs, "href")
+        if not href:
+            continue
+        url = urljoin(base_url, href)
+        url_key = _channel_news_url_key(url)
+        if not url_key or url_key in seen or not _channel_news_allowed_url(url, source):
+            continue
+        title = (
+            _html_attr(attrs, "aria-label")
+            or _html_attr(attrs, "title")
+            or _channel_news_clean_text(body, limit=180)
+        )
+        title = re.sub(r"\s+", " ", title).strip()
+        if len(title) < 18 or len(title) > 220:
+            continue
+        score = _channel_news_relevance_score(title, url)
+        if score < CHANNEL_NEWS_MIN_RELEVANCE_SCORE:
+            continue
+        seen.add(url_key)
+        candidates.append({
+            "source": source.get("name", ""),
+            "source_index": source_index,
+            "title": title,
+            "url": url,
+            "url_key": url_key,
+            "score": score,
+        })
+    candidates.sort(key=lambda item: (-int(item.get("score", 0)), item.get("title", "")))
+    return candidates[:CHANNEL_NEWS_MAX_CANDIDATES_PER_SOURCE]
+
+
+def _parse_channel_news_datetime(value: str) -> datetime | None:
+    value = html.unescape(str(value or "")).strip()
+    if not value:
+        return None
+    try:
+        iso_value = value.replace("Z", "+00:00")
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", iso_value):
+            iso_value += "T00:00:00+03:00"
+        parsed = datetime.fromisoformat(iso_value)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone(timedelta(hours=3))).replace(tzinfo=None)
+        return parsed
+    except Exception:
+        pass
+    try:
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone(timedelta(hours=3))).replace(tzinfo=None)
+        return parsed
+    except Exception:
+        pass
+    match = re.search(
+        r"(\d{1,2})\s+("
+        + "|".join(CHANNEL_NEWS_MONTHS)
+        + r")\s+(\d{4})(?:\s*(?:года|г\.))?(?:[,\s]+(\d{1,2}):(\d{2}))?",
+        value.lower(),
+    )
+    if match:
+        day, month_name, year, hour, minute = match.groups()
+        return datetime(
+            int(year),
+            CHANNEL_NEWS_MONTHS[month_name],
+            int(day),
+            int(hour or 0),
+            int(minute or 0),
+        )
+    return None
+
+
+def _channel_news_article_datetime(page_html: str) -> datetime | None:
+    values = [
+        _channel_news_meta_content(page_html, "article:published_time"),
+        _channel_news_meta_content(page_html, "datePublished"),
+        _channel_news_meta_content(page_html, "pubdate"),
+        _channel_news_meta_content(page_html, "publishdate"),
+    ]
+    values.extend(re.findall(r'"datePublished"\s*:\s*"([^"]+)"', page_html or "", flags=re.IGNORECASE))
+    values.extend(re.findall(r"<time\b[^>]*datetime=([\"'])(.*?)\1", page_html or "", flags=re.IGNORECASE | re.DOTALL))
+    text_preview = _strip_channel_news_html((page_html or "")[:12000])
+    date_match = re.search(
+        r"\d{1,2}\s+(?:"
+        + "|".join(CHANNEL_NEWS_MONTHS)
+        + r")\s+\d{4}(?:\s*(?:года|г\.))?(?:[,\s]+\d{1,2}:\d{2})?",
+        text_preview.lower(),
+    )
+    if date_match:
+        values.append(date_match.group(0))
+    for value in values:
+        if isinstance(value, tuple):
+            value = value[-1]
+        parsed = _parse_channel_news_datetime(str(value or ""))
+        if parsed:
+            return parsed
+    return None
+
+
+def _channel_news_article_text(page_html: str) -> str:
+    paragraphs = []
+    for match in re.finditer(r"<p\b[^>]*>(.*?)</p>", page_html or "", flags=re.IGNORECASE | re.DOTALL):
+        text = _channel_news_clean_text(match.group(1), limit=900)
+        lowered = text.lower()
+        if len(text) < 45:
+            continue
+        if any(bad in lowered for bad in ("читайте также", "подписывайтесь", "реклама", "cookie", "javascript")):
+            continue
+        paragraphs.append(text)
+        if len(" ".join(paragraphs)) > 1800:
+            break
+    if paragraphs:
+        return re.sub(r"\s+", " ", " ".join(paragraphs)).strip()[:2200]
+    fallback = _strip_channel_news_html(page_html)
+    return re.sub(r"\s+", " ", fallback).strip()[:1600]
+
+
+def _channel_news_article_title(page_html: str, fallback: str = "") -> str:
+    title = (
+        _channel_news_meta_content(page_html, "og:title")
+        or _channel_news_meta_content(page_html, "twitter:title")
+    )
+    if not title:
+        match = re.search(r"<title\b[^>]*>(.*?)</title>", page_html or "", flags=re.IGNORECASE | re.DOTALL)
+        title = _channel_news_clean_text(match.group(1), limit=220) if match else ""
+    title = title or fallback
+    for separator in (" | ", " — ", " - "):
+        if separator in title and len(title.split(separator, 1)[0]) >= 18:
+            title = title.split(separator, 1)[0].strip()
+            break
+    return title.strip()
+
+
+def _channel_news_article_image(page_html: str, article_url: str) -> str:
+    image = (
+        _channel_news_meta_content(page_html, "og:image", "og:image:url")
+        or _channel_news_meta_content(page_html, "twitter:image", "twitter:image:src")
+        or _channel_news_link_href(page_html, "image_src")
+    )
+    if not image:
+        match = re.search(r"<img\b[^>]*\bsrc=([\"'])(.*?)\1", page_html or "", flags=re.IGNORECASE | re.DOTALL)
+        image = match.group(2) if match else ""
+    image = urljoin(article_url, html.unescape(image).strip())
+    lowered = image.lower()
+    if not image or any(term in lowered for term in CHANNEL_NEWS_BAD_IMAGE_TERMS):
+        return ""
+    if lowered.startswith("data:") or lowered.endswith(".svg"):
+        return ""
+    return image
+
+
+def _channel_news_category(article: dict) -> str:
+    haystack = f"{article.get('title', '')} {article.get('description', '')} {article.get('excerpt', '')}".lower().replace("ё", "е")
+    if "таро" in haystack or "карта" in haystack:
+        return "tarot"
+    if "лун" in haystack or "полнолун" in haystack or "новолун" in haystack:
+        return "moon"
+    if "сон" in haystack or "сновид" in haystack:
+        return "dreams"
+    if "нумеролог" in haystack or "числ" in haystack:
+        return "numerology"
+    if "зодиак" in haystack or "гороскоп" in haystack:
+        return "zodiac"
+    if "астролог" in haystack or "ретроград" in haystack or "меркур" in haystack:
+        return "astrology"
+    if "ритуал" in haystack or "примет" in haystack:
+        return "mystic"
+    return "mystic"
+
+
+def _channel_news_date_is_allowed(article: dict) -> bool:
+    published_at = article.get("published_at")
+    if not isinstance(published_at, datetime):
+        return True
+    if published_at >= _channel_state_recent_cutoff(CHANNEL_NEWS_FRESH_DAYS):
+        return True
+    haystack = f"{article.get('title', '')} {article.get('description', '')}".lower().replace("ё", "е")
+    return not any(term in haystack for term in CHANNEL_NEWS_DATE_BOUND_TERMS)
+
+
+def _channel_news_trim_records(records: list[dict]) -> list[dict]:
+    cutoff = _channel_state_recent_cutoff(CHANNEL_NEWS_HISTORY_DAYS)
+    trimmed = []
+    for item in records or []:
+        if not isinstance(item, dict):
+            continue
+        created_at = _parse_channel_state_datetime(str(item.get("at") or ""))
+        if created_at and created_at < cutoff:
+            continue
+        trimmed.append(item)
+    return trimmed[-CHANNEL_NEWS_MAX_HISTORY:]
+
+
+def _channel_news_records(state: dict | None = None) -> list[dict]:
+    state = state if state is not None else load_channel_state()
+    return _channel_news_trim_records(state.get("recent_news_records", []) or [])
+
+
+def _channel_news_title_tokens(article_or_candidate: dict) -> list[str]:
+    text = " ".join(
+        str(article_or_candidate.get(key) or "")
+        for key in ("title", "description", "excerpt")
+    )
+    return _channel_text_signature_tokens(text, limit=20)
+
+
+def _channel_news_already_used(article_or_candidate: dict) -> bool:
+    url_key = article_or_candidate.get("url_key") or _channel_news_url_key(article_or_candidate.get("url", ""))
+    tokens = _channel_news_title_tokens(article_or_candidate)
+    for record in _channel_news_records():
+        if url_key and url_key == record.get("url_key"):
+            return True
+        score = _channel_token_similarity(tokens, record.get("tokens") or [])
+        if score >= CHANNEL_NEWS_TITLE_SIMILARITY_THRESHOLD:
+            return True
+    return False
+
+
+def _channel_news_today_counts(state: dict | None = None) -> tuple[int, dict[str, int]]:
+    today = _msk_now().date()
+    total = 0
+    by_source: dict[str, int] = {}
+    for record in _channel_news_records(state):
+        created_at = _parse_channel_state_datetime(str(record.get("at") or ""))
+        if not created_at or created_at.date() != today:
+            continue
+        total += 1
+        source = str(record.get("source") or "")
+        by_source[source] = by_source.get(source, 0) + 1
+    return total, by_source
+
+
+def _channel_today_post_counts(state: dict | None = None) -> dict[str, int]:
+    today = _msk_now().date()
+    counts = {"total": 0, "news": 0, "generated": 0, "author": 0}
+    for record in _channel_recent_post_records(state):
+        created_at = _parse_channel_state_datetime(str(record.get("at") or ""))
+        if not created_at or created_at.date() != today:
+            continue
+        counts["total"] += 1
+        source_type = str(record.get("source_type") or "generated")
+        if source_type == "news":
+            counts["news"] += 1
+        else:
+            counts["generated"] += 1
+        if str(record.get("author_type") or "") in {"tarot", "astro"}:
+            counts["author"] += 1
+    return counts
+
+
+def _channel_consecutive_news_count(state: dict | None = None) -> int:
+    count = 0
+    for record in reversed(_channel_recent_post_records(state)):
+        if str(record.get("source_type") or "generated") == "news":
+            count += 1
+            continue
+        break
+    return count
+
+
+def _channel_news_balance_block_reason(state: dict | None = None) -> str:
+    state = state if state is not None else load_channel_state()
+    if CHANNEL_NEWS_MAX_CONSECUTIVE > 0 and _channel_consecutive_news_count(state) >= CHANNEL_NEWS_MAX_CONSECUTIVE:
+        return f"уже было {CHANNEL_NEWS_MAX_CONSECUTIVE} новостных поста подряд"
+    counts = _channel_today_post_counts(state)
+    remaining_slots = max(0, 3 - counts["total"])
+    needed_author_posts = max(0, CHANNEL_AUTHOR_POSTS_MIN_PER_DAY - counts["author"])
+    if needed_author_posts > 0 and remaining_slots <= needed_author_posts:
+        return "сегодня ещё нужен авторский пост от таролога/астролога"
+    return ""
+
+
+def _channel_author_post_needed_now(state: dict | None = None) -> bool:
+    state = state if state is not None else load_channel_state()
+    counts = _channel_today_post_counts(state)
+    remaining_slots = max(0, 3 - counts["total"])
+    needed_author_posts = max(0, CHANNEL_AUTHOR_POSTS_MIN_PER_DAY - counts["author"])
+    return needed_author_posts > 0 and remaining_slots <= needed_author_posts
+
+
+def _log_channel_news_rejection(reason: str, item: dict | None = None, details: str = "") -> None:
+    state = load_channel_state()
+    item = item or {}
+    log = [
+        entry for entry in state.get("channel_news_rejection_log", []) or []
+        if isinstance(entry, dict)
+    ]
+    log.append({
+        "at": _msk_now().isoformat(),
+        "reason": str(reason or "")[:120],
+        "details": str(details or "")[:240],
+        "source": str(item.get("source") or item.get("name") or "")[:80],
+        "title": str(item.get("title") or "")[:180],
+        "url": str(item.get("url") or "")[:260],
+    })
+    state["channel_news_rejection_log"] = log[-CHANNEL_NEWS_REJECTION_LOG_LIMIT:]
+    save_channel_state(state)
+
+
+def _remember_channel_news(article: dict, post_text: str = "", image_path: str = "") -> None:
+    if not article:
+        return
+    state = load_channel_state()
+    records = _channel_news_records(state)
+    url = str(article.get("url") or "")
+    url_key = article.get("url_key") or _channel_news_url_key(url)
+    records = [item for item in records if item.get("url_key") != url_key]
+    published_at = article.get("published_at")
+    records.append({
+        "at": _msk_now().isoformat(),
+        "source": article.get("source", ""),
+        "url": url,
+        "url_key": url_key,
+        "title": article.get("title", ""),
+        "published_at": published_at.isoformat() if isinstance(published_at, datetime) else "",
+        "image_url": article.get("image_url", ""),
+        "image_path": image_path,
+        "tokens": _channel_news_title_tokens(article),
+        "post_hash": _channel_text_hash(post_text),
+    })
+    state["recent_news_records"] = _channel_news_trim_records(records)
+    save_channel_state(state)
+
+
+async def _fetch_channel_news_text(session: aiohttp.ClientSession, url: str, referer: str = "") -> str:
+    try:
+        async with session.get(
+            url,
+            headers=_channel_news_headers(referer),
+            proxy=PROXY_URL or None,
+            allow_redirects=True,
+        ) as response:
+            if response.status != 200:
+                preview = (await response.text(errors="ignore"))[:180]
+                print(f"[channel_news] {url} status {response.status}: {preview}")
+                return ""
+            data = await response.content.read(CHANNEL_NEWS_MAX_ARTICLE_BYTES + 1)
+            encoding = response.charset or "utf-8"
+            return data[:CHANNEL_NEWS_MAX_ARTICLE_BYTES].decode(encoding, errors="ignore")
+    except Exception as e:
+        print(f"[channel_news] fetch error {url}: {e}")
+        return ""
+
+
+async def _fetch_channel_news_article(session: aiohttp.ClientSession, candidate: dict) -> dict | None:
+    page_html = await _fetch_channel_news_text(session, candidate.get("url", ""))
+    if not page_html:
+        return None
+    canonical = _channel_news_link_href(page_html, "canonical")
+    url = urljoin(candidate.get("url", ""), canonical) if canonical else candidate.get("url", "")
+    title = _channel_news_article_title(page_html, candidate.get("title", ""))
+    description = (
+        _channel_news_meta_content(page_html, "og:description")
+        or _channel_news_meta_content(page_html, "twitter:description")
+        or _channel_news_meta_content(page_html, "description")
+    )
+    excerpt = _channel_news_article_text(page_html)
+    image_url = _channel_news_article_image(page_html, url)
+    article = {
+        "source": candidate.get("source", ""),
+        "url": url,
+        "url_key": _channel_news_url_key(url),
+        "title": title,
+        "description": description,
+        "excerpt": excerpt,
+        "image_url": image_url,
+        "published_at": _channel_news_article_datetime(page_html),
+    }
+    score = _channel_news_relevance_score(title, url, f"{description} {excerpt[:500]}")
+    if score < CHANNEL_NEWS_MIN_RELEVANCE_SCORE:
+        return None
+    if not _channel_news_date_is_allowed(article):
+        return None
+    return article
+
+
+async def _download_channel_news_image(session: aiohttp.ClientSession, article: dict) -> str:
+    image_url = str(article.get("image_url") or "").strip()
+    if not image_url:
+        return ""
+    try:
+        async with session.get(
+            image_url,
+            headers=_channel_news_headers(article.get("url", ""), accept="image/avif,image/webp,image/apng,image/*,*/*;q=0.8"),
+            proxy=PROXY_URL or None,
+            allow_redirects=True,
+        ) as response:
+            if response.status != 200:
+                print(f"[channel_news] image status {response.status}: {image_url}")
+                return ""
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            if "svg" in content_type or "gif" in content_type or ("image" not in content_type and content_type):
+                print(f"[channel_news] rejected non-photo image {content_type}: {image_url}")
+                return ""
+            data = await response.content.read(CHANNEL_STOCK_IMAGE_MAX_BYTES + 1)
+        if len(data) < CHANNEL_NEWS_IMAGE_MIN_BYTES:
+            print(f"[channel_news] rejected tiny article image: {image_url}")
+            return ""
+        try:
+            from PIL import Image
+
+            with Image.open(BytesIO(data)) as probe_image:
+                width, height = probe_image.size
+            if width < 420 or height < 240:
+                print(f"[channel_news] rejected small article image {width}x{height}: {image_url}")
+                return ""
+            aspect = max(width, height) / max(1, min(width, height))
+            if aspect > 4.2:
+                print(f"[channel_news] rejected banner-like article image {width}x{height}: {image_url}")
+                return ""
+        except Exception as e:
+            print(f"[channel_news] image probe error {image_url}: {e}")
+            return ""
+        return _store_telegram_channel_photo(data, f"news:{article.get('source', '')}:{image_url[:120]}")
+    except Exception as e:
+        print(f"[channel_news] image download error {image_url}: {e}")
+        return ""
+
+
+def _format_channel_news_date(value: datetime | None) -> str:
+    if not isinstance(value, datetime):
+        return "дата в статье не указана"
+    return value.strftime("%d.%m.%Y")
+
+
+def _channel_news_final_suffix(article: dict, author_info: dict | None = None) -> str:
+    parts = [f"Источник: {article.get('source', 'материал')}."]
+    author_signature = _channel_author_signature(author_info)
+    if author_signature:
+        parts.append(author_signature)
+    return "\n\n".join(parts)
+
+
+async def generate_channel_news_post(
+    article: dict,
+    content_plan: dict | None = None,
+    author_info: dict | None = None,
+) -> str:
+    source = article.get("source", "источник")
+    published_label = _format_channel_news_date(article.get("published_at"))
+    excerpt = str(article.get("excerpt") or "")[:1800]
+    author_prompt = _channel_author_prompt(author_info, content_plan)
+    prompt = (
+        "Ты редактор Telegram-канала «Голос Звёзд». На основе найденной статьи сделай свежий эзотерический пост.\n"
+        f"{author_prompt}"
+        "Полностью перефразируй материал для удобного чтения в Telegram: не копируй фразы статьи дословно и не выдавай чужой текст за свой.\n"
+        "Если материал привязан к дате, назови дату конкретно. Если дата не указана, подай тему как evergreen-наблюдение.\n"
+        "Итоговый текст должен поместиться в одну подпись к картинке: 520-820 символов, максимум 900.\n"
+        "Оформи как пост канала: короткая первая строка или крючок, затем 2-4 небольших абзаца с пустыми строками между ними.\n"
+        "Используй Telegram HTML по смыслу: <b>...</b> для 1-2 главных акцентов, <i>...</i> для одной атмосферной фразы. Не оборачивай тегами целые абзацы.\n"
+        "Добавь 0-2 уместных смайлика, только если они усиливают настроение. Без ссылок, хештегов и markdown.\n"
+        "Тон: живой, ясный, немного мистический, без паники и без обещаний стопроцентного результата.\n"
+        "В конце задай один короткий вопрос читателю. Не добавляй строку источника, она будет добавлена отдельно.\n\n"
+        f"Источник: {source}\n"
+        f"Дата материала: {published_label}\n"
+        f"Заголовок: {article.get('title', '')}\n"
+        f"Описание: {article.get('description', '')}\n"
+        f"Фрагмент статьи: {excerpt}\n\n"
+        f"{CHANNEL_AI_META_BAN_PROMPT}\n"
+    )
+    retry_note = ""
+    for attempt in range(3):
+        text = await ask_ai(f"{prompt}{retry_note}", max_tokens=760)
+        if not text:
+            return ""
+        text = clean_markdown(text)
+        text = strip_channel_ai_meta_wrappers(text)
+        text = sanitize_html_for_telegram(text)
+        text = strip_channel_ai_meta_wrappers(text).strip()
+        text = sanitize_html_for_telegram(text)
+
+        similarity, similar_record = _channel_similar_recent_post(text, content_plan)
+        if similarity < CHANNEL_TEXT_SIMILARITY_THRESHOLD or attempt == 2:
+            if similarity >= CHANNEL_TEXT_SIMILARITY_THRESHOLD:
+                print(f"[channel_news] accepting closest news rewrite after retries; similarity={similarity:.2f}")
+            return text
+
+        sample = str((similar_record or {}).get("sample") or "")[:240]
+        print(f"[channel_news] regenerated similar news post, similarity={similarity:.2f}")
+        retry_note = (
+            "\n\nПредыдущий вариант слишком похож на недавний пост.\n"
+            f"Похожий пост: {sample}\n"
+            "Перепиши заново: другой первый абзац, другой образ, другой вопрос в конце, без повторения структуры.\n"
+        )
+    return ""
+
+
+def _channel_news_schedule_info(slot: dict | None) -> dict:
+    if not slot:
+        return {}
+    return {
+        "id": slot.get("id", ""),
+        "time": slot.get("time", ""),
+        "rubric": "Новость",
+        "style": "Короткий новостной пересказ с эзотерическим контекстом, без лекции и без выдуманных фактов.",
+        "visual": slot.get("visual") or CHANNEL_SCHEDULE_VISUAL_BY_ID.get(slot.get("id", ""), {}),
+        "slot_key": slot.get("slot_key", ""),
+        "weekday": slot.get("weekday"),
+        "variant_id": "",
+        "variant_group": "",
+    }
+
+
+async def build_channel_news_post(
+    schedule_slot: dict | None = None,
+    skip_news_keys: set[str] | None = None,
+) -> dict | None:
+    if not CHANNEL_NEWS_ENABLED or CHANNEL_NEWS_TARGET_PER_DAY <= 0:
+        return None
+    state = load_channel_state()
+    balance_reason = _channel_news_balance_block_reason(state)
+    if balance_reason:
+        _log_channel_news_rejection("balance_block", details=balance_reason)
+        return None
+    total_today, by_source_today = _channel_news_today_counts(state)
+    if total_today >= CHANNEL_NEWS_TARGET_PER_DAY:
+        _log_channel_news_rejection("daily_news_target_reached", details=str(total_today))
+        return None
+    skip_news_keys = skip_news_keys or set()
+
+    timeout = aiohttp.ClientTimeout(total=CHANNEL_NEWS_TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as news_session:
+        candidates = []
+        for source_index, source in enumerate(CHANNEL_NEWS_SOURCES):
+            if by_source_today.get(source.get("name", ""), 0) >= CHANNEL_NEWS_MAX_PER_SOURCE_PER_DAY:
+                _log_channel_news_rejection("source_daily_limit", source)
+                continue
+            page_html = await _fetch_channel_news_text(news_session, source.get("url", ""))
+            if not page_html:
+                _log_channel_news_rejection("source_fetch_failed", source)
+                continue
+            candidates.extend(_extract_channel_news_list_candidates(source, page_html, source_index))
+
+        unique_candidates = {}
+        for candidate in candidates:
+            unique_candidates.setdefault(candidate.get("url_key"), candidate)
+        candidates = sorted(
+            unique_candidates.values(),
+            key=lambda item: (-int(item.get("score", 0)), int(item.get("source_index", 99)), item.get("title", "")),
+        )
+
+        checked = 0
+        for candidate in candidates:
+            if checked >= CHANNEL_NEWS_MAX_ARTICLES_TO_CHECK:
+                break
+            if candidate.get("url_key") in skip_news_keys:
+                _log_channel_news_rejection("preview_skip", candidate)
+                continue
+            if _channel_news_already_used(candidate):
+                _log_channel_news_rejection("duplicate_or_similar", candidate)
+                continue
+            if by_source_today.get(candidate.get("source", ""), 0) >= CHANNEL_NEWS_MAX_PER_SOURCE_PER_DAY:
+                _log_channel_news_rejection("source_daily_limit", candidate)
+                continue
+            checked += 1
+            article = await _fetch_channel_news_article(news_session, candidate)
+            if not article:
+                _log_channel_news_rejection("article_rejected", candidate, "не прошла дату/релевантность или не загрузилась")
+                continue
+            if _channel_news_already_used(article):
+                _log_channel_news_rejection("duplicate_or_similar", article)
+                continue
+
+            image_path = await _download_channel_news_image(news_session, article)
+            if CHANNEL_NEWS_REQUIRE_PAGE_IMAGE and not image_path:
+                _log_channel_news_rejection("image_rejected", article, article.get("image_url", ""))
+                continue
+
+            category = _channel_news_category(article)
+            schedule_info = _channel_news_schedule_info(schedule_slot)
+            topic_info = {
+                "category": category,
+                "topic": article.get("title", ""),
+                "promo": False,
+                "schedule": schedule_info,
+                "source_type": "news",
+                "source_name": article.get("source", ""),
+                "source_url": article.get("url", ""),
+            }
+            author_info = _select_channel_author(topic_info)
+            content_plan = {
+                "format": {"id": "news_rewrite"},
+                "tone": {"id": "news_alive"},
+                "category": category,
+                "promo": False,
+                "schedule": schedule_info,
+                "news": True,
+            }
+            core_text = await generate_channel_news_post(article, content_plan, author_info)
+            if not core_text:
+                _log_channel_news_rejection("ai_text_failed", article)
+                continue
+            text = with_channel_final_suffix(core_text, _channel_news_final_suffix(article, author_info))
+            print(f"[channel_news] selected {article.get('source', '')}: {article.get('title', '')[:120]}")
+            return {
+                "text": text,
+                "core_text": core_text,
+                "image_path": image_path,
+                "topic_info": topic_info,
+                "author_info": author_info,
+                "content_plan": content_plan,
+                "schedule": schedule_info,
+                "news_article": article,
+            }
+    return None
+
+
 def _stock_json_headers(provider: str) -> dict:
     headers = {"Accept": "application/json", "User-Agent": CHANNEL_IMAGE_USER_AGENT}
     if provider == "pexels" and PEXELS_API_KEY:
@@ -6141,8 +7026,14 @@ def _generate_local_channel_image_asset(
         draw.rounded_rectangle((42, 42, width - 42, height - 42), radius=46, outline=_rgba(palette["accent"], 100), width=2)
         _draw_brand_mark(draw, width, height, palette, small_font)
 
+        image_hashes = _channel_image_hashes_from_image(img)
+        if _is_recent_channel_image_hash(image_hashes):
+            print("[channel_image] local fallback produced visually repeated image")
+            return ""
+
         path = os.path.join(CHANNEL_IMAGE_ASSET_DIR, f"channel_{uuid.uuid4().hex}.png")
         img.save(path, format="PNG", optimize=True)
+        _remember_channel_image_hashes(image_hashes, "local")
         _cleanup_generated_channel_images()
         return path
     except Exception as e:
@@ -6784,6 +7675,7 @@ def _remember_channel_content(
     content_plan: dict | None,
     text: str,
     topic_info: dict | None = None,
+    author_info: dict | None = None,
 ) -> None:
     _sync_recent_content_from_state()
     signature = _content_signature(content_plan)
@@ -6810,16 +7702,30 @@ def _remember_channel_content(
     records = _channel_trim_post_records(state.get("recent_post_records", []) or [])
     plain = _plain_channel_post_text(text)
     if plain:
+        text_hash = _channel_text_hash(plain)
+        if text_hash:
+            all_hashes = [
+                str(item)
+                for item in state.get("all_post_text_hashes", []) or []
+                if str(item).strip() and str(item) != text_hash
+            ]
+            all_hashes.append(text_hash)
+            state["all_post_text_hashes"] = all_hashes[-MAX_ALL_CHANNEL_POST_TEXT_HASHES:]
         record = {
             "at": _msk_now().isoformat(),
             "sample": plain[:360],
             "tokens": _channel_text_signature_tokens(plain, limit=24),
+            "text_hash": text_hash,
             "topic_key": _topic_key(topic_info or {}),
             "category": (topic_info or {}).get("category") or (content_plan or {}).get("category") or "",
             "schedule_id": schedule.get("id", "") if isinstance(schedule, dict) else "",
             "schedule_rubric": schedule.get("rubric", "") if isinstance(schedule, dict) else "",
             "schedule_variant": schedule.get("variant_id", "") if isinstance(schedule, dict) else "",
             "content_signature": signature,
+            "source_type": (topic_info or {}).get("source_type", "generated"),
+            "source_url": (topic_info or {}).get("source_url", ""),
+            "author_type": (author_info or {}).get("type", ""),
+            "author_name": ((author_info or {}).get("specialist") or {}).get("name", ""),
         }
         records.append(record)
         state["recent_post_records"] = _channel_trim_post_records(records)
@@ -6846,6 +7752,30 @@ def _select_channel_topic() -> dict:
         if _topic_key(topic_info) == oldest_key
     ]
     return random.choice(fallback_topics or CHANNEL_POST_TOPICS)
+
+
+def _select_channel_author_topic(scheduled_slot: dict | None = None) -> dict:
+    author_categories = set(CHANNEL_TAROT_AUTHOR_CATEGORIES) | set(CHANNEL_ASTRO_AUTHOR_CATEGORIES)
+    _sync_recent_topics_from_state()
+    author_topics = [
+        topic_info for topic_info in CHANNEL_POST_TOPICS
+        if topic_info.get("category") in author_categories
+    ]
+    fresh_topics = [
+        topic_info for topic_info in author_topics
+        if _topic_key(topic_info) not in RECENT_TOPIC_KEYS
+    ]
+    selected = random.choice(fresh_topics or author_topics or CHANNEL_POST_TOPICS)
+    result = {
+        "category": selected.get("category", "tarot"),
+        "topic": selected.get("topic", ""),
+        "promo": False,
+    }
+    if scheduled_slot:
+        scheduled_topic = _channel_topic_from_schedule_slot(scheduled_slot)
+        result["promo"] = bool(scheduled_topic.get("promo", False))
+        result["schedule"] = scheduled_topic.get("schedule") or {}
+    return result
 
 
 def clean_markdown(text: str) -> str:
@@ -7505,9 +8435,17 @@ def _get_last_channel_post_from_state():
         return None
 
 
-async def build_channel_post() -> dict | None:
+async def build_channel_post(skip_news_keys: set[str] | None = None) -> dict | None:
     """Generates a post once so different publishing adapters can use it."""
-    topic_info = _select_channel_topic()
+    scheduled_slot = _select_due_channel_schedule_slot(_msk_now())
+    news_post = await build_channel_news_post(scheduled_slot, skip_news_keys=skip_news_keys)
+    if news_post:
+        return news_post
+
+    if _channel_author_post_needed_now():
+        topic_info = _select_channel_author_topic(scheduled_slot)
+    else:
+        topic_info = _select_channel_topic()
     author_info = _select_channel_author(topic_info)
     content_plan = _select_channel_content_plan(topic_info, author_info)
     core_text = await generate_channel_post(topic_info["topic"], author_info, content_plan)
@@ -7688,6 +8626,20 @@ async def post_to_telegram_channel(post: dict) -> bool:
 
     text = post["text"]
     image_path = _resolve_channel_post_image_path(post)
+    if post.get("news_article"):
+        if not image_path:
+            await _notify_channel_publish_issue("News post has no article image; it was not published.")
+            return False
+        if len(text or "") > TELEGRAM_PHOTO_CAPTION_LIMIT:
+            article = post.get("news_article") or {}
+            text = with_channel_final_suffix(
+                post.get("core_text", text),
+                _channel_news_final_suffix(article, post.get("author_info")),
+            )
+            post["text"] = text
+        if len(text or "") > TELEGRAM_PHOTO_CAPTION_LIMIT:
+            await _notify_channel_publish_issue("News post caption is still too long after trimming; it was not published.")
+            return False
     if _channel_image_required() and not image_path:
         await _notify_channel_publish_issue("Channel real photo selection failed; post was not published without an image.")
         return False
@@ -7715,7 +8667,75 @@ def has_configured_publish_target() -> bool:
     return bool(CHANNEL_POSTING_ENABLED and (CHANNEL_ID or is_vk_configured() or is_ok_configured()))
 
 
-async def publish_channel_post() -> bool:
+def _cleanup_channel_previews() -> None:
+    now = time.monotonic()
+    expired = [
+        preview_id for preview_id, payload in PENDING_CHANNEL_PREVIEWS.items()
+        if now - float(payload.get("created_at", 0.0)) > CHANNEL_PREVIEW_TTL_SEC
+    ]
+    for preview_id in expired:
+        PENDING_CHANNEL_PREVIEWS.pop(preview_id, None)
+
+
+def _channel_preview_keyboard(preview_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"chprev:pub:{preview_id}"),
+            InlineKeyboardButton(text="🔄 Перегенерировать", callback_data=f"chprev:regen:{preview_id}"),
+        ],
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"chprev:skip:{preview_id}")],
+    ])
+
+
+def _channel_preview_meta(post: dict) -> str:
+    topic_info = post.get("topic_info") or {}
+    article = post.get("news_article") or {}
+    author_info = post.get("author_info") or {}
+    specialist = author_info.get("specialist") or {}
+    lines = [
+        "Предпросмотр поста",
+        f"Тип: {'новость' if article else 'сгенерированный пост'}",
+        f"Категория: {topic_info.get('category', '-')}",
+        f"Длина подписи: {len(post.get('text') or '')}/{TELEGRAM_PHOTO_CAPTION_LIMIT}",
+        f"Картинка: {'есть' if post.get('image_path') and os.path.exists(post.get('image_path')) else 'нет'}",
+    ]
+    if article:
+        lines.append(f"Источник: {article.get('source', '-')}")
+        if article.get("url"):
+            lines.append(f"URL: {article.get('url')}")
+    if specialist:
+        lines.append(f"Автор: {specialist.get('name')} ({author_info.get('type')})")
+    return "\n".join(lines)
+
+
+async def _send_channel_preview(chat_id: int, post: dict, preview_id: str, note: str = "") -> None:
+    meta = _channel_preview_meta(post)
+    if note:
+        meta = f"{note}\n\n{meta}"
+    try:
+        await bot.send_message(chat_id, meta, disable_web_page_preview=True)
+    except Exception as e:
+        print(f"[channel_preview] meta send error: {e}")
+
+    text = post.get("text") or ""
+    image_path = post.get("image_path") or ""
+    keyboard = _channel_preview_keyboard(preview_id)
+    try:
+        if image_path and os.path.exists(image_path):
+            photo = FSInputFile(image_path)
+            if len(text) <= TELEGRAM_PHOTO_CAPTION_LIMIT:
+                await bot.send_photo(chat_id, photo=photo, caption=text, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                await bot.send_photo(chat_id, photo=photo)
+                await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
+        else:
+            await bot.send_message(chat_id, text or "Пост без текста", parse_mode="HTML", reply_markup=keyboard)
+    except Exception as e:
+        print(f"[channel_preview] html send error: {e}")
+        await bot.send_message(chat_id, _plain_channel_publish_text(text), reply_markup=keyboard)
+
+
+async def publish_channel_post(post: dict | None = None) -> bool:
     publish_result = {"configured": {}, "results": {}, "errors": {}}
     _set_channel_publish_result(publish_result)
     if not CHANNEL_POSTING_ENABLED:
@@ -7743,7 +8763,8 @@ async def publish_channel_post() -> bool:
             _set_channel_publish_result(publish_result)
             return False
 
-        post = await build_channel_post()
+        if post is None:
+            post = await build_channel_post()
         if not post:
             publish_result["errors"]["build"] = "Post generation failed"
             _set_channel_publish_result(publish_result)
@@ -7776,7 +8797,14 @@ async def publish_channel_post() -> bool:
                 post.get("content_plan"),
                 post.get("core_text", post.get("text", "")),
                 post.get("topic_info") or {},
+                post.get("author_info"),
             )
+            if post.get("news_article"):
+                _remember_channel_news(
+                    post.get("news_article") or {},
+                    post.get("core_text", post.get("text", "")),
+                    post.get("image_path", ""),
+                )
             _remember_channel_schedule_slot((post.get("schedule") or {}).get("slot_key", ""))
             topic_preview = _topic_key(topic_info)[:80]
             targets = ",".join(name for name, posted in results.items() if posted) or "-"
@@ -7811,52 +8839,34 @@ async def post_to_channel() -> bool:
     if not CHANNEL_ID:
         return False
     try:
-        topic_info = _select_channel_topic()
-        author_info = _select_channel_author(topic_info)
-        content_plan = _select_channel_content_plan(topic_info, author_info)
-        core_text = await generate_channel_post(topic_info["topic"], author_info, content_plan)
-        if not core_text:
-            print("[Автопостинг] ИИ не вернул текст, пропускаю")
+        post = await build_channel_post()
+        if not post:
+            print("[Автопостинг] Пост не собран, пропускаю")
             return False
-
-        author_signature = _channel_author_signature(author_info)
-        if content_plan.get("promo"):
-            text = with_channel_bot_promo(core_text, author_signature)
-        else:
-            text = with_channel_final_suffix(core_text, author_signature)
-
-        image_path = await generate_channel_image_asset(topic_info, author_info, content_plan, core_text)
-        post_payload = {
-            "image_path": image_path,
-            "topic_info": topic_info,
-            "author_info": author_info,
-            "content_plan": content_plan,
-        }
-        image_path = _resolve_channel_post_image_path(post_payload)
-        if _channel_image_required() and not image_path:
-            await _notify_channel_publish_issue("Channel real photo selection failed; post was not published without an image.")
+        if not await post_to_telegram_channel(post):
             return False
-
-        try:
-            await _send_channel_post_payload(text, "HTML", image_path)
-        except Exception as e:
-            if image_path and _is_telegram_image_error(e):
-                await _notify_channel_publish_issue(str(e))
-                return False
-            # Если Telegram не принял HTML (битые теги), шлём чистый текст
-            print(f"[Автопостинг] HTML отклонён Telegram, шлю plain: {e}")
-            plain = _plain_channel_publish_text(text)
-            await _send_channel_post_payload(plain, None, image_path)
 
         msk = _msk_now()
+        topic_info = post["topic_info"]
         _remember_channel_topic(topic_info)
-        _remember_channel_content(content_plan, core_text, topic_info)
+        _remember_channel_content(
+            post.get("content_plan"),
+            post.get("core_text", post.get("text", "")),
+            topic_info,
+            post.get("author_info"),
+        )
+        if post.get("news_article"):
+            _remember_channel_news(
+                post.get("news_article") or {},
+                post.get("core_text", post.get("text", "")),
+                post.get("image_path", ""),
+            )
         schedule_slot_key = ((topic_info.get("schedule") or {}).get("slot_key") or "")
         _remember_channel_schedule_slot(schedule_slot_key)
         topic_preview = _topic_key(topic_info)[:80]
         print(f"[MSK {msk}] Пост отправлен в канал {CHANNEL_ID} "
               f"(категория: {topic_info.get('category', '-')}, тема: {topic_preview}, "
-              f"фото: {'да' if image_path else 'нет'})")
+              f"фото: {'да' if post.get('image_path') else 'нет'})")
         return True
     except Exception as e:
         print(f"[Автопостинг] Ошибка: {e}")
@@ -7953,6 +8963,173 @@ async def maybe_pin_channel_after_consultation(user_id: int) -> None:
     save_users(users)
 
 
+def _is_admin_user_id(user_id: int | None) -> bool:
+    return bool(ADMIN_ID and user_id == ADMIN_ID)
+
+
+async def _channel_news_check_report() -> str:
+    state = load_channel_state()
+    news_today, by_source_today = _channel_news_today_counts(state)
+    post_counts = _channel_today_post_counts(state)
+    balance_reason = _channel_news_balance_block_reason(state)
+    lines = [
+        "Проверка новостей для канала",
+        f"Новостей сегодня: {news_today}/{CHANNEL_NEWS_TARGET_PER_DAY}",
+        f"Постов сегодня: всего {post_counts['total']}, новости {post_counts['news']}, авторские {post_counts['author']}",
+        f"Баланс: {balance_reason or 'новости можно брать'}",
+        f"Источников: {len(CHANNEL_NEWS_SOURCES)}",
+    ]
+    if by_source_today:
+        lines.append("Сегодня по источникам: " + ", ".join(f"{k}: {v}" for k, v in by_source_today.items()))
+
+    timeout = aiohttp.ClientTimeout(total=CHANNEL_NEWS_TIMEOUT)
+    candidates = []
+    source_counts = {}
+    async with aiohttp.ClientSession(timeout=timeout) as news_session:
+        for source_index, source in enumerate(CHANNEL_NEWS_SOURCES):
+            page_html = await _fetch_channel_news_text(news_session, source.get("url", ""))
+            if not page_html:
+                source_counts[source.get("name", "")] = "ошибка загрузки"
+                continue
+            source_candidates = _extract_channel_news_list_candidates(source, page_html, source_index)
+            source_counts[source.get("name", "")] = len(source_candidates)
+            candidates.extend(source_candidates)
+
+        lines.append("")
+        lines.append("Кандидаты на страницах:")
+        for source_name, count in source_counts.items():
+            lines.append(f"- {source_name}: {count}")
+
+        unique_candidates = {}
+        for candidate in candidates:
+            unique_candidates.setdefault(candidate.get("url_key"), candidate)
+        candidates = sorted(
+            unique_candidates.values(),
+            key=lambda item: (-int(item.get("score", 0)), int(item.get("source_index", 99)), item.get("title", "")),
+        )[:CHANNEL_NEWS_CHECK_LIMIT]
+
+        lines.append("")
+        lines.append("Топ проверенных материалов:")
+        if not candidates:
+            lines.append("- ничего подходящего на списковых страницах")
+        for candidate in candidates:
+            status = "дубль/похожая" if _channel_news_already_used(candidate) else "кандидат"
+            article = None
+            if status == "кандидат":
+                article = await _fetch_channel_news_article(news_session, candidate)
+                if not article:
+                    status = "не прошла дату/релевантность"
+                elif _channel_news_already_used(article):
+                    status = "дубль/похожая"
+                elif not article.get("image_url"):
+                    status = "нет картинки на странице"
+                else:
+                    status = "OK"
+            date_label = _format_channel_news_date(article.get("published_at")) if article else "-"
+            title = candidate.get("title", "")[:90]
+            lines.append(f"- [{status}] {candidate.get('source', '-')}: {title} ({date_label})")
+
+    rejection_log = [
+        item for item in state.get("channel_news_rejection_log", []) or []
+        if isinstance(item, dict)
+    ][-6:]
+    if rejection_log:
+        lines.append("")
+        lines.append("Последние причины отказа:")
+        for item in reversed(rejection_log):
+            title = str(item.get("title") or item.get("url") or "-")[:70]
+            lines.append(f"- {item.get('reason', '-')}: {title}")
+
+    return "\n".join(lines)[:3900]
+
+
+@dp.message(F.text.regexp(r"^/(channel_preview|post_preview)(\s|$)"))
+async def channel_preview_command(message: Message):
+    if not _is_admin_user_id(getattr(message.from_user, "id", None)):
+        return
+    await message.answer("Собираю предпросмотр поста...")
+    _cleanup_channel_previews()
+    post = await build_channel_post()
+    if not post:
+        await message.answer("Не удалось собрать пост. Проверь /channel_news_check и логи автопостинга.")
+        return
+    preview_id = uuid.uuid4().hex[:10]
+    PENDING_CHANNEL_PREVIEWS[preview_id] = {
+        "created_at": time.monotonic(),
+        "post": post,
+        "skip_news_keys": set(),
+    }
+    await _send_channel_preview(message.chat.id, post, preview_id)
+
+
+@dp.message(F.text.regexp(r"^/(channel_news_check|news_check)(\s|$)"))
+async def channel_news_check_command(message: Message):
+    if not _is_admin_user_id(getattr(message.from_user, "id", None)):
+        return
+    await message.answer("Проверяю источники новостей...")
+    report = await _channel_news_check_report()
+    await message.answer(report, disable_web_page_preview=True)
+
+
+@dp.callback_query(F.data.startswith("chprev:"))
+async def channel_preview_callback(callback: CallbackQuery):
+    if not _is_admin_user_id(getattr(callback.from_user, "id", None)):
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    _cleanup_channel_previews()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    action, preview_id = parts[1], parts[2]
+    payload = PENDING_CHANNEL_PREVIEWS.get(preview_id)
+    if not payload:
+        await callback.answer("Предпросмотр устарел", show_alert=True)
+        return
+
+    post = payload.get("post") or {}
+    if action == "pub":
+        await callback.answer("Публикую...")
+        ok = await publish_channel_post(post)
+        if ok:
+            PENDING_CHANNEL_PREVIEWS.pop(preview_id, None)
+            await callback.message.answer("Пост опубликован.")
+        else:
+            await callback.message.answer("Не удалось опубликовать пост. Проверь последний результат публикации.")
+        return
+
+    if action == "regen":
+        await callback.answer("Собираю новый вариант...")
+        skip_news_keys = payload.get("skip_news_keys")
+        if not isinstance(skip_news_keys, set):
+            skip_news_keys = set(skip_news_keys or [])
+        article = post.get("news_article") or {}
+        url_key = article.get("url_key") or _channel_news_url_key(article.get("url", ""))
+        if url_key:
+            skip_news_keys.add(url_key)
+        new_post = await build_channel_post(skip_news_keys=skip_news_keys)
+        if not new_post:
+            await callback.message.answer("Не удалось собрать новый вариант.")
+            return
+        payload["post"] = new_post
+        payload["created_at"] = time.monotonic()
+        payload["skip_news_keys"] = skip_news_keys
+        await _send_channel_preview(callback.message.chat.id, new_post, preview_id, "Новый вариант")
+        return
+
+    if action == "skip":
+        article = post.get("news_article") or {}
+        if article:
+            _remember_channel_news(article, post.get("core_text", post.get("text", "")), post.get("image_path", ""))
+            _log_channel_news_rejection("admin_skipped", article)
+        PENDING_CHANNEL_PREVIEWS.pop(preview_id, None)
+        await callback.answer("Пропущено")
+        await callback.message.answer("Предпросмотр пропущен.")
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
+
+
 @dp.message(F.text.regexp(r"^/start(\s|$)"))
 async def start(message: Message):
     users = load_users()
@@ -8015,7 +9192,7 @@ async def start(message: Message):
             except Exception:
                 pass
 
-# Админ-команды (/user, /users, /stats) живут в отдельном боте mainAdmin.py
+# Админ-команды (/user, /users, /stats) живут в отдельном проекте AdminBot
 
 
 @dp.message(F.text == "🏠 Главное меню")

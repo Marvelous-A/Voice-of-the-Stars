@@ -37,11 +37,11 @@ BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
 DEPLOY_BACKUP_DIR = os.getenv("DEPLOY_BACKUP_DIR", "/root/deploy-backup")
 CODE_FILES = [
     "main.py",
-    "mainAdmin.py",
     "ckassa_payments.py",
     "promo_codes.py",
     "requirements.txt",
     "descriptions.json",
+    "news_sources.json",
 ]
 REMOVED_FILES = [
     "max_publisher.py",
@@ -203,7 +203,7 @@ def validate_candidate(candidate_dir: str) -> bool:
     env = os.environ.copy()
     env["PYTHONPATH"] = candidate_dir
     import_result = run_logged(
-        [BOT_VENV_PYTHON, "-c", "import main; import mainAdmin; print('Import validation OK')"],
+        [BOT_VENV_PYTHON, "-c", "import main; print('Import validation OK')"],
         cwd=candidate_dir,
         env=env,
     )
@@ -242,10 +242,9 @@ def deploy():
                 os.remove(legacy_path)
                 print(f"Removed legacy file {legacy_path}", flush=True)
 
-    # restart bots via systemd
+    # AdminBot is deployed independently from its own project directory.
     subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)
-    subprocess.run(["systemctl", "restart", "tarot-admin.service"], check=False)
-    print("=== Bots restarted ===", flush=True)
+    print("=== Voice bot restarted ===", flush=True)
 
     # if deploy_webhook.py itself was updated — restart webhook service
     src_wh = os.path.join(PROJECT_DIR, "deploy_webhook.py")
