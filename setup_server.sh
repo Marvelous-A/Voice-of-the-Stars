@@ -81,21 +81,28 @@ systemctl enable deploy-webhook.service
 systemctl restart deploy-webhook.service
 systemctl restart tarot-bot.service
 
+if [ -f /root/Voice-of-the-Stars/AdminBot/setup_server.sh ]; then
+    echo "=== Устанавливаем AdminBot ==="
+    bash /root/Voice-of-the-Stars/AdminBot/setup_server.sh
+fi
+
 sleep 5
 
 echo ""
 echo "=== Статус сервисов ==="
 systemctl status tarot-bot.service --no-pager -l | head -15
 echo ""
+systemctl status tarot-admin.service --no-pager -l | head -15 || true
+echo ""
 systemctl status deploy-webhook.service --no-pager -l | head -15
 echo ""
 
 echo "=== Проверка процессов ==="
-ps aux | grep -E "main\.py" | grep -v grep
+ps aux | grep -E "main\.py|/home/admin-bot/.+main\.py" | grep -v grep
 
 echo ""
 echo "✓ Готово! Теперь:"
 echo "  - git push → вебхук подтянет код, скопирует в /home/bot/ и перезапустит Voice"
 echo "  - Логи основного бота: sudo journalctl -u tarot-bot -f"
+echo "  - Логи админ-бота:     sudo journalctl -u tarot-admin -f"
 echo "  - Логи вебхука:        sudo journalctl -u deploy-webhook -f"
-echo "  - AdminBot устанавливается отдельно из каталога AdminBot"

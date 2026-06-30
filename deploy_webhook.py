@@ -34,6 +34,9 @@ BRANCH = "master"
 
 BOT_DIR = "/home/bot"
 BOT_VENV_PYTHON = os.path.join(BOT_DIR, "venv", "bin", "python3")
+ADMIN_SOURCE_DIR = os.path.join(PROJECT_DIR, "AdminBot")
+ADMIN_DIR = os.getenv("ADMIN_DIR", "/home/admin-bot")
+ADMIN_VENV_PYTHON = os.path.join(ADMIN_DIR, "venv", "bin", "python3")
 DEPLOY_BACKUP_DIR = os.getenv("DEPLOY_BACKUP_DIR", "/root/deploy-backup")
 CODE_FILES = [
     "main.py",
@@ -44,8 +47,17 @@ CODE_FILES = [
     "news_sources.json",
 ]
 REMOVED_FILES = [
+    "admin_projects.py",
+    "mainAdmin.py",
     "max_publisher.py",
     "max_connector_server.py",
+]
+ADMIN_CODE_FILES = [
+    "main.py",
+    "admin_projects.py",
+    "project_runtime.py",
+    "requirements.txt",
+    "README.md",
 ]
 RUNTIME_SEED_FILES = [
     ".env",
@@ -189,6 +201,34 @@ def install_dependencies() -> bool:
     return True
 
 
+def ensure_admin_venv() -> bool:
+    if os.path.exists(ADMIN_VENV_PYTHON):
+        return True
+    os.makedirs(ADMIN_DIR, exist_ok=True)
+    result = run_logged(["python3", "-m", "venv", os.path.join(ADMIN_DIR, "venv")])
+    if result.returncode != 0:
+        print("=== AdminBot deploy aborted: venv creation failed ===", flush=True)
+        return False
+    return True
+
+
+def install_admin_dependencies() -> bool:
+    if not os.path.isdir(ADMIN_SOURCE_DIR):
+        print("=== AdminBot source directory is missing; skipping AdminBot deploy ===", flush=True)
+        return True
+    if not ensure_admin_venv():
+        return False
+    requirements_path = os.path.join(ADMIN_SOURCE_DIR, "requirements.txt")
+    result = run_logged(
+        [ADMIN_VENV_PYTHON, "-m", "pip", "install", "-r", requirements_path, "-q"],
+        cwd=ADMIN_SOURCE_DIR,
+    )
+    if result.returncode != 0:
+        print("=== AdminBot deploy aborted: dependency installation failed ===", flush=True)
+        return False
+    return True
+
+
 def validate_candidate(candidate_dir: str) -> bool:
     py_files = [
         os.path.join(candidate_dir, fname)
@@ -210,6 +250,76 @@ def validate_candidate(candidate_dir: str) -> bool:
     if import_result.returncode != 0:
         print("=== Deploy aborted: candidate code fails import validation ===", flush=True)
         return False
+    return True
+
+
+def copy_admin_code_files(target_dir: str) -> None:
+    for fname in ADMIN_CODE_FILES:
+        src = os.path.join(ADMIN_SOURCE_DIR, fname)
+        dst = os.path.join(target_dir, fname)
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+            print(f"Prepared AdminBot {fname} -> {target_dir}", flush=True)
+        else:
+            print(f"Missing AdminBot deploy source file: {fname}", flush=True)
+
+    tests_src = os.path.join(ADMIN_SOURCE_DIR, "tests")
+    tests_dst = os.path.join(target_dir, "tests")
+    if os.path.isdir(tests_src):
+        shutil.copytree(tests_src, tests_dst, dirs_exist_ok=True)
+        print(f"Prepared AdminBot tests -> {tests_dst}", flush=True)
+
+
+def validate_admin_candidate(candidate_dir: str) -> bool:
+    py_files = [
+        os.path.join(candidate_dir, fname)
+        for fname in ("main.py", "admin_projects.py", "project_runtime.py")
+    ]
+    compile_result = run_logged([ADMIN_VENV_PYTHON, "-m", "py_compile", *py_files], cwd=candidate_dir)
+    if compile_result.returncode != 0:
+        print("=== AdminBot deploy aborted: candidate code does not compile ===", flush=True)
+        return False
+
+    tests_dir = os.path.join(candidate_dir, "tests")
+    if os.path.isdir(tests_dir):
+        test_result = run_logged(
+            [ADMIN_VENV_PYTHON, "-m", "unittest", "discover", "-s", "tests"],
+            cwd=candidate_dir,
+        )
+        if test_result.returncode != 0:
+            print("=== AdminBot deploy aborted: tests failed ===", flush=True)
+            return False
+    return True
+
+
+def deploy_admin_bot() -> bool:
+    if not os.path.isdir(ADMIN_SOURCE_DIR):
+        print("=== AdminBot source directory is missing; skipping AdminBot deploy ===", flush=True)
+        return True
+    if not install_admin_dependencies():
+        return False
+
+    with tempfile.TemporaryDirectory(prefix="admin-bot-deploy-") as candidate_dir:
+        copy_admin_code_files(candidate_dir)
+        if not validate_admin_candidate(candidate_dir):
+            return False
+
+        os.makedirs(ADMIN_DIR, exist_ok=True)
+        for fname in ADMIN_CODE_FILES:
+            src = os.path.join(candidate_dir, fname)
+            dst = os.path.join(ADMIN_DIR, fname)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+                print(f"Copied AdminBot {fname} -> {ADMIN_DIR}", flush=True)
+
+        tests_src = os.path.join(candidate_dir, "tests")
+        tests_dst = os.path.join(ADMIN_DIR, "tests")
+        if os.path.isdir(tests_src):
+            shutil.copytree(tests_src, tests_dst, dirs_exist_ok=True)
+            print(f"Copied AdminBot tests -> {tests_dst}", flush=True)
+
+    subprocess.run(["systemctl", "restart", "tarot-admin.service"], check=False)
+    print("=== AdminBot restarted ===", flush=True)
     return True
 
 
@@ -242,9 +352,10 @@ def deploy():
                 os.remove(legacy_path)
                 print(f"Removed legacy file {legacy_path}", flush=True)
 
-    # AdminBot is deployed independently from its own project directory.
     subprocess.run(["systemctl", "restart", "tarot-bot.service"], check=False)
     print("=== Voice bot restarted ===", flush=True)
+
+    deploy_admin_bot()
 
     # if deploy_webhook.py itself was updated — restart webhook service
     src_wh = os.path.join(PROJECT_DIR, "deploy_webhook.py")
