@@ -1,0 +1,16 @@
+.env
+.venv/
+.agents/
+.codex/
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local deployment credentials and host fingerprints
+.deploy_*
+.authorize_deploy_key.ps1

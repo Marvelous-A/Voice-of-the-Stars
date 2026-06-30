@@ -1,0 +1,26 @@
+[Unit]
+Description=ECHO anonymous Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=echo-bot
+Group=echo-bot
+WorkingDirectory=/opt/echo-dialog-bot
+# Общие реквизиты CKassa берутся из окружения «Голоса Звёзд».
+# Собственный env «ЭХО», указанный ниже, переопределяет BOT_TOKEN и остальные поля.
+EnvironmentFile=-/home/bot/.env
+EnvironmentFile=/etc/echo-dialog-bot.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/echo-dialog-bot/.venv/bin/python3 -u /opt/echo-dialog-bot/main.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/echo-dialog-bot
+
+[Install]
+WantedBy=multi-user.target

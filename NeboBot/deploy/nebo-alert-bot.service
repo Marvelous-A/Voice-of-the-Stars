@@ -1,0 +1,35 @@
+[Unit]
+Description=Nebo Alert Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nebo-alert
+Group=nebo-alert
+WorkingDirectory=/opt/nebo-alert-bot
+EnvironmentFile=-/home/bot/.env
+EnvironmentFile=/etc/nebo-alert-bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/nebo-alert-bot/.venv/bin/python -u /opt/nebo-alert-bot/main.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/nebo-alert-bot
+MemoryMax=350M
+TasksMax=100
+
+[Install]
+WantedBy=multi-user.target

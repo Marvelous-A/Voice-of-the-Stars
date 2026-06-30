@@ -31,6 +31,13 @@ def _default_voice_app_dir() -> Path:
     return WORKSPACE_DIR / "Voice of the Stars"
 
 
+def _first_existing_path(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
 VOICE_APP_DIR = _directory_from_env("VOICE_APP_DIR", _default_voice_app_dir())
 VOICE_DATA_DIR = _directory_from_env("VOICE_DATA_DIR", VOICE_APP_DIR)
 
@@ -41,14 +48,22 @@ if VOICE_DATA_DIR != VOICE_APP_DIR:
 ECHO_DATABASE_PATH = Path(
     os.getenv(
         "ECHO_DATABASE_PATH",
-        str(WORKSPACE_DIR / "ЭХО — разговор без имён" / "echo.db"),
+        str(_first_existing_path(
+            WORKSPACE_DIR / "EchoBot" / "echo.db",
+            WORKSPACE_DIR / "ЭХО — разговор без имён" / "echo.db",
+            WORKSPACE_DIR.parent / "ЭХО — разговор без имён" / "echo.db",
+        )),
     )
 ).expanduser().resolve()
 
 NEBO_DATABASE_PATH = Path(
     os.getenv(
         "NEBO_DATABASE_PATH",
-        str(WORKSPACE_DIR / "BPLA Region Bot" / "data" / "bpla_region_bot.sqlite3"),
+        str(_first_existing_path(
+            WORKSPACE_DIR / "NeboBot" / "data" / "bpla_region_bot.sqlite3",
+            WORKSPACE_DIR / "BPLA Region Bot" / "data" / "bpla_region_bot.sqlite3",
+            WORKSPACE_DIR.parent / "BPLA Region Bot" / "data" / "bpla_region_bot.sqlite3",
+        )),
     )
 ).expanduser().resolve()
 

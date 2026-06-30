@@ -1,0 +1,21 @@
+[Unit]
+Description=GitHub deploy webhook for Nebo Alert Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nebo-alert-bot
+EnvironmentFile=-/home/bot/.env
+EnvironmentFile=/etc/nebo-alert-bot.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/nebo-alert-bot/.venv/bin/python -u /opt/nebo-alert-bot/deploy_webhook.py
+Restart=always
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/nebo-alert-bot
+
+[Install]
+WantedBy=multi-user.target

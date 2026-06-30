@@ -1,0 +1,22 @@
+[Unit]
+Description=GitHub deploy webhook for ECHO bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/echo-dialog-bot
+# ADMIN_BOT_TOKEN хранится в общем окружении административного бота.
+EnvironmentFile=-/home/bot/.env
+EnvironmentFile=/etc/echo-dialog-bot.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/echo-dialog-bot/.venv/bin/python3 -u /opt/echo-dialog-bot/deploy_webhook.py
+Restart=always
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/echo-dialog-bot
+
+[Install]
+WantedBy=multi-user.target
