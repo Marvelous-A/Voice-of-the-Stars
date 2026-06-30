@@ -151,6 +151,18 @@ PENDING_CHANNEL_PREVIEWS: dict[str, dict] = {}
 PROMO_CREATE_STATE: dict[int, dict] = {}
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        value = int(getenv(name, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
+CHANNEL_PREVIEW_BUILD_TIMEOUT_SEC = _env_int("CHANNEL_PREVIEW_BUILD_TIMEOUT_SEC", 90, 15)
+CHANNEL_PREVIEW_STATUS_INTERVAL_SEC = _env_int("CHANNEL_PREVIEW_STATUS_INTERVAL_SEC", 20, 5)
+
+
 def _short_admin_error(text: str, limit: int = 900) -> str:
     text = str(text or "").strip()
     if len(text) <= limit:
@@ -203,6 +215,48 @@ def _format_channel_admin_error(main_app, error: Exception, limit: int = 700) ->
         except Exception:
             pass
     return _short_admin_error(text, limit)
+
+
+async def _build_channel_post_for_admin(main_app, status_message=None, skip_news_keys: set[str] | None = None):
+    timeout = CHANNEL_PREVIEW_BUILD_TIMEOUT_SEC
+    started_at = time.monotonic()
+    task = asyncio.create_task(main_app.build_channel_post(skip_news_keys=skip_news_keys))
+
+    while True:
+        elapsed = time.monotonic() - started_at
+        remaining = timeout - elapsed
+        if remaining <= 0:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            raise TimeoutError(f"Сборка предпросмотра не завершилась за {timeout} сек.")
+
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=min(CHANNEL_PREVIEW_STATUS_INTERVAL_SEC, remaining),
+            )
+        except TimeoutError:
+            if task.done():
+                return await task
+            elapsed_sec = int(time.monotonic() - started_at)
+            if elapsed_sec >= timeout:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                raise TimeoutError(f"Сборка предпросмотра не завершилась за {timeout} сек.")
+            if status_message:
+                try:
+                    await status_message.edit_text(
+                        "📢 Всё ещё собираю предпросмотр: жду текст, новости или картинку...\n\n"
+                        f"Прошло: {elapsed_sec} сек. Лимит: {timeout} сек."
+                    )
+                except Exception as error:
+                    print(f"[admin_channel_preview] progress edit error: {error}")
 
 
 def _load_voice_channel_app():
@@ -1551,7 +1605,15 @@ async def _start_channel_preview(message: Message):
         _cleanup_channel_previews(main_app)
         try:
             with voice_working_directory():
-                post = await main_app.build_channel_post()
+                post = await _build_channel_post_for_admin(main_app, status)
+        except TimeoutError as error:
+            print(f"[admin_channel_preview] build timeout: {error}")
+            await status.edit_text(
+                "⏱️ Сборка предпросмотра зависла и была остановлена.\n\n"
+                "Чаще всего зависают новостные источники, генерация текста или подбор картинки. "
+                "Попробуй кнопку «Проверить новости»; если там тоже долго нет ответа, смотри логи `tarot-admin.service`."
+            )
+            return
         except Exception as error:
             print(f"[admin_channel_preview] build error: {error}")
             traceback.print_exc()
@@ -1690,6 +1752,7 @@ async def channel_preview_callback(callback: CallbackQuery):
             return
         await callback.answer("Собираю новый вариант...")
         async with CHANNEL_POST_LOCK:
+            status = await callback.message.answer("🔄 Собираю новый вариант и подбираю картинку...")
             skip_news_keys = payload.get("skip_news_keys")
             if not isinstance(skip_news_keys, set):
                 skip_news_keys = set(skip_news_keys or [])
@@ -1699,27 +1762,31 @@ async def channel_preview_callback(callback: CallbackQuery):
                     url_key = article.get("url_key") or main_app._channel_news_url_key(article.get("url", ""))
                     if url_key:
                         skip_news_keys.add(url_key)
-                    new_post = await main_app.build_channel_post(skip_news_keys=skip_news_keys)
+                    new_post = await _build_channel_post_for_admin(main_app, status, skip_news_keys=skip_news_keys)
+            except TimeoutError as error:
+                print(f"[admin_channel_preview] regen build timeout: {error}")
+                await status.edit_text(
+                    "⏱️ Сборка нового варианта зависла и была остановлена.\n\n"
+                    "Попробуй позже или проверь новости/логи `tarot-admin.service`."
+                )
+                return
             except Exception as error:
                 print(f"[admin_channel_preview] regen build error: {error}")
                 traceback.print_exc()
-                await callback.message.answer(
+                await status.edit_text(
                     "⚠️ Не удалось собрать новый вариант из-за технической ошибки.\n\n"
-                    f"{_format_channel_admin_error(main_app, error)}",
-                    reply_markup=get_voice_channel_keyboard(),
+                    f"{_format_channel_admin_error(main_app, error)}"
                 )
                 return
 
             if not new_post:
-                await callback.message.answer(
-                    "⚠️ Не удалось собрать новый вариант.",
-                    reply_markup=get_voice_channel_keyboard(),
-                )
+                await status.edit_text("⚠️ Не удалось собрать новый вариант.")
                 return
 
             payload["post"] = new_post
             payload["created_at"] = time.monotonic()
             payload["skip_news_keys"] = skip_news_keys
+            await status.edit_text("✅ Новый вариант готов. Ниже текст, картинка и кнопки управления.")
             await _send_channel_preview(callback.message.chat.id, main_app, new_post, preview_id, "Новый вариант")
         return
 
